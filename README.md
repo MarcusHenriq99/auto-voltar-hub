@@ -24,4 +24,6 @@ Get-ChildItem .\tests\*.cjs | ForEach-Object { node $_.FullName }
 
 ## Aplicação no Hub
 
-Substitua o conteúdo do Auto-voltar no editor de scripts do FZN Idle Hub pelo arquivo principal e recarregue cada conta. Confirme a versão no painel do Auto-voltar. Publicar uma versão aqui não altera automaticamente o script ativo no Hub.
+No FZN Idle Hub, em **Scripts**, selecione **GitHub** e use o arquivo [AUTOVOLTAR-YGGIDLE.user.js](https://github.com/MarcusHenriq99/auto-voltar-hub/blob/main/AUTOVOLTAR-YGGIDLE.user.js) da branch `main`. O cartão **Auto voltar GitHub** está ligado para todas as contas; a antiga cópia colada no Hub deve permanecer desligada para evitar duas execuções.
+
+Depois de publicar uma mudança na `main`, clique **Verificar agora** no cartão do script. O Hub consulta o GitHub nesse momento; confirme a nova versão no cartão e no painel do Auto-voltar. Mantenha **Manter jogo em segundo plano** ligado caso queira que o Hub continue rodando ao trocar de janela.
