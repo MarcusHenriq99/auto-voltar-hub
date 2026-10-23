@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.21
-// @description  Rotina de peso/espacos opcional por conta; retorno pelo Gerente de Premios e Loja de Cash fechada somente com Auto-voltar ligado.
+// @version      2.22
+// @description  Rotina de peso/espacos opcional por conta; ovos de pet preservados na mochila.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
 // ==/UserScript==
@@ -907,11 +907,13 @@
   };
   const reservadoNoFarm = (item) => itemDeCompra(item) || /\bflechas?\b|\barrows?\b|\basas? de mosca\b|\bfly wings?\b/.test(normalizar(item.name));
   const verdadeiro = (v) => v === true || v === 1 || v === '1' || v === 'true';
+  const ovoDePet = (item) => verdadeiro(item?.isPetEgg) || verdadeiro(item?.petEgg) ||
+    /^ovo (?:de|do|da) \S+/.test(nomeBase(item?.name)) || /\bpet egg\b/.test(nomeBase(item?.name));
   const itemFavorito = (item) => verdadeiro(item?.favorite) ||
     Object.entries(item || {}).some(([k, v]) => /fav/i.test(k) && verdadeiro(v));
   const itemEquipado = (item, equipados) => equipados.has(item.index) ||
     ['equipped', 'isEquipped', 'equipado', 'isWorn'].some((k) => verdadeiro(item[k])) || Number(item.wearState) > 0;
-  const nuncaGuardar = (item, equipados) => itemEquipado(item, equipados) || verdadeiro(item.locked) || itemFavorito(item);
+  const nuncaGuardar = (item, equipados) => itemEquipado(item, equipados) || verdadeiro(item.locked) || itemFavorito(item) || ovoDePet(item);
   const candidatosArmazem = (equipados, todos = false) => itensMochila().filter(({ item, tipo }) =>
     Number.isInteger(item.index) && Number(item.count) > 0 &&
     !nuncaGuardar(item, equipados) && !cartaoKafra(item) && !reservadoNoFarm(item) && (todos || Boolean(motivoProtecao(item, tipo))));
@@ -1094,7 +1096,7 @@
     const equipados = await lerEquipados(w);
     if (!equipados) return { ok: false, motivo: 'nao consegui conferir os itens equipados' };
     const lista = candidatosArmazem(equipados, todos);
-    log('Armazem: ' + lista.length + (todos ? ' pilhas para guardar no maximo' : ' pilhas protegidas para guardar') + ' (equipados, travados, favoritos, cartao, flechas e Asa de Mosca preservados)');
+    log('Armazem: ' + lista.length + (todos ? ' pilhas para guardar no maximo' : ' pilhas protegidas para guardar') + ' (ovos de pet, equipados, travados, favoritos, cartao, flechas e Asa de Mosca preservados)');
     if (!lista.length) {
       const fechou = await fecharArmazem(w);
       return { ok: fechou, depositados: 0, motivo: fechou ? null : 'janela de armazem nao fechou' };
@@ -1273,6 +1275,7 @@
     const deCaixa = protecaoDeCaixa(item);
     if (deCaixa) return deCaixa;
     if (/cartao (?:de )?kafra/.test(normalizar(item.name))) return 'Cartao Kafra reservado';
+    if (ovoDePet(item)) return 'ovo de pet preservado na mochila';
     if (/\basas? de mosca\b|\bfly wings?\b/.test(normalizar(item.name))) return 'Asa de Mosca reservada para farm';
     if (verdadeiro(item.locked)) return 'cadeado';
     if (itemDeCompra(item)) return 'item da lista de Compras';
@@ -3474,7 +3477,7 @@
       const abrir = document.createElement('button'); estilo(abrir); abrir.dataset.abrir = '1';
       const conteudo = document.createElement('div'); conteudo.dataset.controles = '1';
       Object.assign(conteudo.style, { display: 'flex', flexWrap: 'wrap', gap: '4px', width: '100%', alignItems: 'center' });
-      const ajuda = document.createElement('div'); ajuda.textContent = 'Rotina por limite ON: peso em 70% OU mochila com 95% dos espacos confirmados iniciam o processo; Cartao Kafra e Loja de Bolso podem concluir no mapa. OFF: ignora esses limites e continua a cacada mesmo com mochila cheia; Executar agora ainda funciona. Evento ON retorna pelo Gerente de Premios. Ferreiro ON desmantela antes da venda. Cartao, Asa de Mosca, flechas, equipados, travados e favoritos ficam na mochila. Historico mostra as etapas. Funciona em segundo plano.';
+      const ajuda = document.createElement('div'); ajuda.textContent = 'Rotina por limite ON: peso em 70% OU mochila com 95% dos espacos confirmados iniciam o processo; Cartao Kafra e Loja de Bolso podem concluir no mapa. OFF: ignora esses limites e continua a cacada mesmo com mochila cheia; Executar agora ainda funciona. Evento ON retorna pelo Gerente de Premios. Ferreiro ON desmantela antes da venda. Ovos de pet, Cartao, Asa de Mosca, flechas, equipados, travados e favoritos ficam na mochila. Historico mostra as etapas. Funciona em segundo plano.';
       Object.assign(ajuda.style, { color: '#8fa3b3', fontSize: '11px', width: '100%', padding: '4px 0' });
       const cartaoFarm=document.createElement('button');estilo(cartaoFarm);cartaoFarm.dataset.cartaoFarm='1';
       cartaoFarm.title='ON: usar Cartao Kafra no mapa. No modo Vender permitidos, ative tambem Loja de Bolso para guardar e vender sem ir a Prontera. OFF: usar a Kafra na cidade.';
@@ -3493,7 +3496,7 @@
       conteudo.append(liga, covilBtn, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, mapaFarm, usarMapa, detalhes, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.20</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.22</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
@@ -3513,3 +3516,4 @@
   atualizarPainel();
   setInterval(verificar, 500);
 })();
+
