@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.33
+// @version      2.34
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -184,24 +184,68 @@
 
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
+  const CHAVE_BACKUP = 'fzn-autovoltar-ygg-backup-v1';
 
   const KAFRA_PADRAO = { 'prontera:149,172': { dx: -63, dy: -200 }, 'prontera:155,183': { dx: -63, dy: -200 } };
   const VENDEDOR_PADRAO = {};
 
   const lerJson = (k, padrao) => { try { return JSON.parse(localStorage.getItem(k)) ?? padrao; } catch { return padrao; } };
   const gravarJson = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+  const lerBackupSessao = () => { try { return JSON.parse(sessionStorage.getItem(CHAVE_BACKUP) || 'null'); } catch { return null; } };
+  const abrirBackup = () => new Promise((resolve) => {
+    if (typeof indexedDB === 'undefined') return resolve(null);
+    let resolvido = false;
+    const concluir = (db) => { if (!resolvido) { resolvido = true; resolve(db); } else db?.close(); };
+    setTimeout(() => concluir(null), 2000);
+    try {
+      const req = indexedDB.open('fzn-autovoltar-ygg-backup', 1);
+      req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains('dados')) req.result.createObjectStore('dados'); };
+      req.onsuccess = () => concluir(req.result);
+      req.onerror = () => concluir(null);
+      req.onblocked = () => concluir(null);
+    } catch { concluir(null); }
+  });
+  const lerBackupDisco = async () => {
+    const db = await abrirBackup();
+    if (!db) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction('dados', 'readonly');
+        const req = tx.objectStore('dados').get(CHAVE_BACKUP);
+        req.onsuccess = () => resolve(req.result?.cfg || null);
+        req.onerror = () => resolve(null);
+        tx.oncomplete = () => db.close();
+      } catch { db.close(); resolve(null); }
+    });
+  };
+  const gravarBackupDisco = async (dados) => {
+    const db = await abrirBackup();
+    if (!db) return;
+    try {
+      const tx = db.transaction('dados', 'readwrite');
+      tx.objectStore('dados').put({ cfg: dados, salvoEm: Date.now() }, CHAVE_BACKUP);
+      tx.oncomplete = () => db.close();
+      tx.onerror = () => db.close();
+    } catch { db.close(); }
+  };
+  const cfgLocal = lerJson(CHAVE_CFG, null);
+  const cfgSessao = cfgLocal ? null : lerBackupSessao();
 
   const cfg = Object.assign({
     ligado: true, curarNaKafra: true, kafra: {}, retornoEvento: false, rotinaLimites: true,
     comprar: true, compras: [{ nome: 'Poção Laranja', aba: 'Consumíveis', alvo: 200 }],
     vendedor: {}
-  }, lerJson(CHAVE_CFG, {}));
+  }, cfgLocal || cfgSessao || {});
   cfg.lucky = Array.isArray(cfg.lucky) ? cfg.lucky.filter((s) => typeof s === 'string' && s.trim()) : ['Ovo da La Voisin'];
   if ('comprarPocao' in cfg) {
     cfg.comprar = cfg.comprarPocao;
     for (const k of ['comprarPocao', 'pocaoNome', 'pocaoId', 'pocaoMinimo', 'pocaoAlvo']) delete cfg[k];
   }
-  const salvarCfg = () => gravarJson(CHAVE_CFG, cfg);
+  const salvarCfg = () => {
+    gravarJson(CHAVE_CFG, cfg);
+    try { sessionStorage.setItem(CHAVE_BACKUP, JSON.stringify(cfg)); } catch {}
+    try { void gravarBackupDisco(JSON.parse(JSON.stringify(cfg))); } catch {}
+  };
   const relerCalibracao = () => {
     const salvo = lerJson(CHAVE_CFG, {});
     for (const tipo of ['kafra','vendedor']) {
@@ -2179,7 +2223,11 @@
 
   const PORTEIRO_BIO4 = [170, 184];
   cfg.caminhoBio4 = cfg.caminhoBio4 && typeof cfg.caminhoBio4 === 'object' ? cfg.caminhoBio4 : {};
-  if (cfg.caminhoBio4Alvo !== "170,184") { cfg.caminhoBio4 = {}; cfg.caminhoBio4Alvo = "170,184"; salvarCfg(); }
+  if (cfg.caminhoBio4Alvo !== "170,184") {
+    cfg.caminhoBio4 = {}; cfg.caminhoBio4Alvo = "170,184";
+    // Nao sobrescrever o backup de IndexedDB antes da recuperacao inicial.
+    if (cfgLocal || cfgSessao) salvarCfg();
+  }
   const porteiroAberto = (w) => /Porteiro do Biolaborat/i.test(w.document.body.innerText || '');
 
   const falarComPorteiro = async (w) => {
@@ -3647,6 +3695,38 @@
       const usarMapa = document.createElement('button'); estilo(usarMapa); usarMapa.textContent = 'Usar mapa atual'; usarMapa.title = 'Limpa o bloqueio antigo e retoma a automacao neste mapa'; usarMapa.addEventListener('click', async()=>{if(ocupado)return;const p=posicao(jogo());if(p?.mapa && p.mapa!=='prontera'){cfg.mapaFarmManual=p.mapa;salvarCfg();}await retomarNoMapaAtual();});
       const detalhes = document.createElement('button'); estilo(detalhes); detalhes.textContent = 'Histórico';
       detalhes.addEventListener('click', () => { detalhesProcesso = !detalhesProcesso; atualizarStatus(); });
+      const exportar = document.createElement('button'); estilo(exportar); exportar.textContent = 'Salvar ajustes';
+      exportar.title = 'Baixa um arquivo de seguranca com as configuracoes desta conta; guarde-o antes de limpar dados do jogo.';
+      exportar.addEventListener('click', () => {
+        const dados = { formato: 'fzn-autovoltar-backup', versao: 1, cfg, historico: historicoLog() };
+        const url = URL.createObjectURL(new Blob([JSON.stringify(dados, null, 2)], { type: 'application/json' }));
+        const a = document.createElement('a'); a.href = url; a.download = `auto-voltar-ajustes-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        log('Backup das configuracoes desta conta baixado');
+      });
+      const importar = document.createElement('button'); estilo(importar); importar.textContent = 'Restaurar ajustes';
+      importar.title = 'Escolha um backup salvo desta conta para recuperar mapa, listas, calibracoes e botoes apos limpar dados.';
+      importar.addEventListener('click', () => {
+        if (ocupado) return;
+        const entrada = document.createElement('input'); entrada.type = 'file'; entrada.accept = '.json,application/json';
+        entrada.addEventListener('change', async () => {
+          const arquivo = entrada.files?.[0];
+          if (!arquivo || arquivo.size > 500000) return log('Backup nao selecionado ou grande demais');
+          try {
+            const dados = JSON.parse(await arquivo.text());
+            if (dados.formato !== 'fzn-autovoltar-backup' || !dados.cfg || typeof dados.cfg !== 'object' || Array.isArray(dados.cfg)) throw new Error('formato invalido');
+            for (const [chave, valor] of Object.entries(dados.cfg)) {
+              if (!['__proto__', 'constructor', 'prototype'].includes(chave)) cfg[chave] = valor;
+            }
+            salvarCfg();
+            if (Array.isArray(dados.historico)) { historicoMem = dados.historico.slice(-100); gravarJson(CHAVE_LOG, historicoMem); }
+            log('Configuracoes restauradas do backup; mapa, listas e opcoes desta conta recuperados');
+            painel?.remove(); painel = null; atualizarPainel();
+          } catch (e) { log('Backup nao restaurado: ' + String(e?.message || e).slice(0, 80)); }
+        }, { once: true });
+        entrada.click();
+      });
       const status = document.createElement('div'); status.dataset.status = '1';
       Object.assign(status.style, { width: '100%', color: '#cfe3f0', fontWeight: '600', fontVariantNumeric: 'tabular-nums' });
       const detalhe = document.createElement('div'); detalhe.dataset.detalhe = '1';
@@ -3673,10 +3753,10 @@
       const mapaFarm=document.createElement('button');estilo(mapaFarm);mapaFarm.textContent='Mapa de farm';mapaFarm.addEventListener('click',abrirMapaFarm);
       const lucky = document.createElement('button'); estilo(lucky); lucky.dataset.lucky = '1'; lucky.addEventListener('click', abrirMenuLucky);
       const covilBtn = document.createElement('button'); covilBtn.dataset.covil = '1'; covilBtn.addEventListener('click', abrirMenuCovil);
-      conteudo.append(liga, covilBtn, lucky, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, status, detalhe, historico);
+      conteudo.append(liga, covilBtn, lucky, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, exportar, importar, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.33</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.34</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
@@ -3693,6 +3773,26 @@
     atualizarStatus();
   }
 
+  const iniciarRotina = () => { atualizarPainel(); setInterval(verificar, 500); };
+  const iniciar = async () => {
+    const backup = await lerBackupDisco();
+    if (backup && typeof backup === 'object' && !Array.isArray(backup)) {
+      const vendaPadrao = cfg.venda, armazemPadrao = cfg.armazem, covilPadrao = cfg.covil;
+      for (const [chave, valor] of Object.entries(backup)) {
+        if (!['__proto__', 'constructor', 'prototype'].includes(chave)) cfg[chave] = valor;
+      }
+      cfg.venda = { ...vendaPadrao, ...cfg.venda, proteger: { ...vendaPadrao.proteger, ...cfg.venda?.proteger } };
+      cfg.armazem = { ...armazemPadrao, ...cfg.armazem };
+      cfg.covil = { ...covilPadrao, ...cfg.covil };
+      salvarCfg();
+      log('Configuracoes recuperadas do backup local apos limpar o cache');
+    }
+    iniciarRotina();
+  };
+  if (!cfgLocal && !cfgSessao && typeof indexedDB !== 'undefined') void iniciar();
+  else {
+  if (cfgLocal || cfgSessao) salvarCfg();
   atualizarPainel();
   setInterval(verificar, 500);
+  }
 })();
