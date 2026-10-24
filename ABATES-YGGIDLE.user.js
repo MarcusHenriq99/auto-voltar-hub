@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle - contador de abates por sessao
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.2
+// @version      1.3
 // @description  Conta monstros derrotados apos um golpe proprio, por especie e hora.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -17,7 +17,7 @@
   const data = saved && Array.isArray(saved.events) ? saved : { startedAt: Date.now(), paused: false, events: [], target: 'Stefan J. E. Wolf' };
   data.target ||= 'Stefan J. E. Wolf';
   const save = () => { try { localStorage.setItem(STORE, JSON.stringify(data)); } catch {} };
-  let game = null, injected = false, panel = null, expanded = false, statusLine = null;
+  let game = null, injected = false, panel = null, expanded = false, statusLine = null, debugLine = null;
   const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const fmt = (ms) => new Date(ms).toLocaleString('pt-BR');
   const hour = (ms) => {
@@ -38,6 +38,7 @@
       if (window.__fznAbatesInstalando) return;
       window.__fznAbatesInstalando = true;
       window.__fznAbatesQueue = window.__fznAbatesQueue || [];
+      const debug = window.__fznAbatesDebug = { hooks: 0, ataques: 0, golpesProprios: 0, mortes: 0, mobs: 0, relacionados: 0, ultimoGid: 0, ultimaOrigem: 0 };
       const status = (s) => { window.__fznAbatesStatus = s; };
       try {
         const build = String(window.ELRAG_CLIENT_BUILD || '').trim();
@@ -53,8 +54,10 @@
         const own = () => Number(Session.Entity?.GID || 0);
         const note = (gid, source, damage, action) => {
           gid = Number(gid); source = Number(source);
+          debug.ataques++; debug.ultimoGid = own(); debug.ultimaOrigem = source;
           if (!gid || !(Number(damage) > 0) || [1, 2, 3, 11].includes(Number(action))) return;
           if (source !== own() && owners.get(source) !== own()) return;
+          debug.golpesProprios++;
           recent.set(gid, Date.now());
           if (recent.size > 500) for (const [k, t] of recent) if (Date.now() - t > 30000) recent.delete(k);
         };
@@ -78,7 +81,7 @@
         Network.hookPacket = function(packet, callback) {
           const observe = watched.get(packet);
           if (!observe || typeof callback !== 'function') return origHook.call(this, packet, callback);
-          if (attackPackets.has(packet)) hooked++;
+          if (attackPackets.has(packet)) { hooked++; debug.hooks = hooked; }
           return origHook.call(this, packet, function(pkt) {
             try { observe(pkt); } catch {}
             return callback.apply(this, arguments);
@@ -92,8 +95,11 @@
         const origDeath = Entities.removeLife;
         Entities.removeLife = function(gid) {
           try {
+            debug.mortes++;
             const mob = Entities.get(gid), hitAt = recent.get(Number(gid));
+            if (mob?.objecttype === Entity.TYPE_MOB) debug.mobs++;
             if (mob && mob.objecttype === Entity.TYPE_MOB && hitAt && Date.now() - hitAt <= 15000) {
+              debug.relacionados++;
               const mobId = Number(mob._job || mob.job || 0);
               if (mobId > 0) {
                 window.__fznAbatesQueue.push({ id: mobId, name: mob.display?.name || DB.getMonsterName(mobId) || '#' + mobId, at: Date.now() });
@@ -101,7 +107,7 @@
               }
             }
             recent.delete(Number(gid));
-          } catch {}
+          } catch (e) { debug.erro = String(e?.message || e).slice(0, 80); }
           return origDeath.apply(this, arguments);
         };
         window.setInterval(() => status(hooked >= 2 ? 'Capturando golpes e mortes' : 'Pacotes de combate anteriores ao contador; recarregue esta conta'), 1000);
@@ -126,7 +132,7 @@
       document.body.append(panel);
     }
     panel.replaceChildren();
-    statusLine = null;
+    statusLine = null; debugLine = null;
     const button = (text, click) => { const b = document.createElement('button'); b.textContent = text; b.style.cssText = 'cursor:pointer;margin:2px;padding:4px 7px;background:#29465e;color:white;border:1px solid #718da6;border-radius:5px'; b.onclick = click; return b; };
     const totals = new Map();
     for (const ev of data.events) totals.set(ev.id, { name: ev.name, count: (totals.get(ev.id)?.count || 0) + 1 });
@@ -137,6 +143,7 @@
     line('Sessão iniciada: ' + fmt(data.startedAt));
     statusLine = document.createElement('div'); statusLine.style.margin = '5px 2px';
     statusLine.textContent = game?.__fznAbatesStatus || 'Aguardando o jogo'; panel.append(statusLine);
+    debugLine = document.createElement('div'); debugLine.style.margin = '5px 2px'; panel.append(debugLine);
     line('Estimativa: morte observada ate 15 s apos seu golpe. Outro jogador pode ter dado o golpe final.');
     const input = document.createElement('input'); input.value = data.target; input.title = 'Monstro de interesse'; input.style.cssText = 'box-sizing:border-box;width:100%;padding:5px;background:#eff4fa;color:#172332;border:1px solid #718da6;border-radius:4px';
     input.onchange = () => { data.target = input.value.trim(); save(); render(); }; panel.append(input);
@@ -185,6 +192,10 @@
       if (b) b.textContent = 'Abates ' + data.events.length + ' · ' + data.events.filter((ev) => norm(ev.name) === norm(data.target)).length + ' alvo' + (data.paused ? ' · pausado' : '');
     } else if (!panel?.isConnected || changed) render();
     if (statusLine?.isConnected) statusLine.textContent = game?.__fznAbatesStatus || 'Aguardando o jogo';
+    if (debugLine?.isConnected) {
+      const d = game?.__fznAbatesDebug;
+      debugLine.textContent = d ? 'Sinais: ' + d.golpesProprios + ' golpes próprios, ' + d.mobs + ' mortes de monstro, ' + d.relacionados + ' relacionadas' + (d.erro ? ' · ' + d.erro : '') : 'Sinais: aguardando jogo';
+    }
   }, 600);
 })();
 
