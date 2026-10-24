@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.32
+// @version      2.33
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -932,7 +932,8 @@
       log('Armazem: ' + item.name + ' preso ao personagem; ignorado nos proximos ciclos');
     }
   };
-  const nuncaGuardar = (item, equipados) => itemEquipado(item, equipados) || verdadeiro(item.locked) || itemFavorito(item) || ovoDePet(item) || itemPreso(item);
+  const itemTravado = (item) => Object.entries(item || {}).some(([k, v]) => /lock|trav/i.test(k) && verdadeiro(v));
+  const nuncaGuardar = (item, equipados) => itemEquipado(item, equipados) || itemTravado(item) || itemFavorito(item) || ovoDePet(item) || itemPreso(item);
   const observarRecusaPreso = (w) => {
     let recusado = false;
     const re = /bound(?:ed)? item cannot be stor(?:e|ed)|(?:item|equipamento) (?:preso|vinculado|ligado).*(?:armaz[eé]m|guardar|armazen)|n[aã]o (?:pode|e poss[ií]vel) (?:guardar|armazenar).*vinculado/i;
@@ -1026,10 +1027,18 @@
   };
   const armazemAberto = (w) => [...w.document.querySelectorAll('h1,h2,h3,div,span')]
     .some((el) => visivel(el) && normalizar(textoDe(el)) === 'armazem (kafra)');
-  const armazemCheio = (w) => {
+  const ocupacaoArmazem = (w) => {
     if (!armazemAberto(w)) return false;
-    const contagens = (w.document.body.innerText || '').matchAll(/\b(\d+)\s*\/\s*(\d+)\b/g);
-    return [...contagens].some(([, usados, capacidade]) => Number(capacidade) >= 300 && Number(usados) >= Number(capacidade));
+    const texto = w.document.body.innerText || w.document.body.textContent || '';
+    const contagens = [...texto.matchAll(/\b(\d+)\s*\/\s*(\d+)\b/g)]
+      .map(([, usados, capacidade]) => ({ usados: Number(usados), capacidade: Number(capacidade) }))
+      // Peso (ex.: 12.354/19.400) tambem aparece no body; nao e a lotacao da Kafra.
+      .filter(({ capacidade }) => capacidade >= 300 && capacidade <= 2000);
+    return contagens[0] || null;
+  };
+  const armazemCheio = (w) => {
+    const ocupacao = ocupacaoArmazem(w);
+    return Boolean(ocupacao && ocupacao.usados >= ocupacao.capacidade);
   };
 
   const fecharMochilaDoCartao = async (w) => {
@@ -1178,6 +1187,7 @@
       return { ok: fechou, depositados: 0, motivo: fechou ? null : 'janela de armazem nao fechou' };
     }
     if (!await abrirArmazem(w, naCidade)) return { ok: false, motivo: 'armazem nao abriu' };
+    await esperarAte(() => ocupacaoArmazem(w), 1200, 100);
     if (armazemCheio(w)) {
       log('Armazem cheio: nenhum item sera enviado nesta visita; pulando deposito');
       const fechou = await fecharArmazem(w);
@@ -1187,7 +1197,7 @@
       await fecharArmazem(w);
       return { ok: false, motivo: 'funcao de deposito indisponivel' };
     }
-    let depositados = 0, motivo = null;
+    let depositados = 0, motivo = null, cheio = false;
     const mantidos = new Set();
     const chaveItem = item => `${item.index}:${item.itemId}:${item.name}`;
     let restantes = lista;
@@ -1201,7 +1211,7 @@
           const enviados = [];
           for (const { item: planejado } of candidatosArmazem(eqLote, todos)) {
             if (!cfg.ligado || !armazemAberto(w)) break;
-            if (armazemCheio(w)) break;
+            if (armazemCheio(w)) { cheio = true; break; }
             const atual = itensMochila().find(({ item: i }) => chaveItem(i) === chaveItem(planejado));
             if (!atual || nuncaGuardar(atual.item, eqLote)) continue;
             const quantidade = Math.floor(Number(atual.item.count));
@@ -1241,6 +1251,7 @@
       }
       for (const planejado of restantes) {
         if (!cfg.ligado || !armazemAberto(w)) { motivo = 'automacao pausada ou armazem fechado'; break; }
+        if (armazemCheio(w)) { cheio = true; break; }
         const atual = candidatosArmazem(equipadosDeposito, todos).find(({ item }) =>
           item.index === planejado.item.index && item.itemId === planejado.item.itemId && item.name === planejado.item.name);
         if (!atual) continue;
@@ -1278,7 +1289,7 @@
         depositados += quantidade;
         log(`Armazem: guardado ${item.name} x${quantidade}`);
       }
-      if (!motivo) {
+      if (!motivo && !cheio) {
         if (!await lerMochila(w)) motivo = 'mochila nao atualizou na conferencia final';
         else {
           const finaisEquipados = await lerEquipados(w);
@@ -1293,7 +1304,8 @@
       if (!await fecharArmazem(w)) motivo = motivo || 'janela de armazem nao fechou';
       try { w.__elragEngine.cancelNpcDialog?.(); } catch {}
     }
-    return { ok: !motivo, depositados, mantidos: mantidos.size, motivo };
+    if (cheio) log('Armazem cheio durante o deposito: encerrando envios e seguindo para venda dos permitidos');
+    return { ok: !motivo, cheio, depositados, mantidos: mantidos.size, motivo };
   };
 
   const RE_PESO = /Peso\s*([\d.]+)\s*\/\s*([\d.]+)/;
@@ -1376,7 +1388,7 @@
     if (/cartao (?:de )?kafra/.test(normalizar(item.name))) return 'Cartao Kafra reservado';
     if (ovoDePet(item)) return 'ovo de pet preservado na mochila';
     if (/\basas? de mosca\b|\bfly wings?\b/.test(normalizar(item.name))) return 'Asa de Mosca reservada para farm';
-    if (verdadeiro(item.locked)) return 'cadeado';
+    if (itemTravado(item)) return 'cadeado';
     if (itemDeCompra(item)) return 'item da lista de Compras';
     if (itemFavorito(item)) return 'favorito';
     if (item.isCard && v.proteger.card) return 'carta';
@@ -1403,7 +1415,7 @@
     }
     // A loja nao permite vender exemplares com cadeado. Um deles nao pode
     // proteger por nome todos os exemplares destravados do mesmo equipamento.
-    const livres = correspondentes.filter(({item}) => !verdadeiro(item.locked));
+    const livres = correspondentes.filter(({item}) => !itemTravado(item));
     if (livres.length) {
       for (const {item,tipo} of livres) {
         const motivo = motivoProtecao(item, tipo);
@@ -3664,7 +3676,7 @@
       conteudo.append(liga, covilBtn, lucky, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.32</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.33</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
