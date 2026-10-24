@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle - contador de abates por sessao
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.1
+// @version      1.2
 // @description  Conta monstros derrotados apos um golpe proprio, por especie e hora.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -43,13 +43,12 @@
         const build = String(window.ELRAG_CLIENT_BUILD || '').trim();
         if (!/^[0-9a-f]{6,64}$/.test(build)) throw new Error('build do cliente indisponivel');
         const base = '/v/' + build + '/src/';
-        const [netMod, packetMod, managerMod, sessionMod, entityMod, dbMod] = await Promise.all([
+        // O registro dos handlers ocorre cedo: nao espere carregar renderer e banco.
+        const [netMod, packetMod, sessionMod] = await Promise.all([
           import(base + 'Network/NetworkManager.js'), import(base + 'Network/PacketStructure.js'),
-          import(base + 'Renderer/EntityManager.js'), import(base + 'Engine/SessionStorage.js'),
-          import(base + 'Renderer/Entity/Entity.js'), import(base + 'DB/DBManager.js')
+          import(base + 'Engine/SessionStorage.js')
         ]);
-        const Network = netMod.default, PACKET = packetMod.default, Entities = managerMod.default;
-        const Session = sessionMod.default, Entity = entityMod.default, DB = dbMod.default;
+        const Network = netMod.default, PACKET = packetMod.default, Session = sessionMod.default;
         const recent = new Map(), owners = new Map();
         const own = () => Number(Session.Entity?.GID || 0);
         const note = (gid, source, damage, action) => {
@@ -85,6 +84,11 @@
             return callback.apply(this, arguments);
           });
         };
+        const [managerMod, entityMod, dbMod] = await Promise.all([
+          import(base + 'Renderer/EntityManager.js'), import(base + 'Renderer/Entity/Entity.js'),
+          import(base + 'DB/DBManager.js')
+        ]);
+        const Entities = managerMod.default, Entity = entityMod.default, DB = dbMod.default;
         const origDeath = Entities.removeLife;
         Entities.removeLife = function(gid) {
           try {
