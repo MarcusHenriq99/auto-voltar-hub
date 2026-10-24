@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle - contador de abates por sessao
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.4
+// @version      1.5
 // @description  Conta monstros derrotados apos um golpe proprio, por especie e hora.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -20,7 +20,7 @@
   const save = () => { try { localStorage.setItem(STORE, JSON.stringify(data)); } catch {} };
   const view = (() => { try { return JSON.parse(localStorage.getItem(VIEW) || '{}'); } catch { return {}; } })();
   const saveView = () => { try { localStorage.setItem(VIEW, JSON.stringify(view)); } catch {} };
-  let game = null, injected = false, panel = null, expanded = false, hidden = view.hidden === true, statusLine = null, debugLine = null;
+  let game = null, injected = false, panel = null, bubble = null, expanded = false, hidden = view.hidden === true, statusLine = null, debugLine = null;
   let dragging = null;
   const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const fmt = (ms) => new Date(ms).toLocaleString('pt-BR');
@@ -130,6 +130,27 @@
 
   const render = () => {
     if (!document.body) return;
+    if (!bubble) {
+      bubble = document.createElement('button'); bubble.type = 'button';
+      bubble.title = 'Mostrar contador de abates'; bubble.setAttribute('aria-label', 'Mostrar contador de abates');
+      bubble.style.cssText = 'position:fixed;z-index:2147483641;width:16px;height:16px;padding:0;border:1px solid #fff;border-radius:50%;background:#999;opacity:.25;cursor:pointer;transition:opacity .15s;touch-action:none';
+      bubble.addEventListener('mouseenter', () => { bubble.style.opacity = '.9'; });
+      bubble.addEventListener('mouseleave', () => { bubble.style.opacity = '.25'; });
+      let move = null, moved = false;
+      bubble.addEventListener('pointerdown', (ev) => { move = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, left: bubble.offsetLeft, top: bubble.offsetTop }; moved = false; bubble.setPointerCapture(ev.pointerId); });
+      bubble.addEventListener('pointermove', (ev) => {
+        if (!move || ev.pointerId !== move.id) return;
+        if (Math.abs(ev.clientX - move.x) + Math.abs(ev.clientY - move.y) > 3) moved = true;
+        if (!moved) return;
+        view.bx = Math.max(0, Math.min(move.left + ev.clientX - move.x, window.innerWidth - 16));
+        view.by = Math.max(0, Math.min(move.top + ev.clientY - move.y, window.innerHeight - 16));
+        bubble.style.left = view.bx + 'px'; bubble.style.top = view.by + 'px';
+      });
+      const stopBubbleDrag = (ev) => { if (move?.id !== ev.pointerId) return; move = null; if (moved) saveView(); try { bubble.releasePointerCapture(ev.pointerId); } catch {} };
+      bubble.addEventListener('pointerup', stopBubbleDrag); bubble.addEventListener('pointercancel', stopBubbleDrag);
+      bubble.addEventListener('click', () => { if (moved) { moved = false; return; } hidden = false; view.hidden = false; saveView(); render(); });
+      document.body.append(bubble);
+    }
     if (!panel) {
       panel = document.createElement('div'); panel.id = 'fzn-abates';
       Object.assign(panel.style, { position: 'fixed', right: '10px', bottom: '90px', zIndex: '2147483640', color: '#f4f7ff', background: 'rgba(12,20,32,.96)', border: '1px solid #57718f', borderRadius: '8px', padding: '6px', font: '12px Arial,sans-serif', width: '320px', maxWidth: 'calc(100vw - 20px)', maxHeight: '60vh', overflowY: 'auto', boxShadow: '0 4px 16px #0008' });
@@ -161,8 +182,15 @@
       panel.addEventListener('pointercancel', stopDrag);
       document.body.append(panel);
     }
+    panel.style.display = hidden ? 'none' : 'block';
+    bubble.style.display = hidden ? 'block' : 'none';
+    if (hidden) {
+      bubble.style.left = Math.max(0, Math.min(Number(view.bx) || window.innerWidth - 22, window.innerWidth - 16)) + 'px';
+      bubble.style.top = Math.max(0, Math.min(Number(view.by) || window.innerHeight - 22, window.innerHeight - 16)) + 'px';
+      return;
+    }
     panel.replaceChildren();
-    panel.style.width = hidden ? 'auto' : '320px';
+    panel.style.width = '320px';
     statusLine = null; debugLine = null;
     const button = (text, click) => { const b = document.createElement('button'); b.textContent = text; b.style.cssText = 'cursor:pointer;margin:2px;padding:4px 7px;background:#29465e;color:white;border:1px solid #718da6;border-radius:5px'; b.onclick = click; return b; };
     const totals = new Map();
@@ -172,12 +200,16 @@
     const grip = document.createElement('span'); grip.dataset.abatesArrastar = '1'; grip.textContent = '⠿'; grip.title = 'Arraste para mover o contador';
     grip.style.cssText = 'cursor:grab;touch-action:none;user-select:none;padding:4px 5px;color:#cfe3f0';
     header.append(grip);
-    if (hidden) {
-      header.append(button('Mostrar abates', () => { hidden = false; view.hidden = false; saveView(); render(); }));
-      panel.append(header); return;
-    }
     header.append(button('Abates ' + data.events.length + ' · ' + targetCount + ' alvo' + (data.paused ? ' · pausado' : ''), () => { expanded = !expanded; render(); }));
-    header.append(button('Ocultar', () => { hidden = true; expanded = false; view.hidden = true; saveView(); render(); }));
+    const minimize = button('–', () => {
+      const r = panel.getBoundingClientRect();
+      view.bx = Math.round(Math.max(0, Math.min(r.right - 16, window.innerWidth - 16)));
+      view.by = Math.round(Math.max(0, Math.min(r.top, window.innerHeight - 16)));
+      hidden = true; view.hidden = true; saveView(); render();
+    });
+    minimize.title = 'Encolher para uma bolinha'; minimize.setAttribute('aria-label', 'Encolher contador de abates');
+    minimize.style.width = '20px'; minimize.style.height = '20px'; minimize.style.padding = '0'; minimize.style.lineHeight = '16px';
+    header.append(minimize);
     panel.append(header);
     if (!expanded) return;
     const line = (text) => { const d = document.createElement('div'); d.textContent = text; d.style.margin = '5px 2px'; panel.append(d); };
@@ -239,3 +271,4 @@
     }
   }, 600);
 })();
+
