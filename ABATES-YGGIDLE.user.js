@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle - contador de abates por sessao
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.3
+// @version      1.4
 // @description  Conta monstros derrotados apos um golpe proprio, por especie e hora.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -13,11 +13,15 @@
   window.__fznAbatesPainel = true;
 
   const STORE = 'fzn-abates-ygg-v1';
+  const VIEW = 'fzn-abates-ygg-janela-v1';
   const saved = (() => { try { return JSON.parse(localStorage.getItem(STORE) || 'null'); } catch { return null; } })();
   const data = saved && Array.isArray(saved.events) ? saved : { startedAt: Date.now(), paused: false, events: [], target: 'Stefan J. E. Wolf' };
   data.target ||= 'Stefan J. E. Wolf';
   const save = () => { try { localStorage.setItem(STORE, JSON.stringify(data)); } catch {} };
-  let game = null, injected = false, panel = null, expanded = false, statusLine = null, debugLine = null;
+  const view = (() => { try { return JSON.parse(localStorage.getItem(VIEW) || '{}'); } catch { return {}; } })();
+  const saveView = () => { try { localStorage.setItem(VIEW, JSON.stringify(view)); } catch {} };
+  let game = null, injected = false, panel = null, expanded = false, hidden = view.hidden === true, statusLine = null, debugLine = null;
+  let dragging = null;
   const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const fmt = (ms) => new Date(ms).toLocaleString('pt-BR');
   const hour = (ms) => {
@@ -129,15 +133,52 @@
     if (!panel) {
       panel = document.createElement('div'); panel.id = 'fzn-abates';
       Object.assign(panel.style, { position: 'fixed', right: '10px', bottom: '90px', zIndex: '2147483640', color: '#f4f7ff', background: 'rgba(12,20,32,.96)', border: '1px solid #57718f', borderRadius: '8px', padding: '6px', font: '12px Arial,sans-serif', width: '320px', maxWidth: 'calc(100vw - 20px)', maxHeight: '60vh', overflowY: 'auto', boxShadow: '0 4px 16px #0008' });
+      if (Number.isFinite(view.x) && Number.isFinite(view.y)) {
+        panel.style.left = Math.max(0, Math.min(view.x, window.innerWidth - 80)) + 'px';
+        panel.style.top = Math.max(0, Math.min(view.y, window.innerHeight - 30)) + 'px';
+        panel.style.right = 'auto'; panel.style.bottom = 'auto';
+      }
+      panel.addEventListener('pointerdown', (ev) => {
+        if (!ev.target.closest('[data-abates-arrastar]')) return;
+        const box = panel.getBoundingClientRect();
+        dragging = { id: ev.pointerId, dx: ev.clientX - box.left, dy: ev.clientY - box.top };
+        panel.style.left = box.left + 'px'; panel.style.top = box.top + 'px';
+        panel.style.right = 'auto'; panel.style.bottom = 'auto';
+        panel.setPointerCapture(ev.pointerId); ev.preventDefault();
+      });
+      panel.addEventListener('pointermove', (ev) => {
+        if (!dragging || ev.pointerId !== dragging.id) return;
+        const x = Math.max(0, Math.min(ev.clientX - dragging.dx, window.innerWidth - panel.offsetWidth));
+        const y = Math.max(0, Math.min(ev.clientY - dragging.dy, window.innerHeight - panel.offsetHeight));
+        panel.style.left = x + 'px'; panel.style.top = y + 'px';
+      });
+      const stopDrag = (ev) => {
+        if (!dragging || ev.pointerId !== dragging.id) return;
+        dragging = null; view.x = parseFloat(panel.style.left); view.y = parseFloat(panel.style.top); saveView();
+        try { panel.releasePointerCapture(ev.pointerId); } catch {}
+      };
+      panel.addEventListener('pointerup', stopDrag);
+      panel.addEventListener('pointercancel', stopDrag);
       document.body.append(panel);
     }
     panel.replaceChildren();
+    panel.style.width = hidden ? 'auto' : '320px';
     statusLine = null; debugLine = null;
     const button = (text, click) => { const b = document.createElement('button'); b.textContent = text; b.style.cssText = 'cursor:pointer;margin:2px;padding:4px 7px;background:#29465e;color:white;border:1px solid #718da6;border-radius:5px'; b.onclick = click; return b; };
     const totals = new Map();
     for (const ev of data.events) totals.set(ev.id, { name: ev.name, count: (totals.get(ev.id)?.count || 0) + 1 });
     const targetCount = data.events.filter((ev) => norm(ev.name) === norm(data.target)).length;
-    panel.append(button('Abates ' + data.events.length + ' · ' + targetCount + ' alvo' + (data.paused ? ' · pausado' : ''), () => { expanded = !expanded; render(); }));
+    const header = document.createElement('div'); header.style.cssText = 'display:flex;align-items:center;gap:3px';
+    const grip = document.createElement('span'); grip.dataset.abatesArrastar = '1'; grip.textContent = '⠿'; grip.title = 'Arraste para mover o contador';
+    grip.style.cssText = 'cursor:grab;touch-action:none;user-select:none;padding:4px 5px;color:#cfe3f0';
+    header.append(grip);
+    if (hidden) {
+      header.append(button('Mostrar abates', () => { hidden = false; view.hidden = false; saveView(); render(); }));
+      panel.append(header); return;
+    }
+    header.append(button('Abates ' + data.events.length + ' · ' + targetCount + ' alvo' + (data.paused ? ' · pausado' : ''), () => { expanded = !expanded; render(); }));
+    header.append(button('Ocultar', () => { hidden = true; expanded = false; view.hidden = true; saveView(); render(); }));
+    panel.append(header);
     if (!expanded) return;
     const line = (text) => { const d = document.createElement('div'); d.textContent = text; d.style.margin = '5px 2px'; panel.append(d); };
     line('Sessão iniciada: ' + fmt(data.startedAt));
@@ -187,7 +228,7 @@
         if (changed) save();
       }
     }
-    if (panel?.isConnected && !expanded) {
+    if (panel?.isConnected && !expanded && !hidden) {
       const b = panel.querySelector('button');
       if (b) b.textContent = 'Abates ' + data.events.length + ' · ' + data.events.filter((ev) => norm(ev.name) === norm(data.target)).length + ' alvo' + (data.paused ? ' · pausado' : '');
     } else if (!panel?.isConnected || changed) render();
@@ -198,4 +239,3 @@
     }
   }, 600);
 })();
-
