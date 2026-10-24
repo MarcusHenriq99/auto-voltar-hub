@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.26
+// @version      2.27
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -1067,16 +1067,16 @@
 
   const abrirArmazem = async (w, naCidade) => {
     if (armazemAberto(w)) return true;
-    if (!naCidade) {
-      if (!cfg.armazem.usarCartao && !cfg.armazem.tudoNoMapa) return false;
+    if (cfg.armazem.usarCartao || cfg.armazem.tudoNoMapa) {
       const cartao = itensMochila().find(({ item }) => cartaoKafra(item) && item.canUse && Number(item.count) > 0 && Number.isInteger(item.index));
-      if (!cartao || typeof w.__elragEngine.useInventoryItem !== 'function') return false;
-      log(`Armazem: usando ${cartao.item.name}`);
-      w.__elragEngine.useInventoryItem(cartao.item.index);
-      if (await esperarAte(() => armazemAberto(w), 8000, 250)) return true;
-      log('Armazem: cartao nao abriu a janela');
-      return false;
+      if (cartao && typeof w.__elragEngine.useInventoryItem === 'function') {
+        log(`Armazem: usando ${cartao.item.name}${naCidade ? ' em Prontera' : ''}`);
+        w.__elragEngine.useInventoryItem(cartao.item.index);
+        if (await esperarAte(() => armazemAberto(w), 8000, 250)) return true;
+        log('Armazem: cartao nao abriu a janela');
+      }
     }
+    if (!naCidade) return false;
     if (normalizar(posicao(w)?.mapa) !== 'prontera') {
       log('Armazem: a chegada nao foi em Prontera; nao vou procurar Kafra em outro mapa');
       return false;
@@ -3628,7 +3628,7 @@
       conteudo.append(liga, covilBtn, lucky, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.26</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.27</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
