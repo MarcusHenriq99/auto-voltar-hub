@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.23
+// @version      2.24
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -2952,8 +2952,8 @@
       if (p0?.mapa) {
         posicaoInicialVista = true;
         const destino = cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
-        if (normalizar(p0.mapa) === 'prontera' && destino && !recuperacao) {
-          log('Carreguei em Prontera; mapa de farm ' + destino + ': voltando em instantes');
+        if (normalizar(p0.mapa) === 'prontera' && (destino || cfg.retornoEvento) && !recuperacao) {
+          log('Carreguei em Prontera; retorno ' + (cfg.retornoEvento ? 'pelo Gerente de Eventos' : 'ao mapa de farm ' + destino) + ': iniciando em instantes');
           recuperacao = { motivo: 'carregou na cidade', desde: Date.now(), ultimaEm: Date.now() - 50000, tentativas: 0, retomarAutopilot: true };
         }
       }
@@ -3591,10 +3591,10 @@
       const mapaFarm=document.createElement('button');estilo(mapaFarm);mapaFarm.textContent='Mapa de farm';mapaFarm.addEventListener('click',abrirMapaFarm);
       const lucky = document.createElement('button'); estilo(lucky); lucky.dataset.lucky = '1'; lucky.addEventListener('click', abrirMenuLucky);
       const covilBtn = document.createElement('button'); covilBtn.dataset.covil = '1'; covilBtn.addEventListener('click', abrirMenuCovil);
-      conteudo.append(liga, covilBtn, lucky, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, mapaFarm, usarMapa, detalhes, status, detalhe, historico);
+      conteudo.append(liga, covilBtn, lucky, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.23</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.24</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
