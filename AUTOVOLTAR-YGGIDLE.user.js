@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.27
+// @version      2.28
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -918,9 +918,10 @@
     ['equipped', 'isEquipped', 'equipado', 'isWorn'].some((k) => verdadeiro(item[k])) || Number(item.wearState) > 0;
   cfg.armazem.itensPresos = Array.isArray(cfg.armazem.itensPresos) ? cfg.armazem.itensPresos : [];
   const chavePreso = (item) => `${item.itemId}:${nomeBase(item.name)}`;
-  const itemPreso = (item) => cfg.armazem.itensPresos.includes(chavePreso(item)) ||
-    ['bound', 'isBound', 'accountBound', 'characterBound', 'isAccountBound', 'isCharacterBound'].some((k) => verdadeiro(item[k])) ||
-    ['canStore', 'canDeposit', 'storageAllowed'].some((k) => item[k] === false) ||
+  const itemPreso = (item) => nomeBase(item.name) === 'garfo de glutao' ||
+    cfg.armazem.itensPresos.includes(chavePreso(item)) ||
+    ['bound', 'isBound', 'accountBound', 'characterBound', 'isAccountBound', 'isCharacterBound', 'notStorable', 'cannotStore'].some((k) => verdadeiro(item[k])) ||
+    ['canStore', 'canDeposit', 'storageAllowed', 'canMoveToStorage'].some((k) => item[k] === false) ||
     ['bindType', 'boundType', 'binding'].some((k) => item[k] != null &&
       !['', '0', 'false', 'none', 'unbound'].includes(String(item[k]).toLowerCase()));
   const registrarPreso = (item) => {
@@ -934,7 +935,7 @@
   const nuncaGuardar = (item, equipados) => itemEquipado(item, equipados) || verdadeiro(item.locked) || itemFavorito(item) || ovoDePet(item) || itemPreso(item);
   const observarRecusaPreso = (w) => {
     let recusado = false;
-    const re = /bound item cannot be stored|item (?:preso|vinculado).*(?:armaz[eé]m|guardar|armazen)/i;
+    const re = /bound item cannot be stored|(?:item|equipamento) (?:preso|vinculado|ligado).*(?:armaz[eé]m|guardar|armazen)|n[aã]o (?:pode|e poss[ií]vel) (?:guardar|armazenar).*vinculado/i;
     const obs = new w.MutationObserver((mudancas) => {
       for (const m of mudancas) {
         if ([...m.addedNodes].some((n) => re.test(n.textContent || '')) ||
@@ -1180,6 +1181,7 @@
     const mantidos = new Set();
     const chaveItem = item => `${item.index}:${item.itemId}:${item.name}`;
     let restantes = lista;
+    let equipadosDeposito = equipados;
     try {
       if (await lerMochila(w)) {
         const eqLote = await lerEquipados(w);
@@ -1209,7 +1211,10 @@
                 }
               }
               const finais = await lerEquipados(w);
-              if (finais) restantes = candidatosArmazem(finais, todos);
+              if (finais) {
+                equipadosDeposito = finais;
+                restantes = candidatosArmazem(finais, todos);
+              }
               log('Armazem: lote de ' + enviados.length + ' pilhas; ' + restantes.length + ' para conferir uma a uma');
             }
           }
@@ -1217,10 +1222,7 @@
       }
       for (const planejado of restantes) {
         if (!cfg.ligado || !armazemAberto(w)) { motivo = 'automacao pausada ou armazem fechado'; break; }
-        if (!await lerMochila(w)) { motivo = 'mochila nao atualizou antes do deposito'; break; }
-        const atuaisEquipados = await lerEquipados(w);
-        if (!atuaisEquipados) { motivo = 'equipamentos nao atualizaram'; break; }
-        const atual = candidatosArmazem(atuaisEquipados, todos).find(({ item }) =>
+        const atual = candidatosArmazem(equipadosDeposito, todos).find(({ item }) =>
           item.index === planejado.item.index && item.itemId === planejado.item.itemId && item.name === planejado.item.name);
         if (!atual) continue;
         const item = atual.item, quantidade = Math.floor(Number(item.count));
@@ -1236,7 +1238,7 @@
             if (estadoLoja.mochilaSeq <= seq) return false;
             const restante = itensMochila().find(({ item: i }) => i.index === item.index && i.itemId === item.itemId);
             return (!restante || Number(restante.item.count) <= Number(item.count) - quantidade) ? 'guardado' : false;
-          }, 8000, 200);
+          }, 1800, 150);
         } finally { recusa.parar(); }
         if (resultado === 'preso') { registrarPreso(item); mantidos.add(chaveItem(item)); continue; }
         const confirmou = resultado === 'guardado';
@@ -3628,7 +3630,7 @@
       conteudo.append(liga, covilBtn, lucky, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.27</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.28</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
