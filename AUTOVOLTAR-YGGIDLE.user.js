@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.31
+// @version      2.32
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -1927,26 +1927,40 @@
           return segurarRetorno(w, 'deposito completo no mapa falhou: ' + deposito.motivo);
         }
         if (posicao(w)?.mapa !== antes?.mapa) return segurarRetorno(w, 'mapa mudou durante o deposito');
-        etapa('3/4 Conferindo peso', 'Armazem fechado; conferindo se pode continuar no farm');
-        fezReducao.add(w);
-        await lerMochila(w); await esperar(500);
-        const depois = lerPeso(w);
-        if (depois && depois.pct >= limiteSeguro() && !guardarTudo() && cfg.venda.ligado) {
-          log('Cartao Kafra: peso ainda ' + depois.pct.toFixed(1) + '%; indo a cidade vender');
-          vendaForcada.add(w);
-        } else {
-        if (!await pesoSeguroParaVoltar(w)) return false;
-        if (!cfg.ligado) return false;
-        delete cfg.retornoPendente; salvarCfg();
-        const destino = cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
-        if (!destino && !(cfg.retornoEvento && posicao(w)?.mapa === 'prontera')) return segurarRetorno(w, 'defina o codigo em Mapa de farm antes de retornar');
-        if (posicao(w)?.mapa !== destino && !await voltarAoMapa(w)) return false;
-        retornou = retomadaPlanejada.get(w) ? await retomarCacada(w) : true;
-        if (retornou) {
-          etapa('Concluido', 'Deposito concluido; itens presos, flechas e Asa de Mosca preservados; cacada retomada no farm');
-          log('Cartao Kafra: processo concluido sem venda; ' + (antes?.mapa === destino ? 'no mesmo mapa, sem viagem ou taxa de entrada' : 'retorno ao farm confirmado: ' + destino));
+        let vendaNoMapaConcluida = false;
+        if (deposito.cheio && !cfg.ferreiro && cfg.lojaBolso && lojaDeBolso()) {
+          etapa('3/4 Vendendo no mapa', 'Armazem cheio; vendendo somente itens permitidos pela Loja de Bolso');
+          log('Armazem cheio: pulando deposito e usando Loja de Bolso sem sair do farm');
+          vendaNoMapaConcluida = await venderItens(w, false, true);
+          await fecharVenda(w);
+          if (!vendaNoMapaConcluida) log('Loja de Bolso nao confirmou a venda; vou tentar o Mercador na cidade');
         }
-        return retornou;
+        if (deposito.cheio && !vendaNoMapaConcluida && itensVendaveis()) {
+          vendaForcada.add(w);
+          log('Armazem cheio: venda pendente; indo a Prontera para vender os itens permitidos');
+        } else {
+          etapa('3/4 Conferindo peso', 'Armazem fechado; conferindo se pode continuar no farm');
+          fezReducao.add(w);
+          await lerMochila(w); await esperar(500);
+          const depois = lerPeso(w);
+          if (depois && depois.pct >= limiteSeguro() && itensVendaveis() &&
+              ((!guardarTudo() && cfg.venda.ligado) || deposito.cheio)) {
+            log('Cartao Kafra: peso ainda ' + depois.pct.toFixed(1) + '% com itens vendaveis; indo a cidade vender');
+            vendaForcada.add(w);
+          } else {
+            if (!await pesoSeguroParaVoltar(w)) return false;
+            if (!cfg.ligado) return false;
+            delete cfg.retornoPendente; salvarCfg();
+            const destino = cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
+            if (!destino && !(cfg.retornoEvento && posicao(w)?.mapa === 'prontera')) return segurarRetorno(w, 'defina o codigo em Mapa de farm antes de retornar');
+            if (posicao(w)?.mapa !== destino && !await voltarAoMapa(w)) return false;
+            retornou = retomadaPlanejada.get(w) ? await retomarCacada(w) : true;
+            if (retornou) {
+              etapa('Concluido', 'Processo concluido; itens presos, flechas e Asa de Mosca preservados; cacada retomada no farm');
+              log('Cartao Kafra: processo concluido ' + (vendaNoMapaConcluida ? 'com venda pela Loja de Bolso; ' : 'sem venda; ') + (antes?.mapa === destino ? 'no mesmo mapa, sem viagem ou taxa de entrada' : 'retorno ao farm confirmado: ' + destino));
+            }
+            return retornou;
+          }
         }
       }
       if (cfg.armazem.ligado && !vendaForcada.has(w)) {
@@ -2575,8 +2589,9 @@
     if (!deposito.ok) log('Armazem na cidade: ' + deposito.motivo);
     fezReducao.add(w);
     if (!cfg.ligado) return false;
-    const venderNestaVisita = !guardarTudo() && cfg.venda.ligado &&
-      (forcada || pesoAltoNaChegada || ((!cfg.armazem.tudoNoMapa) && viagemPorPeso) || await pesoAlto());
+    const venderNestaVisita = (deposito.cheio && itensVendaveis()) ||
+      (!guardarTudo() && cfg.venda.ligado &&
+      (forcada || pesoAltoNaChegada || ((!cfg.armazem.tudoNoMapa) && viagemPorPeso) || await pesoAlto()));
     if (venderNestaVisita) {
       etapa('5/8 Vendendo', 'Vendendo somente os itens permitidos na configuracao');
       let vendaConcluida = await venderItens(w);
@@ -3649,7 +3664,7 @@
       conteudo.append(liga, covilBtn, lucky, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.31</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.32</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
