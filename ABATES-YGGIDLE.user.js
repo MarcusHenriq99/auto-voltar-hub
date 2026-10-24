@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle - contador de abates por sessao
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.0
+// @version      1.1
 // @description  Conta monstros derrotados apos um golpe proprio, por especie e hora.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -18,7 +18,7 @@
   data.target ||= 'Stefan J. E. Wolf';
   const save = () => { try { localStorage.setItem(STORE, JSON.stringify(data)); } catch {} };
   let game = null, injected = false, panel = null, expanded = false, statusLine = null;
-  const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const fmt = (ms) => new Date(ms).toLocaleString('pt-BR');
   const hour = (ms) => {
     const d = new Date(ms), two = (n) => String(n).padStart(2, '0');
