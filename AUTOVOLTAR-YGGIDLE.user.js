@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.34
+// @version      2.35
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -976,7 +976,8 @@
       log('Armazem: ' + item.name + ' preso ao personagem; ignorado nos proximos ciclos');
     }
   };
-  const itemTravado = (item) => Object.entries(item || {}).some(([k, v]) => /lock|trav/i.test(k) && verdadeiro(v));
+  const itemTravado = (item) => Object.entries(item || {}).some(([k, v]) =>
+    /^(?:locked|isLocked|lock|isLock|travado|isTravado|storageLocked|isStorageLocked)$/i.test(k) && verdadeiro(v));
   const nuncaGuardar = (item, equipados) => itemEquipado(item, equipados) || itemTravado(item) || itemFavorito(item) || ovoDePet(item) || itemPreso(item);
   const observarRecusaPreso = (w) => {
     let recusado = false;
@@ -3756,7 +3757,7 @@
       conteudo.append(liga, covilBtn, lucky, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, exportar, importar, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.34</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.35</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
