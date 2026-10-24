@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.30
+// @version      2.31
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -918,7 +918,7 @@
     ['equipped', 'isEquipped', 'equipado', 'isWorn'].some((k) => verdadeiro(item[k])) || Number(item.wearState) > 0;
   cfg.armazem.itensPresos = Array.isArray(cfg.armazem.itensPresos) ? cfg.armazem.itensPresos : [];
   const chavePreso = (item) => `${item.itemId}:${nomeBase(item.name)}`;
-  const itemPreso = (item) => nomeBase(item.name) === 'garfo de glutao' ||
+  const itemPreso = (item) => /\bgarfo (?:de|do) glutao\b/.test(nomeBase(item.name)) ||
     cfg.armazem.itensPresos.includes(chavePreso(item)) ||
     ['bound', 'isBound', 'accountBound', 'characterBound', 'isAccountBound', 'isCharacterBound', 'notStorable', 'cannotStore'].some((k) => verdadeiro(item[k])) ||
     ['canStore', 'canDeposit', 'storageAllowed', 'canMoveToStorage'].some((k) => item[k] === false) ||
@@ -1201,31 +1201,40 @@
           const enviados = [];
           for (const { item: planejado } of candidatosArmazem(eqLote, todos)) {
             if (!cfg.ligado || !armazemAberto(w)) break;
+            if (armazemCheio(w)) break;
             const atual = itensMochila().find(({ item: i }) => chaveItem(i) === chaveItem(planejado));
             if (!atual || nuncaGuardar(atual.item, eqLote)) continue;
             const quantidade = Math.floor(Number(atual.item.count));
             if (!(quantidade > 0)) continue;
             etapa('Depositando em lote', atual.item.name + ' x' + quantidade + ' (' + (enviados.length + 1) + ')');
-            w.__elragEngine.moveItemToStorage(atual.item.index, quantidade);
+            const recusa = observarRecusaPreso(w);
+            try {
+              w.__elragEngine.moveItemToStorage(atual.item.index, quantidade);
+              await esperar(200);
+              if (recusa.recusado()) registrarPreso(atual.item);
+            } finally { recusa.parar(); }
             enviados.push({ item: atual.item, quantidade });
-            await esperar(150);
           }
           if (enviados.length) {
-            await esperar(600);
+            await esperar(350);
             if (await lerMochila(w)) {
+              const naoAceitos = [];
               for (const { item, quantidade } of enviados) {
                 const resto = itensMochila().find(({ item: i }) => chaveItem(i) === chaveItem(item));
                 if (!resto || Number(resto.item.count) <= Number(item.count) - quantidade) {
                   depositados += quantidade;
                   log(`Armazem: guardado ${item.name} x${quantidade} (lote)`);
+                } else {
+                  mantidos.add(chaveItem(resto.item));
+                  naoAceitos.push(resto.item.name);
                 }
               }
+              if (naoAceitos.length) log('Armazem: ' + naoAceitos.length + ' pilhas nao aceitas no lote; mantidas na mochila sem repetir nesta visita (' + naoAceitos.slice(0, 4).join(', ') + (naoAceitos.length > 4 ? ', ...' : '') + ')');
               const finais = await lerEquipados(w);
-              if (finais) {
-                equipadosDeposito = finais;
-                restantes = candidatosArmazem(finais, todos);
-              }
-              log('Armazem: lote de ' + enviados.length + ' pilhas; ' + restantes.length + ' para conferir uma a uma');
+              if (finais) equipadosDeposito = finais;
+              const tentados = new Set(enviados.map(({ item }) => chaveItem(item)));
+              restantes = candidatosArmazem(equipadosDeposito, todos).filter(({ item }) => !tentados.has(chaveItem(item)));
+              log('Armazem: lote de ' + enviados.length + ' pilhas; ' + restantes.length + ' novas pilhas para conferir');
             }
           }
         }
