@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.22
-// @description  Rotina de peso/espacos opcional por conta; ovos de pet preservados na mochila.
+// @version      2.23
+// @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
 // ==/UserScript==
@@ -196,6 +196,7 @@
     comprar: true, compras: [{ nome: 'Poção Laranja', aba: 'Consumíveis', alvo: 200 }],
     vendedor: {}
   }, lerJson(CHAVE_CFG, {}));
+  cfg.lucky = Array.isArray(cfg.lucky) ? cfg.lucky.filter((s) => typeof s === 'string' && s.trim()) : ['Ovo da La Voisin'];
   if ('comprarPocao' in cfg) {
     cfg.comprar = cfg.comprarPocao;
     for (const k of ['comprarPocao', 'pocaoNome', 'pocaoId', 'pocaoMinimo', 'pocaoAlvo']) delete cfg[k];
@@ -523,10 +524,10 @@
   const ehEquipado = (item) => ['equipped', 'isEquipped', 'equipado', 'isWorn'].some((k) => verdadeiro(item[k])) || Number(item.wearState) > 0;
   const contarPilhas = (snap) => Object.values(snap || {}).reduce((n, itens) =>
     n + (Array.isArray(itens) ? itens.filter((item) => item && !ehEquipado(item)).length : 0), 0);
-  const estadoLoja = { janela: null, mochila: null, mochilaEm: 0, mochilaSeq: 0, equipamento: null, equipamentoSeq: 0, armazem: null, armazemSeq: 0 };
+  const estadoLoja = { janela: null, mochila: null, mochilaEm: 0, mochilaSeq: 0, equipamento: null, equipamentoSeq: 0, armazem: null, armazemSeq: 0, armazemEm: 0 };
   const instalarGanchos = (w) => {
     if (estadoLoja.janela !== w) {
-      Object.assign(estadoLoja, { janela: w, mochila: null, mochilaEm: 0, mochilaSeq: 0, equipamento: null, equipamentoSeq: 0, armazem: null, armazemSeq: 0 });
+      Object.assign(estadoLoja, { janela: w, mochila: null, mochilaEm: 0, mochilaSeq: 0, equipamento: null, equipamentoSeq: 0, armazem: null, armazemSeq: 0, armazemEm: 0 });
     }
     const ui = w.__elragUI;
     if (!ui) return;
@@ -537,6 +538,7 @@
         if (estadoLoja.janela === w) {
           estadoLoja[chave] = snap;
           estadoLoja[chave + 'Seq']++;
+          if (chave === 'armazem') estadoLoja.armazemEm = Date.now();
           if (chave === 'mochila') {
             const agora = Date.now();
             const pilhas = contarPilhas(snap);
@@ -909,6 +911,7 @@
   const verdadeiro = (v) => v === true || v === 1 || v === '1' || v === 'true';
   const ovoDePet = (item) => verdadeiro(item?.isPetEgg) || verdadeiro(item?.petEgg) ||
     /^ovo (?:de|do|da) \S+/.test(nomeBase(item?.name)) || /\bpet egg\b/.test(nomeBase(item?.name));
+  const alvoLucky = (item) => (cfg.lucky || []).find((alvo) => nomeBase(alvo) === nomeBase(item?.name));
   const itemFavorito = (item) => verdadeiro(item?.favorite) ||
     Object.entries(item || {}).some(([k, v]) => /fav/i.test(k) && verdadeiro(v));
   const itemEquipado = (item, equipados) => equipados.has(item.index) ||
@@ -920,6 +923,46 @@
 
   const itensArmazem = () => Object.entries(estadoLoja.armazem || {}).flatMap(([tipo, itens]) =>
     Array.isArray(itens) ? itens.filter(Boolean).map((item) => ({ tipo, item })) : []);
+  const totalLucky = (alvo, lista) => lista.reduce((n, { item }) =>
+    n + (nomeBase(item.name) === nomeBase(alvo) ? Math.max(1, Number(item.count) || 1) : 0), 0);
+  const vistoLucky = new Map();
+  let seqLuckyMochila = -1;
+  let alertaLucky = null;
+  const avisarLucky = (alvo, quantidade) => {
+    const mensagem = `${alvo}: ${quantidade} na mochila. Protegido de venda e desmantelamento.`;
+    log('Lucky drop detectado! ' + mensagem);
+    if (!alertaLucky?.isConnected) {
+      alertaLucky = document.createElement('div');
+      alertaLucky.dataset.fznAutoVoltar = '1';
+      Object.assign(alertaLucky.style, { position: 'fixed', top: '14px', right: '14px', zIndex: 2147483647,
+        maxWidth: '320px', padding: '10px 12px', background: '#172235', color: '#fff7d6',
+        border: '2px solid #facc15', borderRadius: '10px', boxShadow: '0 4px 18px #0009',
+        font: 'bold 13px/1.4 system-ui,sans-serif' });
+      document.body.appendChild(alertaLucky);
+    }
+    alertaLucky.replaceChildren();
+    const titulo = document.createElement('div'); titulo.textContent = '★ LUCKY DROP ENCONTRADO';
+    const descricao = document.createElement('div'); descricao.textContent = mensagem;
+    const fechar = document.createElement('button'); fechar.textContent = 'Entendi';
+    fechar.addEventListener('click', () => alertaLucky?.remove());
+    alertaLucky.append(titulo, descricao, fechar);
+    try {
+      if (typeof Notification !== 'undefined' && Notification.permission === 'granted')
+        new Notification('Lucky drop encontrado', { body: mensagem });
+    } catch {}
+  };
+  const vigiarLucky = () => {
+    if (estadoLoja.mochilaSeq === seqLuckyMochila || !estadoLoja.mochila) return;
+    seqLuckyMochila = estadoLoja.mochilaSeq;
+    const mochila = itensMochila();
+    for (const alvo of cfg.lucky || []) {
+      const quantidade = totalLucky(alvo, mochila);
+      const anterior = vistoLucky.get(nomeBase(alvo)) || 0;
+      if (quantidade > anterior) avisarLucky(alvo, quantidade);
+      vistoLucky.set(nomeBase(alvo), quantidade);
+    }
+    atualizarStatus();
+  };
   const ponteRetirar = (w) => {
     if (w.__fznRetirar || w.__fznRetirarPedido) return;
     w.__fznRetirarPedido = 1;
@@ -1272,6 +1315,7 @@
 
   const motivoProtecao = (item, tipo) => {
     const v = cfg.venda;
+    if (alvoLucky(item)) return 'lucky drop procurado';
     const deCaixa = protecaoDeCaixa(item);
     if (deCaixa) return deCaixa;
     if (/cartao (?:de )?kafra/.test(normalizar(item.name))) return 'Cartao Kafra reservado';
@@ -2891,6 +2935,7 @@
     if (cfg.ligado && fecharLojaCash(w)) return;
     ligarCalibracao(w);
     instalarGanchos(w);
+    vigiarLucky();
     if (!cfg.ligado || ocupado) return;
     if (cfg.covil.ligado) {
       const salvarC = botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento');
@@ -3041,6 +3086,14 @@
     if (evento) { evento.textContent = 'Evento: ' + (cfg.retornoEvento ? 'ON' : 'OFF'); evento.disabled = ocupado; evento.className = cfg.retornoEvento ? 'fzn-av--on' : ''; evento.setAttribute('aria-pressed', String(Boolean(cfg.retornoEvento))); }
     const limites = painel.querySelector('[data-rotina-limites]');
     if (limites) { limites.textContent = 'Rotina por limite: ' + (cfg.rotinaLimites === false ? 'OFF' : 'ON'); limites.disabled = ocupado; limites.className = cfg.rotinaLimites === false ? 'fzn-av--off' : 'fzn-av--on'; limites.setAttribute('aria-pressed', String(cfg.rotinaLimites !== false)); }
+    const lucky = painel.querySelector('[data-lucky]');
+    if (lucky) {
+      const encontrados = (cfg.lucky || []).filter((alvo) => estadoLoja.mochila && totalLucky(alvo, itensMochila()) > 0).length;
+      lucky.textContent = `Lucky drops: ${encontrados}/${cfg.lucky.length}`;
+      lucky.className = encontrados ? 'fzn-av--on' : '';
+      lucky.title = 'Configurar nomes procurados e ver mochila/Kafra. Itens da lista nunca sao vendidos nem desmantelados.';
+    }
+    if (menuLucky?.isConnected) atualizarMenuLucky();
     const executar = painel.querySelector('[data-executar]');
     if (executar) { executar.disabled = ocupado; executar.textContent = ocupado ? 'Processo em andamento' : 'Executar agora'; }
     const historico = painel.querySelector('[data-historico]');
@@ -3058,6 +3111,50 @@
     const bottom = r ? Math.max(8, window.innerHeight - r.top + 6) : 60;
     const maxH = Math.max(120, window.innerHeight - bottom - 8);
     Object.assign(el.style, { position: 'fixed', left: left + 'px', bottom: bottom + 'px', top: 'auto', zIndex: 2147483001, width: largura + 'px', maxWidth: '95vw', maxHeight: maxH + 'px', overflow: 'auto', padding: '10px 12px' });
+  };
+  let menuLucky = null;
+  const atualizarMenuLucky = () => {
+    const resultado = menuLucky?.querySelector('[data-lucky-resultado]');
+    if (!resultado) return;
+    const mochila = estadoLoja.mochila ? itensMochila() : null;
+    const armazem = estadoLoja.armazemEm ? itensArmazem() : null;
+    const hora = estadoLoja.armazemEm ? new Date(estadoLoja.armazemEm).toLocaleTimeString() : '';
+    resultado.textContent = (cfg.lucky.length ? cfg.lucky : ['Nenhum item configurado']).map((alvo) => {
+      if (!cfg.lucky.length) return alvo;
+      const bag = mochila ? `${totalLucky(alvo, mochila)} na mochila` : 'mochila ainda sem leitura';
+      const kafra = armazem ? `${totalLucky(alvo, armazem)} na Kafra (ultima leitura ${hora})` : 'Kafra ainda sem leitura nesta sessao';
+      return `${alvo}: ${bag}; ${kafra}`;
+    }).join('\n');
+  };
+  const abrirMenuLucky = () => {
+    if (menuLucky) { menuLucky.remove(); menuLucky = null; return; }
+    const p = document.createElement('div'); menuLucky = p;
+    abrirSubjanela(p, 380);
+    const titulo = document.createElement('b'); titulo.textContent = 'Lucky drops desta conta';
+    const dica = document.createElement('p'); dica.textContent = 'Um nome exato por linha. O script avisa quando o item aparece na mochila e impede venda e desmantelamento. Ovos de pet tambem ficam fora do deposito.';
+    const campo = document.createElement('textarea');
+    campo.setAttribute('aria-label', 'Nomes dos lucky drops');
+    campo.value = cfg.lucky.join('\n');
+    Object.assign(campo.style, { width: '100%', minHeight: '68px', boxSizing: 'border-box' });
+    const salvar = document.createElement('button'); salvar.textContent = 'Salvar lista';
+    salvar.addEventListener('click', () => {
+      cfg.lucky = [...new Map(campo.value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).map((s) => [nomeBase(s), s])).values()];
+      salvarCfg();
+      vistoLucky.clear(); seqLuckyMochila = -1;
+      vigiarLucky(); atualizarMenuLucky(); atualizarStatus();
+      log('Lucky drops: lista salva (' + cfg.lucky.length + ' itens)');
+    });
+    const conferir = document.createElement('button'); conferir.textContent = 'Conferir mochila';
+    conferir.addEventListener('click', async () => {
+      const w = jogo(); if (w) await lerMochila(w);
+      vigiarLucky(); atualizarMenuLucky();
+    });
+    const resultado = document.createElement('pre'); resultado.dataset.luckyResultado = '1';
+    Object.assign(resultado.style, { whiteSpace: 'pre-wrap', font: '12px/1.5 system-ui,sans-serif' });
+    const fechar = document.createElement('button'); fechar.textContent = 'Fechar'; fechar.addEventListener('click', abrirMenuLucky);
+    p.append(titulo, dica, campo, salvar, conferir, resultado, fechar);
+    document.body.appendChild(p);
+    atualizarMenuLucky();
   };
   let menuMapaFarm=null;
   let menuCovil = null;
@@ -3492,11 +3589,12 @@
       limites.title = 'ON: aos 70% de peso ou 95% dos espacos, processa no mapa se Cartao Kafra e Loja de Bolso estiverem ativos, ou faz a rotina da cidade. OFF: continua a cacada mesmo acima desses limites; Executar agora ainda funciona. Salvo por conta.';
       limites.addEventListener('click', () => { if (ocupado) return; cfg.rotinaLimites = cfg.rotinaLimites === false; salvarCfg(); log('Rotina automatica por peso e espacos ' + (cfg.rotinaLimites ? 'ligada' : 'desligada') + ' nesta conta'); atualizarStatus(); });
       const mapaFarm=document.createElement('button');estilo(mapaFarm);mapaFarm.textContent='Mapa de farm';mapaFarm.addEventListener('click',abrirMapaFarm);
+      const lucky = document.createElement('button'); estilo(lucky); lucky.dataset.lucky = '1'; lucky.addEventListener('click', abrirMenuLucky);
       const covilBtn = document.createElement('button'); covilBtn.dataset.covil = '1'; covilBtn.addEventListener('click', abrirMenuCovil);
-      conteudo.append(liga, covilBtn, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, mapaFarm, usarMapa, detalhes, status, detalhe, historico);
+      conteudo.append(liga, covilBtn, lucky, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, mapaFarm, usarMapa, detalhes, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.22</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.23</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
@@ -3516,4 +3614,3 @@
   atualizarPainel();
   setInterval(verificar, 500);
 })();
-
