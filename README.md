@@ -4,7 +4,7 @@ Script de automação do Yggidle usado no FZN Idle Hub. Esta pasta contém a ver
 
 ## Arquivos
 
-- `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 2.22.
+- `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 2.23.
 - `tests/`: verificações locais dos fluxos de aviso diário, Loja de Cash, evento, mochila e limites.
 
 ## Comportamento principal
@@ -14,6 +14,8 @@ O Auto-voltar acompanha peso, espaços da mochila, morte e mapa de farm. Conform
 Na versão 2.21, a Loja de Cash é fechada automaticamente **somente** quando o Auto-voltar está ligado. O aviso diário continua sendo dispensado ao marcar “Não mostrar novamente hoje” e fechar.
 
 Na versão 2.22, ovos de pet, inclusive o Ovo de Esqueleto, ficam na mochila nos modos de depósito e são protegidos da venda e do Ferreiro.
+
+Na versão 2.23, o botão **Lucky drops** aceita um nome exato por linha (por padrão, `Ovo da La Voisin`). Quando um item procurado aparece ou aumenta na mochila, o painel mantém um aviso até ser fechado e envia uma notificação do sistema caso o Hub já tenha essa permissão. A lista protege os itens da venda e do Ferreiro. O painel mostra a quantidade atual na mochila e a última leitura da Kafra, com horário; abra o armazém para atualizar essa leitura. Ovos de pet continuam fora do depósito.
 
 ## Verificação local
 
@@ -29,4 +31,3 @@ Get-ChildItem .\tests\*.cjs | ForEach-Object { node $_.FullName }
 No FZN Idle Hub, em **Scripts**, selecione **GitHub** e use o arquivo [AUTOVOLTAR-YGGIDLE.user.js](https://github.com/MarcusHenriq99/auto-voltar-hub/blob/main/AUTOVOLTAR-YGGIDLE.user.js) da branch `main`. O cartão **Auto voltar GitHub** está ligado para todas as contas; a antiga cópia colada no Hub deve permanecer desligada para evitar duas execuções.
 
 Depois de publicar uma mudança na `main`, clique **Verificar agora** no cartão do script. O Hub consulta o GitHub nesse momento; confirme a nova versão no cartão e no painel do Auto-voltar. Mantenha **Manter jogo em segundo plano** ligado caso queira que o Hub continue rodando ao trocar de janela.
-
