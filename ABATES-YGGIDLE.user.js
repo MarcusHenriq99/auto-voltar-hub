@@ -157,10 +157,16 @@
     for (const row of [...hourlyMobs.values()].reverse()) line(row.hour + ' · ' + row.name + ': ' + row.count);
   };
 
+  // Captura o registro de callbacks do jogo logo no carregamento do frame.
+  // O painel e a persistencia podem seguir numa cadencia bem menor.
   setInterval(() => {
     const w = findGame();
     if (w !== game) { game = w; injected = false; }
     if (w && !injected) inject(w);
+  }, 30);
+
+  setInterval(() => {
+    const w = game;
     let changed = false;
     if (w?.__fznAbatesQueue?.length) {
       const events = w.__fznAbatesQueue.splice(0);
