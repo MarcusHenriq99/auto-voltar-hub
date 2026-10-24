@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.28
+// @version      2.29
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -1026,6 +1026,11 @@
   };
   const armazemAberto = (w) => [...w.document.querySelectorAll('h1,h2,h3,div,span')]
     .some((el) => visivel(el) && normalizar(textoDe(el)) === 'armazem (kafra)');
+  const armazemCheio = (w) => {
+    if (!armazemAberto(w)) return false;
+    const contagens = (w.document.body.innerText || '').matchAll(/\b(\d+)\s*\/\s*(\d+)\b/g);
+    return [...contagens].some(([, usados, capacidade]) => Number(capacidade) >= 300 && Number(usados) >= Number(capacidade));
+  };
 
   const fecharMochilaDoCartao = async (w) => {
     const achar = () => {
@@ -1173,6 +1178,11 @@
       return { ok: fechou, depositados: 0, motivo: fechou ? null : 'janela de armazem nao fechou' };
     }
     if (!await abrirArmazem(w, naCidade)) return { ok: false, motivo: 'armazem nao abriu' };
+    if (armazemCheio(w)) {
+      log('Armazem cheio: nenhum item sera enviado nesta visita; pulando deposito');
+      const fechou = await fecharArmazem(w);
+      return { ok: fechou, cheio: true, depositados: 0, motivo: fechou ? null : 'janela de armazem nao fechou' };
+    }
     if (typeof w.__elragEngine.moveItemToStorage !== 'function') {
       await fecharArmazem(w);
       return { ok: false, motivo: 'funcao de deposito indisponivel' };
@@ -3630,7 +3640,7 @@
       conteudo.append(liga, covilBtn, lucky, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.28</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.29</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
