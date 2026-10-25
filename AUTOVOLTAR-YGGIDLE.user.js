@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.36
+// @version      2.37
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3777,32 +3777,13 @@
         document.body.appendChild(caixa);
       };
       const exportar = document.createElement('button'); estilo(exportar); exportar.textContent = 'Salvar ajustes';
-      exportar.title = 'Guarda as configuracoes desta conta no armazenamento do Hub, separado do cache do jogo. Quando disponivel, tambem permite salvar um arquivo JSON.';
-      exportar.addEventListener('click', async () => {
-        const dados = { formato: 'fzn-autovoltar-backup', versao: 1,
-          cfg: JSON.parse(JSON.stringify(cfg)), historico: [...historicoLog()] };
-        const nome = `auto-voltar-ajustes-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.json`;
-        let escolha = null;
-        try {
-          if (typeof window.showSaveFilePicker === 'function') escolha = window.showSaveFilePicker({
-            suggestedName: nome, types: [{ description: 'Backup JSON', accept: { 'application/json': ['.json'] } }]
-          });
-        } catch (e) { console.warn('[autovoltar-ygg] Seletor de arquivo indisponivel:', e); }
+      exportar.title = 'Guarda as configuracoes desta conta no armazenamento do Hub, separado do cache do jogo. Recupere-as em Restaurar ajustes.';
+      exportar.addEventListener('click', () => {
         salvarCfg();
         const conferido = backupsDoHub().some((x) => x.cfg.backupId === cfg.backupId &&
           JSON.stringify(x.cfg) === JSON.stringify(cfg));
         log(conferido ? 'Backup salvo no Hub. Use Restaurar ajustes para recupera-lo apos limpar o cache.' :
-          'Backup no Hub nao confirmado; nao limpe o cache antes de salvar uma copia externa.');
-        if (!escolha) return;
-        try {
-          const arquivo = await escolha;
-          const gravador = await arquivo.createWritable();
-          await gravador.write(JSON.stringify(dados, null, 2));
-          await gravador.close();
-          log('Arquivo de backup salvo: ' + arquivo.name);
-        } catch (e) {
-          if (e?.name !== 'AbortError') log('Arquivo externo nao salvo; backup do Hub ' + (conferido ? 'disponivel' : 'indisponivel'));
-        }
+          'Backup no Hub nao confirmado; mantenha os ajustes atuais ate conferir o armazenamento.');
       });
       const importar = document.createElement('button'); estilo(importar); importar.textContent = 'Restaurar ajustes';
       importar.title = 'Recupere um backup do Hub ou escolha um arquivo JSON externo.';
@@ -3839,7 +3820,7 @@
       conteudo.append(liga, covilBtn, lucky, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, exportar, importar, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.35</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.37</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
