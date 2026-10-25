@@ -1,10 +1,13 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.35
+// @version      2.36
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_listValues
 // ==/UserScript==
 
 (() => {
@@ -185,6 +188,7 @@
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_BACKUP = 'fzn-autovoltar-ygg-backup-v1';
+  const PREFIXO_BACKUP_HUB = 'fzn-autovoltar-ajustes-v2:';
 
   const KAFRA_PADRAO = { 'prontera:149,172': { dx: -63, dy: -200 }, 'prontera:155,183': { dx: -63, dy: -200 } };
   const VENDEDOR_PADRAO = {};
@@ -236,6 +240,9 @@
     comprar: true, compras: [{ nome: 'Poção Laranja', aba: 'Consumíveis', alvo: 200 }],
     vendedor: {}
   }, cfgLocal || cfgSessao || {});
+  const novoIdBackup = () => (typeof globalThis.crypto?.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  if (!cfg.backupId) cfg.backupId = novoIdBackup();
   cfg.lucky = Array.isArray(cfg.lucky) ? cfg.lucky.filter((s) => typeof s === 'string' && s.trim()) : ['Ovo da La Voisin'];
   if ('comprarPocao' in cfg) {
     cfg.comprar = cfg.comprarPocao;
@@ -245,6 +252,23 @@
     gravarJson(CHAVE_CFG, cfg);
     try { sessionStorage.setItem(CHAVE_BACKUP, JSON.stringify(cfg)); } catch {}
     try { void gravarBackupDisco(JSON.parse(JSON.stringify(cfg))); } catch {}
+    try {
+      if (typeof GM_setValue === 'function') {
+        GM_setValue(PREFIXO_BACKUP_HUB + cfg.backupId, JSON.stringify({
+          formato: 'fzn-autovoltar-backup', versao: 1, cfg,
+          salvoEm: new Date().toISOString()
+        }));
+      }
+    } catch (e) { console.warn('[autovoltar-ygg] Backup do Hub falhou:', e); }
+  };
+  const backupsDoHub = () => {
+    if (typeof GM_listValues !== 'function' || typeof GM_getValue !== 'function') return [];
+    try {
+      return GM_listValues().filter((k) => k.startsWith(PREFIXO_BACKUP_HUB))
+        .map((k) => { try { return JSON.parse(GM_getValue(k, 'null')); } catch { return null; } })
+        .filter((x) => x?.formato === 'fzn-autovoltar-backup' && x.cfg && typeof x.cfg === 'object')
+        .sort((a, b) => String(b.salvoEm || '').localeCompare(String(a.salvoEm || '')));
+    } catch (e) { console.warn('[autovoltar-ygg] Leitura dos backups do Hub falhou:', e); return []; }
   };
   const relerCalibracao = () => {
     const salvo = lerJson(CHAVE_CFG, {});
@@ -3696,37 +3720,95 @@
       const usarMapa = document.createElement('button'); estilo(usarMapa); usarMapa.textContent = 'Usar mapa atual'; usarMapa.title = 'Limpa o bloqueio antigo e retoma a automacao neste mapa'; usarMapa.addEventListener('click', async()=>{if(ocupado)return;const p=posicao(jogo());if(p?.mapa && p.mapa!=='prontera'){cfg.mapaFarmManual=p.mapa;salvarCfg();}await retomarNoMapaAtual();});
       const detalhes = document.createElement('button'); estilo(detalhes); detalhes.textContent = 'Histórico';
       detalhes.addEventListener('click', () => { detalhesProcesso = !detalhesProcesso; atualizarStatus(); });
-      const exportar = document.createElement('button'); estilo(exportar); exportar.textContent = 'Salvar ajustes';
-      exportar.title = 'Baixa um arquivo de seguranca com as configuracoes desta conta; guarde-o antes de limpar dados do jogo.';
-      exportar.addEventListener('click', () => {
-        const dados = { formato: 'fzn-autovoltar-backup', versao: 1, cfg, historico: historicoLog() };
-        const url = URL.createObjectURL(new Blob([JSON.stringify(dados, null, 2)], { type: 'application/json' }));
-        const a = document.createElement('a'); a.href = url; a.download = `auto-voltar-ajustes-${new Date().toISOString().slice(0, 10)}.json`;
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-        log('Backup das configuracoes desta conta baixado');
-      });
-      const importar = document.createElement('button'); estilo(importar); importar.textContent = 'Restaurar ajustes';
-      importar.title = 'Escolha um backup salvo desta conta para recuperar mapa, listas, calibracoes e botoes apos limpar dados.';
-      importar.addEventListener('click', () => {
-        if (ocupado) return;
+      const aplicarBackup = (dados) => {
+        if (dados?.formato !== 'fzn-autovoltar-backup' || !dados.cfg ||
+            typeof dados.cfg !== 'object' || Array.isArray(dados.cfg)) throw new Error('formato invalido');
+        const idDestaConta = cfg.backupId || novoIdBackup();
+        for (const [chave, valor] of Object.entries(dados.cfg)) {
+          if (!['__proto__', 'constructor', 'prototype', 'backupId'].includes(chave)) cfg[chave] = valor;
+        }
+        cfg.backupId = idDestaConta;
+        salvarCfg();
+        if (Array.isArray(dados.historico)) { historicoMem = dados.historico.slice(-100); gravarJson(CHAVE_LOG, historicoMem); }
+        log('Configuracoes restauradas; mapa, listas e opcoes desta conta recuperados');
+        painel?.remove(); painel = null; atualizarPainel();
+      };
+      const seletorArquivoBackup = () => {
         const entrada = document.createElement('input'); entrada.type = 'file'; entrada.accept = '.json,application/json';
         entrada.addEventListener('change', async () => {
           const arquivo = entrada.files?.[0];
           if (!arquivo || arquivo.size > 500000) return log('Backup nao selecionado ou grande demais');
-          try {
-            const dados = JSON.parse(await arquivo.text());
-            if (dados.formato !== 'fzn-autovoltar-backup' || !dados.cfg || typeof dados.cfg !== 'object' || Array.isArray(dados.cfg)) throw new Error('formato invalido');
-            for (const [chave, valor] of Object.entries(dados.cfg)) {
-              if (!['__proto__', 'constructor', 'prototype'].includes(chave)) cfg[chave] = valor;
-            }
-            salvarCfg();
-            if (Array.isArray(dados.historico)) { historicoMem = dados.historico.slice(-100); gravarJson(CHAVE_LOG, historicoMem); }
-            log('Configuracoes restauradas do backup; mapa, listas e opcoes desta conta recuperados');
-            painel?.remove(); painel = null; atualizarPainel();
-          } catch (e) { log('Backup nao restaurado: ' + String(e?.message || e).slice(0, 80)); }
+          try { aplicarBackup(JSON.parse(await arquivo.text())); }
+          catch (e) { log('Backup nao restaurado: ' + String(e?.message || e).slice(0, 80)); }
         }, { once: true });
         entrada.click();
+      };
+      const painelBackups = () => {
+        const lista = backupsDoHub();
+        const caixa = document.createElement('div');
+        Object.assign(caixa.style, {
+          position: 'fixed', zIndex: '2147483647', left: 'max(12px, calc(50% - 225px))',
+          top: 'max(12px, calc(50% - 180px))', width: 'min(450px, calc(100vw - 24px))',
+          maxHeight: 'min(70vh, 500px)', overflow: 'auto', boxSizing: 'border-box',
+          padding: '12px', background: '#172433', color: '#f3f5f7', border: '1px solid #8095a8',
+          borderRadius: '10px', boxShadow: '0 12px 35px #000b', font: '13px/1.4 system-ui,sans-serif'
+        });
+        const cab = document.createElement('div');
+        Object.assign(cab.style, { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' });
+        const titulo = document.createElement('strong'); titulo.textContent = 'Restaurar ajustes'; cab.appendChild(titulo);
+        const fechar = document.createElement('button'); estilo(fechar); fechar.textContent = 'Fechar';
+        fechar.addEventListener('click', () => caixa.remove()); cab.appendChild(fechar); caixa.appendChild(cab);
+        const aviso = document.createElement('p');
+        aviso.textContent = lista.length ? 'Escolha o backup desta conta pelo mapa e data. Os ajustes do jogo permanecem salvos no Hub mesmo apos limpar o cache do jogo.' : 'Nenhum backup do Hub encontrado. Voce ainda pode escolher um arquivo JSON externo.';
+        Object.assign(aviso.style, { margin: '9px 0', color: '#dbe7ef' }); caixa.appendChild(aviso);
+        for (const dados of lista) {
+          const item = document.createElement('button'); estilo(item);
+          Object.assign(item.style, { display: 'block', width: '100%', textAlign: 'left', margin: '5px 0', padding: '8px' });
+          const mapa = dados.cfg.mapaFarmManual || dados.cfg.destinoFarm?.mapa || 'mapa nao definido';
+          const data = dados.salvoEm ? new Date(dados.salvoEm).toLocaleString('pt-BR') : 'data desconhecida';
+          const atual = dados.cfg.backupId === cfg.backupId ? ' (esta conta)' : '';
+          item.textContent = `${mapa}${atual} — ${data} — ${dados.cfg.venda?.nomes?.length || 0} protegidos`;
+          item.addEventListener('click', () => { try { aplicarBackup(dados); caixa.remove(); } catch (e) { log('Backup nao restaurado: ' + String(e?.message || e)); } });
+          caixa.appendChild(item);
+        }
+        const arquivo = document.createElement('button'); estilo(arquivo); arquivo.textContent = 'Escolher arquivo JSON';
+        arquivo.addEventListener('click', () => { caixa.remove(); seletorArquivoBackup(); });
+        caixa.appendChild(arquivo);
+        document.body.appendChild(caixa);
+      };
+      const exportar = document.createElement('button'); estilo(exportar); exportar.textContent = 'Salvar ajustes';
+      exportar.title = 'Guarda as configuracoes desta conta no armazenamento do Hub, separado do cache do jogo. Quando disponivel, tambem permite salvar um arquivo JSON.';
+      exportar.addEventListener('click', async () => {
+        const dados = { formato: 'fzn-autovoltar-backup', versao: 1,
+          cfg: JSON.parse(JSON.stringify(cfg)), historico: [...historicoLog()] };
+        const nome = `auto-voltar-ajustes-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.json`;
+        let escolha = null;
+        try {
+          if (typeof window.showSaveFilePicker === 'function') escolha = window.showSaveFilePicker({
+            suggestedName: nome, types: [{ description: 'Backup JSON', accept: { 'application/json': ['.json'] } }]
+          });
+        } catch (e) { console.warn('[autovoltar-ygg] Seletor de arquivo indisponivel:', e); }
+        salvarCfg();
+        const conferido = backupsDoHub().some((x) => x.cfg.backupId === cfg.backupId &&
+          JSON.stringify(x.cfg) === JSON.stringify(cfg));
+        log(conferido ? 'Backup salvo no Hub. Use Restaurar ajustes para recupera-lo apos limpar o cache.' :
+          'Backup no Hub nao confirmado; nao limpe o cache antes de salvar uma copia externa.');
+        if (!escolha) return;
+        try {
+          const arquivo = await escolha;
+          const gravador = await arquivo.createWritable();
+          await gravador.write(JSON.stringify(dados, null, 2));
+          await gravador.close();
+          log('Arquivo de backup salvo: ' + arquivo.name);
+        } catch (e) {
+          if (e?.name !== 'AbortError') log('Arquivo externo nao salvo; backup do Hub ' + (conferido ? 'disponivel' : 'indisponivel'));
+        }
+      });
+      const importar = document.createElement('button'); estilo(importar); importar.textContent = 'Restaurar ajustes';
+      importar.title = 'Recupere um backup do Hub ou escolha um arquivo JSON externo.';
+      importar.addEventListener('click', () => {
+        if (ocupado) return;
+        painelBackups();
       });
       const status = document.createElement('div'); status.dataset.status = '1';
       Object.assign(status.style, { width: '100%', color: '#cfe3f0', fontWeight: '600', fontVariantNumeric: 'tabular-nums' });
