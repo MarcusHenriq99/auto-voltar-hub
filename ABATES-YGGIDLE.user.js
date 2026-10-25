@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle - contador de abates por sessao
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.5
+// @version      1.6
 // @description  Conta monstros derrotados apos um golpe proprio, por especie e hora.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -91,10 +91,16 @@
             return callback.apply(this, arguments);
           });
         };
-        const [managerMod, entityMod, dbMod] = await Promise.all([
-          import(base + 'Renderer/EntityManager.js'), import(base + 'Renderer/Entity/Entity.js'),
-          import(base + 'DB/DBManager.js')
-        ]);
+        // O renderer do jogo inicializa Entity e EntityManager em uma ordem propria.
+        // Importa-los antes disso pode interromper o jogo com
+        // "Cannot access 'Entity' before initialization" na tela LOADING.
+        status('Aguardando inicializacao do motor do jogo');
+        while (!window.__elragEngine?.renderer) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        const managerMod = await import(base + 'Renderer/EntityManager.js');
+        const entityMod = await import(base + 'Renderer/Entity/Entity.js');
+        const dbMod = await import(base + 'DB/DBManager.js');
         const Entities = managerMod.default, Entity = entityMod.default, DB = dbMod.default;
         const origDeath = Entities.removeLife;
         Entities.removeLife = function(gid) {
