@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle - contador de abates por sessao
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.6
+// @version      1.7
 // @description  Conta monstros derrotados apos um golpe proprio, por especie e hora.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -48,7 +48,12 @@
         const build = String(window.ELRAG_CLIENT_BUILD || '').trim();
         if (!/^[0-9a-f]{6,64}$/.test(build)) throw new Error('build do cliente indisponivel');
         const base = '/v/' + build + '/src/';
-        // O registro dos handlers ocorre cedo: nao espere carregar renderer e banco.
+        // Nenhum modulo do jogo pode ser importado enquanto o motor ainda monta
+        // seus modulos circulares. Mesmo SessionStorage pode puxar EntityManager.
+        status('Aguardando inicializacao do motor do jogo');
+        while (!window.__elragEngine?.renderer) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
         const [netMod, packetMod, sessionMod] = await Promise.all([
           import(base + 'Network/NetworkManager.js'), import(base + 'Network/PacketStructure.js'),
           import(base + 'Engine/SessionStorage.js')
@@ -91,13 +96,6 @@
             return callback.apply(this, arguments);
           });
         };
-        // O renderer do jogo inicializa Entity e EntityManager em uma ordem propria.
-        // Importa-los antes disso pode interromper o jogo com
-        // "Cannot access 'Entity' before initialization" na tela LOADING.
-        status('Aguardando inicializacao do motor do jogo');
-        while (!window.__elragEngine?.renderer) {
-          await new Promise((resolve) => setTimeout(resolve, 250));
-        }
         const managerMod = await import(base + 'Renderer/EntityManager.js');
         const entityMod = await import(base + 'Renderer/Entity/Entity.js');
         const dbMod = await import(base + 'DB/DBManager.js');
