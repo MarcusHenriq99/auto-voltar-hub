@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.39
+// @version      2.40
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -2551,7 +2551,7 @@
 
   setInterval(() => {
     try {
-      if (ocupado || vigia || chegadaAtrasada || recuperacao || cfg.retornoPendente) window.top.__FZN_ECONOMIA_YGG__?.acordar('autovoltar', 1500);
+      if (!rifaRodando && (ocupado || vigia || chegadaAtrasada || recuperacao || cfg.retornoPendente)) window.top.__FZN_ECONOMIA_YGG__?.acordar('autovoltar', 1500);
     } catch {}
   }, 250);
 
@@ -3094,12 +3094,13 @@
     'Bênção de Baldur','Esporo de Yggdrasil','Hidromel de Kvasir'
   ];
   const rifaEstado = { etapa: 'Aguardando', premio: '', edicao: '', compras: 0, detalhe: '' };
-  let rifaRodando = false, rifaMenu = null;
+  let rifaRodando = false, rifaFarmPausado = false, rifaMenu = null;
   const rifaStatus = (etapa, detalhe = '') => {
+    const mudou = rifaEstado.etapa !== etapa || rifaEstado.detalhe !== detalhe;
     rifaEstado.etapa = etapa; rifaEstado.detalhe = detalhe;
     const linha = rifaMenu?.querySelector('[data-rifa-status]');
     if (linha) linha.textContent = 'Estado: '+etapa+(detalhe?' · '+detalhe:'');
-    if (detalhe) log('Rifa: ' + etapa + ' — ' + detalhe);
+    if (mudou && detalhe) log('Rifa: ' + etapa + ' — ' + detalhe);
     atualizarPainel();
   };
   const premioMarcadoRifa = (texto) => (cfg.rifa.premios || [])
@@ -3245,6 +3246,8 @@
       rifaStatus('Saindo do farm',premioAvisado || 'conferindo o prêmio');
       await sairDaEconomia(w);
       if (cacava && !await pausarCacada(w)) throw new Error('não consegui pausar a caça');
+      rifaFarmPausado = true;
+      rifaStatus('Farm pausado para rifa',premioAvisado || 'aguardando edição');
       if (!await sairParaRifa(w)) throw new Error('não consegui chegar a Prontera');
       rifaStatus('Falando com YggIdle Bet');
       if (!await abrirRifaNoNpc(w)) throw new Error('NPC YggIdle Bet não encontrado');
@@ -3256,11 +3259,17 @@
         if (posicao(w)?.mapa === 'prontera') {
           rifaStatus('Voltando ao farm');
           const voltou = await voltarAoMapa(w);
-          if (voltou && cacava) await retomarCacada(w);
+          if (voltou) {
+            rifaFarmPausado = false;
+            if (cacava) await retomarCacada(w);
+          }
           if (!voltou) rifaStatus('Aguardando retorno','verifique mapa e peso no Auto-voltar');
-        } else if (cacava && posicao(w)?.mapa === origem?.mapa) ligarAutopilot(w,true);
+        } else if (cacava && posicao(w)?.mapa === origem?.mapa) {
+          rifaFarmPausado = false;
+          ligarAutopilot(w,true);
+        }
       } catch(e) { rifaStatus('Aguardando retorno',String(e?.message||e).slice(0,120)); }
-      rifaRodando = false; ocupado = false; atualizarPainel();
+      rifaFarmPausado = false; rifaRodando = false; ocupado = false; atualizarPainel();
     }
   };
   const vigiarRifa = (w) => {
@@ -3335,6 +3344,13 @@
     atualizarPainel();
     const w = jogo();
     if (!w) return;
+    if (rifaRodando) {
+      if (rifaFarmPausado) {
+        botaoHunt(w, true)?.click();
+        if (autopilotLigado(w)) ligarAutopilot(w, false);
+      }
+      return;
+    }
     if (dispensarAvisoDiario(w)) return;
     if (cfg.ligado && fecharLojaCash(w)) return;
     ligarCalibracao(w);
@@ -3471,7 +3487,7 @@
   const atualizarStatus = () => {
     if (!painel) return;
     const abrir = painel.querySelector('[data-abrir]');
-    if (abrir) { abrir.textContent = 'Auto-voltar ' + (cfg.ligado ? 'ON' : 'OFF') + ' • ' + andamento.etapa + (controlesAbertos ? ' ▾' : ' ▸'); abrir.title = andamento.detalhe; }
+    if (abrir) { abrir.textContent = (rifaRodando ? 'Auto-voltar PAUSADO • Rifa' : 'Auto-voltar ' + (cfg.ligado ? 'ON' : 'OFF')) + ' • ' + andamento.etapa + (controlesAbertos ? ' ▾' : ' ▸'); abrir.title = rifaRodando ? 'Farm pausado até a rifa terminar e o retorno ao mapa concluir' : andamento.detalhe; }
     const controles = painel.querySelector('[data-controles]');
     if (controles) controles.style.display = controlesAbertos ? 'flex' : 'none';
     const w = jogo(), peso = w && lerPeso(w);
@@ -4074,7 +4090,7 @@
       conteudo.append(liga, covilBtn, lucky, rifaLiga, rifaBtn, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, exportar, importar, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.39</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.40</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
@@ -4082,7 +4098,8 @@
       fznEncolhivel(painel, 'fzn-autovoltar-ygg-encolher-v8');
     }
     const liga = painel.querySelector('[data-liga]');
-    liga.textContent = `Auto-voltar: ${cfg.ligado ? 'ON' : 'OFF'}`;
+    liga.textContent = rifaRodando ? 'Auto-voltar: PAUSADO (RIFA)' : `Auto-voltar: ${cfg.ligado ? 'ON' : 'OFF'}`;
+    liga.disabled = rifaRodando;
     liga.className = cfg.ligado ? 'fzn-av--on' : 'fzn-av--off';
     liga.title = historicoLog().slice(-12).join('\n') || 'sem eventos ainda';
     const rifaBtn = painel.querySelector('[data-rifa]');
