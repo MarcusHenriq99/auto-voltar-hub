@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.37
+// @version      2.38
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -244,6 +244,7 @@
     ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
   if (!cfg.backupId) cfg.backupId = novoIdBackup();
   cfg.lucky = Array.isArray(cfg.lucky) ? cfg.lucky.filter((s) => typeof s === 'string' && s.trim()) : ['Ovo da La Voisin'];
+  cfg.rifa = { ligado: false, premios: [], reserva: 0, ...(cfg.rifa || {}) };
   if ('comprarPocao' in cfg) {
     cfg.comprar = cfg.comprarPocao;
     for (const k of ['comprarPocao', 'pocaoNome', 'pocaoId', 'pocaoMinimo', 'pocaoAlvo']) delete cfg[k];
@@ -3082,6 +3083,246 @@
     return false;
   };
 
+  const PREMIOS_RIFA = [
+    'Vigília de Heimdall','Fúria do Berserker','Banquete de Yule','Arca de Fáfnir',
+    'Runa Eterna de Fogo','Runa Eterna de Água','Runa Eterna de Terra','Runa Eterna de Vento',
+    'Lágrima de Mímir','Semente de Herói','Aljava de Ullr','Semente da Magia',
+    'Semente dos Deuses','Doce do Infinito','Runa Eterna de Thanatos',
+    'Festim de Fenrir','Festim de Sleipnir','Olho de Odin','Brasa de Surtur',
+    'Âmbar de Freya','Hino de Bragi','Maçã de Idunn','Lágrima de Hel',
+    'Fogo de Muspelheim','Bile de Nidhogg','Peçonha de Jörmungandr',
+    'Bênção de Baldur','Esporo de Yggdrasil','Hidromel de Kvasir'
+  ];
+  const rifaEstado = { etapa: 'Aguardando', premio: '', edicao: '', compras: 0, detalhe: '' };
+  let rifaRodando = false, rifaMenu = null;
+  const rifaStatus = (etapa, detalhe = '') => {
+    rifaEstado.etapa = etapa; rifaEstado.detalhe = detalhe;
+    if (detalhe) log('Rifa: ' + etapa + ' — ' + detalhe);
+    atualizarPainel();
+  };
+  const premioMarcadoRifa = (texto) => (cfg.rifa.premios || [])
+    .some(nome => normalizar(texto).includes(normalizar(nome)));
+  const janelaRifa = (w) => {
+    const folhas = [...w.document.querySelectorAll('h1,h2,h3,div,span,strong')]
+      .filter(el => visivel(el) && normalizar(textoDe(el)) === 'rifa yggidle' &&
+        ![...el.children].some(c => normalizar(textoDe(c)) === 'rifa yggidle'));
+    for (const folha of folhas) {
+      let p = folha;
+      for (let i = 0; p && i < 7; i++, p = p.parentElement) {
+        if (/seus n[uú]meros nesta edi[cç][aã]o/i.test(p.innerText || '') &&
+            /comprar n[uú]mero/i.test(p.innerText || '')) return p;
+      }
+    }
+    return null;
+  };
+  const zenyRifa = (w) => {
+    const m = /Zeny\s+([\d.,]+)/i.exec(w.document.body.innerText || '');
+    return m ? Number(m[1].replace(/[^\d]/g, '')) : NaN;
+  };
+  const anuncioRifa = (w) => {
+    const t = w.document.body.innerText || '';
+    const matches = [...t.matchAll(/\[Rifa YggIdle\]\s*Em\s*(?:10|5|1)\s*minuto[^\n]{0,150}?Pr[eê]mio:\s*([^\n]+)/gi)];
+    return matches.length ? matches[matches.length - 1][1].replace(/\s+x\d+\.?\s*$/i, '').trim() : '';
+  };
+  const edicaoRifaAtual = () => {
+    const d = new Date(), agora = d.getTime();
+    for (const h of [0,14,16,18,20,22]) {
+      const inicio = new Date(d.getFullYear(),d.getMonth(),d.getDate(),h,10).getTime();
+      if (agora >= inicio - 10*60000 && agora <= inicio + 90*60000)
+        return { id: new Date(inicio).toLocaleDateString('sv-SE') + '-' + h, inicio, abriu: agora >= inicio };
+    }
+    return null;
+  };
+  const acharNpcRifa = async (w) => {
+    const manager = await carregarEntidadesNpc(w);
+    if (!manager) return null;
+    let achou = null;
+    manager.forEach(e => {
+      const c = e?.constructor;
+      const npc = c && ((Number.isFinite(c.TYPE_NPC) && e.objecttype === c.TYPE_NPC) ||
+        (Number.isFinite(c.TYPE_NPC2) && e.objecttype === c.TYPE_NPC2));
+      const nome = e?.display?.name || e?._job || e?.name || '';
+      if (npc && e.GID > 0 && !e.remove_tick && /yggidle\s*bet/i.test(String(nome))) achou = e;
+    });
+    return achou;
+  };
+  const abrirRifaNoNpc = async (w) => {
+    if (janelaRifa(w)) return true;
+    if (posicao(w)?.mapa !== 'prontera') return false;
+    for (let i = 0; i < 3; i++) {
+      const npc = await acharNpcRifa(w);
+      if (!npc) { await esperar(700); continue; }
+      try { npc.onMouseDown?.(); } catch {}
+      const opcao = await esperarAte(() => botaoPorTexto(w.document,t => /^Rifa Yggidle$/i.test(t)),2500);
+      if (opcao) opcao.click();
+      if (await esperarAte(() => janelaRifa(w),3500)) return true;
+    }
+    return false;
+  };
+  const sairParaRifa = async (w) => {
+    if (posicao(w)?.mapa === 'prontera') return true;
+    const sair = w.document.querySelector('[data-tutorial="sair-da-instancia"]') ||
+      botaoPorTexto(w.document,t => /^Sair$/i.test(t));
+    if (!sair || !visivel(sair)) return false;
+    sair.click();
+    const confirmar = await esperarAte(() => /Sair da inst[aâ]ncia/i.test(w.document.body.innerText || '') &&
+      [...w.document.querySelectorAll('button')].find(b => b !== sair && visivel(b) && !b.disabled &&
+        /^sair$/i.test(textoDe(b))),5000);
+    if (!confirmar) return false;
+    confirmar.click();
+    return Boolean(await esperarAte(() => posicao(w)?.mapa === 'prontera',90000,500));
+  };
+  const fecharRifa = (w) => {
+    const modal = janelaRifa(w);
+    const fechar = modal && [...modal.querySelectorAll('button')].find(b =>
+      visivel(b) && /^(x|×|fechar)$/i.test(textoDe(b) || b.getAttribute('aria-label') || ''));
+    fechar?.click();
+  };
+  const comprarRifa = async (w,edicao,premioAvisado) => {
+    let premio = premioAvisado, semBotaoDesde = 0;
+    while (cfg.rifa.ligado && cfg.ligado && posicao(w)?.mapa === 'prontera') {
+      const modal = janelaRifa(w);
+      if (!modal) {
+        if (!await abrirRifaNoNpc(w)) { rifaStatus('Parada','janela da rifa não abriu'); return; }
+        continue;
+      }
+      const texto = modal.innerText || '';
+      if (/nenhuma edi[cç][aã]o aberta/i.test(texto)) {
+        if (Date.now() > edicao.inicio + 120000) { rifaStatus('Encerrada','nenhuma edição aberta'); return; }
+        await esperar(500); continue;
+      }
+      const premiosNoModal = PREMIOS_RIFA.filter(nome => normalizar(texto).includes(normalizar(nome)));
+      premio = premiosNoModal.join(' + ');
+      if (!premio || !premioMarcadoRifa(premio)) {
+        rifaStatus('Ignorada',premio ? 'prêmio não selecionado: '+premio : 'prêmio não confirmado');
+        return;
+      }
+      rifaEstado.premio = premio;
+      const saldo = zenyRifa(w), reserva = Math.max(0,Number(cfg.rifa.reserva)||0);
+      if (Number.isFinite(saldo) && saldo-reserva < 500000) {
+        rifaStatus('Sem saldo','saldo atingiu a reserva'); return;
+      }
+      const comprar = [...modal.querySelectorAll('button')].find(b => /comprar n[uú]mero/i.test(textoDe(b)));
+      if (!comprar || comprar.disabled) {
+        if (!semBotaoDesde) semBotaoDesde = Date.now();
+        if (Date.now()-semBotaoDesde > 12000) { rifaStatus('Encerrada','botão indisponível por 12 s'); return; }
+        await esperar(650); continue;
+      }
+      semBotaoDesde = 0;
+      comprar.click();
+      const confirmar = await esperarAte(() => [...w.document.querySelectorAll('button')]
+        .filter(b => visivel(b) && !b.disabled && !modal.contains(b) &&
+          /^(confirmar|comprar|sim)$/i.test(textoDe(b)))
+        .find(b => /500[.,]000|n[uú]mero|rifa/i.test(b.parentElement?.parentElement?.innerText || '')),3500,100);
+      if (!confirmar) { rifaStatus('Parada','confirmação da compra não apareceu'); return; }
+      confirmar.click();
+      const debitou = await esperarAte(() => {
+        const novo = zenyRifa(w);
+        return Number.isFinite(saldo) && Number.isFinite(novo) && novo <= saldo-500000;
+      },6000,150);
+      if (!debitou) { rifaStatus('Parada','compra não confirmada pelo saldo'); return; }
+      rifaEstado.compras++;
+      rifaStatus('Comprando',rifaEstado.compras+' número(s); '+premio);
+      await esperar(600);
+    }
+  };
+  const executarRifa = async (w,edicao) => {
+    if (ocupado || rifaRodando || !cfg.rifa.ligado || !cfg.ligado || !(cfg.rifa.premios||[]).length) return;
+    rifaRodando = true; ocupado = true;
+    const origem = posicao(w), cacava = autopilotLigado(w) || !!botaoHunt(w,true);
+    const premioAvisado = rifaEstado.premio;
+    rifaEstado.compras = 0;
+    try {
+      if (origem?.mapa !== 'prontera') registrarDestinoFarm(w);
+      rifaStatus('Saindo do farm',premioAvisado || 'conferindo o prêmio');
+      await sairDaEconomia(w);
+      if (cacava && !await pausarCacada(w)) throw new Error('não consegui pausar a caça');
+      if (!await sairParaRifa(w)) throw new Error('não consegui chegar a Prontera');
+      rifaStatus('Falando com YggIdle Bet');
+      if (!await abrirRifaNoNpc(w)) throw new Error('NPC YggIdle Bet não encontrado');
+      await comprarRifa(w,edicao,premioAvisado);
+    } catch(e) { rifaStatus('Parada',String(e?.message||e).slice(0,160)); }
+    finally {
+      try {
+        fecharRifa(w);
+        if (posicao(w)?.mapa === 'prontera') {
+          rifaStatus('Voltando ao farm');
+          const voltou = await voltarAoMapa(w);
+          if (voltou && cacava) await retomarCacada(w);
+          if (!voltou) rifaStatus('Aguardando retorno','verifique mapa e peso no Auto-voltar');
+        } else if (cacava && posicao(w)?.mapa === origem?.mapa) ligarAutopilot(w,true);
+      } catch(e) { rifaStatus('Aguardando retorno',String(e?.message||e).slice(0,120)); }
+      rifaRodando = false; ocupado = false; atualizarPainel();
+    }
+  };
+  const vigiarRifa = (w) => {
+    const edicao = edicaoRifaAtual();
+    if (!edicao || !cfg.rifa.ligado || !cfg.ligado || !(cfg.rifa.premios||[]).length) return;
+    if (rifaEstado.edicao !== edicao.id) { rifaEstado.edicao = edicao.id; rifaEstado.premio = ''; }
+    const anunciado = anuncioRifa(w);
+    if (anunciado) rifaEstado.premio = anunciado;
+    if (ocupado || rifaRodando || cfg.rifa.ultimaEdicao === edicao.id) return;
+    if (rifaEstado.premio && !premioMarcadoRifa(rifaEstado.premio)) {
+      cfg.rifa.ultimaEdicao = edicao.id; salvarCfg();
+      rifaStatus('Ignorada','prêmio anunciado: '+rifaEstado.premio); return;
+    }
+    if (!rifaEstado.premio && !edicao.abriu) return;
+    cfg.rifa.ultimaEdicao = edicao.id; salvarCfg();
+    void executarRifa(w,edicao);
+  };
+  const abrirMenuRifa = () => {
+    if (rifaMenu?.isConnected) { rifaMenu.remove(); rifaMenu = null; return; }
+    const menu = document.createElement('section');
+    menu.className = 'fzn-rifa-menu';
+    Object.assign(menu.style,{position:'fixed',right:'22px',bottom:'140px',width:'390px',maxHeight:'72vh',
+      overflow:'auto',zIndex:'2147483647',background:'#142331',color:'#f5f7f8',border:'1px solid #7891a5',
+      borderRadius:'10px',padding:'12px',boxShadow:'0 8px 28px #0009',font:'13px Arial,sans-serif'});
+    const topo = document.createElement('div');
+    topo.textContent = 'Rifa YggIdle · 500.000z por número';
+    Object.assign(topo.style,{fontWeight:'bold',cursor:'move',marginBottom:'9px'});
+    const ajuda = document.createElement('div');
+    ajuda.textContent = 'Marque os prêmios que deseja disputar. ON: sai do farm no aviso, compra até terminar a edição ou atingir a reserva de zeny, e volta ao mapa. Se o prêmio anunciado não estiver marcado, permanece no farm.';
+    Object.assign(ajuda.style,{lineHeight:'1.4',marginBottom:'8px',color:'#d2dce4'});
+    const status = document.createElement('div');
+    status.textContent = 'Estado: '+rifaEstado.etapa+(rifaEstado.detalhe?' · '+rifaEstado.detalhe:'');
+    status.style.marginBottom = '8px';
+    const lista = document.createElement('div');
+    Object.assign(lista.style,{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'5px',maxHeight:'360px',overflowY:'auto'});
+    for (const nome of PREMIOS_RIFA) {
+      const linha = document.createElement('label');
+      Object.assign(linha.style,{display:'flex',alignItems:'flex-start',gap:'5px',cursor:'pointer',padding:'4px',
+        border:'1px solid #445967',borderRadius:'5px',fontSize:'12px'});
+      const check = document.createElement('input');
+      check.type='checkbox'; check.checked=(cfg.rifa.premios||[]).includes(nome);
+      check.onchange=()=>{cfg.rifa.premios=check.checked
+        ? [...new Set([...(cfg.rifa.premios||[]),nome])]
+        : (cfg.rifa.premios||[]).filter(x=>x!==nome); salvarCfg(); atualizarPainel();};
+      linha.append(check,document.createTextNode(nome)); lista.appendChild(linha);
+    }
+    const reservaLinha=document.createElement('label');
+    reservaLinha.textContent='Zeny para preservar: ';
+    Object.assign(reservaLinha.style,{display:'block',margin:'10px 0'});
+    const reserva=document.createElement('input');
+    reserva.type='number';reserva.min='0';reserva.step='500000';reserva.value=String(cfg.rifa.reserva||0);
+    Object.assign(reserva.style,{width:'130px',padding:'4px',color:'#17212b',background:'#fff'});
+    reserva.onchange=()=>{cfg.rifa.reserva=Math.max(0,Math.floor(Number(reserva.value)||0));salvarCfg();};
+    reservaLinha.appendChild(reserva);
+    const acoes=document.createElement('div');
+    Object.assign(acoes.style,{display:'flex',gap:'6px',justifyContent:'space-between'});
+    const botao=(txt,fn)=>{const b=document.createElement('button');b.textContent=txt;b.onclick=fn;
+      Object.assign(b.style,{padding:'7px',background:'#24516c',color:'white',border:'1px solid #9cb9c9',
+        borderRadius:'6px',cursor:'pointer'});return b;};
+    acoes.append(
+      botao('Executar agora',()=>{const w=jogo(),edicao=edicaoRifaAtual();
+        if (!w||!edicao) {rifaStatus('Aguardando','não há edição próxima ou aberta');return;}
+        if (!cfg.rifa.ligado||!cfg.ligado) {rifaStatus('Desligada','ligue Rifa e Auto-voltar');return;}
+        cfg.rifa.ultimaEdicao=edicao.id;salvarCfg();void executarRifa(w,edicao);}),
+      botao('Fechar',()=>{menu.remove();rifaMenu=null;})
+    );
+    menu.append(topo,ajuda,status,lista,reservaLinha,acoes);
+    document.body.appendChild(menu);rifaMenu=menu;
+    fznArrastavel(menu,topo,'fzn-rifa-ygg-pos-v1');
+  };
   const verificar = () => {
     atualizarPainel();
     const w = jogo();
@@ -3091,6 +3332,7 @@
     ligarCalibracao(w);
     instalarGanchos(w);
     vigiarLucky();
+    vigiarRifa(w);
     if (!cfg.ligado || ocupado) return;
     if (cfg.covil.ligado) {
       const salvarC = botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento');
@@ -3296,13 +3538,15 @@
       cfg.lucky = [...new Map(campo.value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).map((s) => [nomeBase(s), s])).values()];
       salvarCfg();
       vistoLucky.clear(); seqLuckyMochila = -1;
-      vigiarLucky(); atualizarMenuLucky(); atualizarStatus();
+      vigiarLucky();
+ atualizarMenuLucky(); atualizarStatus();
       log('Lucky drops: lista salva (' + cfg.lucky.length + ' itens)');
     });
     const conferir = document.createElement('button'); conferir.textContent = 'Conferir mochila';
     conferir.addEventListener('click', async () => {
       const w = jogo(); if (w) await lerMochila(w);
-      vigiarLucky(); atualizarMenuLucky();
+      vigiarLucky();
+ atualizarMenuLucky();
     });
     const resultado = document.createElement('pre'); resultado.dataset.luckyResultado = '1';
     Object.assign(resultado.style, { whiteSpace: 'pre-wrap', font: '12px/1.5 system-ui,sans-serif' });
@@ -3816,11 +4060,13 @@
       limites.addEventListener('click', () => { if (ocupado) return; cfg.rotinaLimites = cfg.rotinaLimites === false; salvarCfg(); log('Rotina automatica por peso e espacos ' + (cfg.rotinaLimites ? 'ligada' : 'desligada') + ' nesta conta'); atualizarStatus(); });
       const mapaFarm=document.createElement('button');estilo(mapaFarm);mapaFarm.textContent='Mapa de farm';mapaFarm.addEventListener('click',abrirMapaFarm);
       const lucky = document.createElement('button'); estilo(lucky); lucky.dataset.lucky = '1'; lucky.addEventListener('click', abrirMenuLucky);
+      const rifaBtn = document.createElement('button'); estilo(rifaBtn); rifaBtn.dataset.rifa = '1'; rifaBtn.title = 'Escolher premios, reserva e executar agora'; rifaBtn.addEventListener('click', abrirMenuRifa);
+      const rifaLiga = document.createElement('button'); estilo(rifaLiga); rifaLiga.dataset.rifaLiga = '1'; rifaLiga.addEventListener('click', () => { cfg.rifa.ligado = !cfg.rifa.ligado; salvarCfg(); log('Rifa '+(cfg.rifa.ligado?'ligada':'desligada')); atualizarPainel(); });
       const covilBtn = document.createElement('button'); covilBtn.dataset.covil = '1'; covilBtn.addEventListener('click', abrirMenuCovil);
-      conteudo.append(liga, covilBtn, lucky, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, exportar, importar, status, detalhe, historico);
+      conteudo.append(liga, covilBtn, lucky, rifaLiga, rifaBtn, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, exportar, importar, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.37</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.38</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
@@ -3831,6 +4077,10 @@
     liga.textContent = `Auto-voltar: ${cfg.ligado ? 'ON' : 'OFF'}`;
     liga.className = cfg.ligado ? 'fzn-av--on' : 'fzn-av--off';
     liga.title = historicoLog().slice(-12).join('\n') || 'sem eventos ainda';
+    const rifaBtn = painel.querySelector('[data-rifa]');
+    if (rifaBtn) rifaBtn.textContent = 'Rifa: '+rifaEstado.etapa+' · '+(cfg.rifa.premios||[]).length+' prêmios';
+    const rifaLiga = painel.querySelector('[data-rifa-liga], [data-rifaLiga]');
+    if (rifaLiga) { rifaLiga.textContent = 'Rifa: '+(cfg.rifa.ligado?'ON':'OFF'); rifaLiga.className=cfg.rifa.ligado?'fzn-av--on':'fzn-av--off'; }
     const covilBtn = painel.querySelector('[data-covil]');
     covilBtn.textContent = 'Covil: ' + (cfg.covil?.ligado ? 'ON · ' + cfg.covil.hoje + ' hoje' : 'OFF');
     covilBtn.className = cfg.covil?.ligado ? 'fzn-av--on' : 'fzn-av--off';
@@ -3860,3 +4110,4 @@
   setInterval(verificar, 500);
   }
 })();
+
