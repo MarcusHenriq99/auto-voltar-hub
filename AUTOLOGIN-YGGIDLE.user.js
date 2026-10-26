@@ -596,7 +596,9 @@
       cfg.pausaServidorAte = 0;
       loginTravaAte = 0;
       noMapaEm = Date.now();
-      log('Pausa de 20 minutos terminou: tentando entrar novamente.');
+      log('Pausa de 20 minutos terminou: recarregando para tentar entrar novamente.');
+      setTimeout(() => location.reload(), 500);
+      return;
     }
     if (pausadoPeloServidor()) pintar();
     if (menu) { const aviso = menu.querySelector('[data-pausa-servidor]'); if (aviso) aviso.textContent = pausadoPeloServidor() ? `Servidor fechado: nova tentativa em ${tempoDePausa()}` : ''; }
@@ -655,6 +657,8 @@
         avisoTravaAte = 0;
         noMapaEm = Date.now();
         log('Tentativa manual solicitada; auto-login ligado.');
+        const jogoAtual = jogo();
+        if (!jogoAtual || !posicao(jogoAtual)?.mapId) setTimeout(() => location.reload(), 500);
         const chave = menu.querySelector('[data-k="ligado"]'); if (chave) chave.checked = true;
         const senhaSalva = menu.querySelector('[data-k="loginSalvo"]'); if (senhaSalva) senhaSalva.checked = true;
         const aviso = menu.querySelector('[data-pausa-servidor]'); if (aviso) aviso.textContent = '';
