@@ -3097,6 +3097,8 @@
   let rifaRodando = false, rifaMenu = null;
   const rifaStatus = (etapa, detalhe = '') => {
     rifaEstado.etapa = etapa; rifaEstado.detalhe = detalhe;
+    const linha = rifaMenu?.querySelector('[data-rifa-status]');
+    if (linha) linha.textContent = 'Estado: '+etapa+(detalhe?' · '+detalhe:'');
     if (detalhe) log('Rifa: ' + etapa + ' — ' + detalhe);
     atualizarPainel();
   };
@@ -3200,6 +3202,7 @@
       }
       rifaEstado.premio = premio;
       const saldo = zenyRifa(w), reserva = Math.max(0,Number(cfg.rifa.reserva)||0);
+      if (!Number.isFinite(saldo)) { rifaStatus('Parada','saldo de zeny não identificado'); return; }
       if (Number.isFinite(saldo) && saldo-reserva < 500000) {
         rifaStatus('Sem saldo','saldo atingiu a reserva'); return;
       }
