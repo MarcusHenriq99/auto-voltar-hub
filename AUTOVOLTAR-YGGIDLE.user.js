@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.38
+// @version      2.39
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3208,6 +3208,10 @@
       }
       const comprar = [...modal.querySelectorAll('button')].find(b => /comprar n[uú]mero/i.test(textoDe(b)));
       if (!comprar || comprar.disabled) {
+        if (Date.now() < edicao.inicio) {
+          rifaStatus('Aguardando abertura','compra começa no horário anunciado');
+          await esperar(650); continue;
+        }
         if (!semBotaoDesde) semBotaoDesde = Date.now();
         if (Date.now()-semBotaoDesde > 12000) { rifaStatus('Encerrada','botão indisponível por 12 s'); return; }
         await esperar(650); continue;
@@ -4070,7 +4074,7 @@
       conteudo.append(liga, covilBtn, lucky, rifaLiga, rifaBtn, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, exportar, importar, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.38</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.39</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
@@ -4114,4 +4118,3 @@
   setInterval(verificar, 500);
   }
 })();
-
