@@ -3187,6 +3187,7 @@
         continue;
       }
       const texto = modal.innerText || '';
+      if (/edi[cç][aã]o encerrada|n[aã]o est[aá] aberta para compras/i.test(texto)) { rifaStatus('Encerrada','edição finalizada'); return; }
       if (/nenhuma edi[cç][aã]o aberta/i.test(texto)) {
         if (Date.now() > edicao.inicio + 120000) { rifaStatus('Encerrada','nenhuma edição aberta'); return; }
         await esperar(500); continue;
@@ -3211,9 +3212,9 @@
       semBotaoDesde = 0;
       comprar.click();
       const confirmar = await esperarAte(() => [...w.document.querySelectorAll('button')]
-        .filter(b => visivel(b) && !b.disabled && !modal.contains(b) &&
-          /^(confirmar|comprar|sim)$/i.test(textoDe(b)))
-        .find(b => /500[.,]000|n[uú]mero|rifa/i.test(b.parentElement?.parentElement?.innerText || '')),3500,100);
+        .filter(b => visivel(b) && !b.disabled &&
+          /^comprar\s*[—-]\s*500[.,]000z?$/i.test(textoDe(b)))
+        .find(b => /confirmar compra|voc[eê] vai gastar/i.test(b.parentElement?.parentElement?.innerText || '')),3500,100);
       if (!confirmar) { rifaStatus('Parada','confirmação da compra não apareceu'); return; }
       confirmar.click();
       const debitou = await esperarAte(() => {
