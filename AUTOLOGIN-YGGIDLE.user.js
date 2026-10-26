@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — entrar sozinho com o personagem escolhido
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.22
+// @version      1.23
 // @description  Entra com o personagem escolhido e pausa 20 minutos quando o servidor esta fechado.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -232,23 +232,31 @@
     Object.assign(el.style, { left: left + 'px', bottom: bottom + 'px', top: 'auto', right: 'auto', zIndex: 2147483001, width: largura + 'px', maxWidth: '95vw', maxHeight: maxH + 'px', overflow: 'auto', padding: '10px 12px' });
   };
 
-  const CHAVE = 'fzn-autologin-ygg-v2';
-  const ler = () => {
+  const CHAVE = 'fzn-autologin-ygg-v3';
+  const CHAVE_IDENTIDADE = CHAVE + '-conta-local';
+  let identidade = '';
+  try { identidade = localStorage.getItem(CHAVE_IDENTIDADE) || ''; } catch {}
+  const chavePerfil = (nome) => `${CHAVE}:${String(nome).trim().toLowerCase()}`;
+  const ler = (chave) => {
+    if (!chave) return {};
     try {
       if (typeof GM_getValue === 'function') {
-        const salvo = GM_getValue(CHAVE, null);
+        const salvo = GM_getValue(chave, null);
         if (salvo) return typeof salvo === 'string' ? JSON.parse(salvo) : salvo;
       }
     } catch {}
-    try { return JSON.parse(localStorage.getItem(CHAVE)) || {}; } catch { return {}; }
+    try { return JSON.parse(localStorage.getItem(chave)) || {}; } catch { return {}; }
   };
-  const cfg = Object.assign({
-    ligado: true, personagem: '', religarAutopilot: true, voltarParaCaca: true, loginSalvo: true, conta: '', conhecidos: [], log: [], assinaturaTela: '', pausaServidorAte: 0
-  }, ler());
+  const padrao = () => ({ ligado: false, personagem: '', religarAutopilot: true, voltarParaCaca: true, loginSalvo: true, conta: '', conhecidos: [], log: [], assinaturaTela: '', pausaServidorAte: 0 });
+  let cfg = Object.assign(padrao(), ler(identidade ? chavePerfil(identidade) : ''));
+  const normalizarCfg = () => { if (!Array.isArray(cfg.log)) cfg.log = []; if (!Array.isArray(cfg.conhecidos)) cfg.conhecidos = []; };
+  normalizarCfg();
   const salvar = () => {
+    if (!identidade) return;
     const dados = JSON.stringify(cfg);
-    try { if (typeof GM_setValue === 'function') GM_setValue(CHAVE, dados); } catch {}
-    try { localStorage.setItem(CHAVE, dados); } catch {}
+    const chave = chavePerfil(identidade);
+    try { if (typeof GM_setValue === 'function') GM_setValue(chave, dados); } catch {}
+    try { localStorage.setItem(chave, dados); } catch {}
   };
   const log = (msg) => { cfg.log = (cfg.log || []).concat(`${new Date().toLocaleTimeString()} ${msg}`).slice(-15); salvar(); console.log('[autologin-ygg]', msg); pintar(); };
 
@@ -496,6 +504,19 @@
     return contas;
   };
 
+  const sincronizarPerfil = (w) => {
+    const contas = linhasDeConta(w.document);
+    const atual = contas.length === 1 ? String(contas[0].nome || '').trim() : '';
+    if (!atual || atual.toLowerCase() === identidade.toLowerCase()) return;
+    identidade = atual;
+    try { localStorage.setItem(CHAVE_IDENTIDADE, atual); } catch {}
+    cfg = Object.assign(padrao(), ler(chavePerfil(atual)));
+    cfg.conta = atual;
+    normalizarCfg();
+    salvar();
+    log(`Perfil da conta ${atual} carregado separadamente.`);
+  };
+
   let loginTravaAte = 0, avisouSemSenha = false, avisouLoginOff = false;
   const tentarLogin = async (w) => {
     if (!cfg.ligado || pausadoPeloServidor()) return;
@@ -604,6 +625,7 @@
     if (menu) { const aviso = menu.querySelector('[data-pausa-servidor]'); if (aviso) aviso.textContent = pausadoPeloServidor() ? `Servidor fechado: nova tentativa em ${tempoDePausa()}` : ''; }
     const w = jogo();
     if (!w) { if (ultimoEstadoConhecido !== 'sem-jogo') { ultimoEstadoConhecido = 'sem-jogo'; } return; }
+    sincronizarPerfil(w);
     vigiar(w);
     ouvirCliques(w);
     if (cfg.ligado && fecharAvisoDeQueda(w)) return;
@@ -631,8 +653,9 @@
       : '(sem jogo / carregando)';
     menu.innerHTML = `
       <div style="font-weight:bold;margin-bottom:6px">Entrar sozinho com</div>
-      <div style="font-size:11px;opacity:.75;margin-bottom:6px">Estado agora: <b>${estadoAtual}</b></div>
+      <div style="font-size:11px;opacity:.75;margin-bottom:6px">Conta: <b>${identidade || 'aguardando identificacao'}</b> · Estado: <b>${estadoAtual}</b></div>
       ${opcoes}
+      <label style="display:flex;gap:6px;align-items:center;margin-top:8px">Personagem: <input data-k="personagem" type="text" value="${String(cfg.personagem || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')}" placeholder="Nome exato" style="min-width:130px;flex:1"></label>
       <label style="display:flex;gap:6px;align-items:center;margin-top:8px"><input data-k="loginSalvo" type="checkbox"${cfg.loginSalvo ? " checked" : ""}> na tela de login, entrar pela conta com "senha salva"</label>
       <label style="display:flex;gap:6px;align-items:center"><input data-k="ligado" type="checkbox"${cfg.ligado ? ' checked' : ''}> entrar sozinho ligado</label>
       <div data-pausa-servidor style="margin-top:5px;color:#ffcf8d">${pausadoPeloServidor() ? `Servidor fechado: nova tentativa em ${tempoDePausa()}` : ''}</div>
@@ -645,6 +668,7 @@
     menu.addEventListener('change', (ev) => {
       const t = ev.target;
       if (t.name === 'fznp') { cfg.personagem = t.value; travaAte = 0; ultimoDiag = ''; log(`Personagem escolhido: ${t.value}`); }
+      else if (t.dataset.k === 'personagem') { cfg.personagem = t.value.trim(); salvar(); pintar(); }
       else if (t.dataset.k) { cfg[t.dataset.k] = t.checked; salvar(); pintar(); }
     });
     menu.addEventListener('click', (ev) => {
@@ -670,7 +694,7 @@
   function pintar() {
     if (!document.body) return;
     if (!painel) {
-      cartaoLogin = fznCartaoYgg('Auto-login', 'v1.22', 'fzn-autologin-ygg-posicao-v4', { right: '12px', bottom: '156px' }, 'fzn-encolhido-autologin-ygg-v4').caixa;
+      cartaoLogin = fznCartaoYgg('Auto-login', 'v1.23', 'fzn-autologin-ygg-posicao-v4', { right: '12px', bottom: '156px' }, 'fzn-encolhido-autologin-ygg-v4').caixa;
       painel = document.createElement('button');
       painel.addEventListener('click', abrirMenu);
       cartaoLogin.lastChild.appendChild(painel);
@@ -679,10 +703,11 @@
       : ultimoEstadoConhecido === 'login' ? ' • login'
       : ultimoEstadoConhecido === 'jogo' ? ' • no jogo'
       : '';
-    painel.textContent = `Auto-login ${cfg.ligado ? 'ON' : 'OFF'} · ${cfg.personagem || '(escolher)'}${cfg.ligado ? (pausadoPeloServidor() ? ` · servidor fechado (${tempoDePausa()})` : cfg.loginSalvo ? '' : ' · login OFF') : ''}${estado}`;
+    painel.textContent = `Auto-login ${cfg.ligado ? 'ON' : 'OFF'} · ${identidade || '(conta?)'} · ${cfg.personagem || '(escolher)'}${cfg.ligado ? (pausadoPeloServidor() ? ` · servidor fechado (${tempoDePausa()})` : cfg.loginSalvo ? '' : ' · login OFF') : ''}${estado}`;
     painel.className = cfg.ligado && cfg.personagem && cfg.loginSalvo && !pausadoPeloServidor() ? 'fzn-ygg--on' : 'fzn-ygg--alerta';
     painel.title = (cfg.log || []).slice(-8).join('\n') || 'sem eventos ainda';
   }
 
-  log('v1.22: auto-login com pausa de 20 min para servidor fechado');
+  log('v1.23: perfil separado por conta e pausa de 20 min para servidor fechado');
 })();
+
