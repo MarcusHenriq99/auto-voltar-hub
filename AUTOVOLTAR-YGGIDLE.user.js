@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.40
+// @version      2.41
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3283,6 +3283,10 @@
       cfg.rifa.ultimaEdicao = edicao.id; salvarCfg();
       rifaStatus('Ignorada','prêmio anunciado: '+rifaEstado.premio); return;
     }
+    if (!edicao.abriu && Date.now() < edicao.inicio - 60000) {
+      rifaStatus('Aguardando último minuto',rifaEstado.premio || 'prêmio ainda não identificado');
+      return;
+    }
     if (!rifaEstado.premio && !edicao.abriu) return;
     cfg.rifa.ultimaEdicao = edicao.id; salvarCfg();
     void executarRifa(w,edicao);
@@ -3298,7 +3302,7 @@
     topo.textContent = 'Rifa YggIdle · 500.000z por número';
     Object.assign(topo.style,{fontWeight:'bold',cursor:'move',marginBottom:'9px'});
     const ajuda = document.createElement('div');
-    ajuda.textContent = 'Marque os prêmios que deseja disputar. ON: sai do farm no aviso, compra até terminar a edição ou atingir a reserva de zeny, e volta ao mapa. Se o prêmio anunciado não estiver marcado, permanece no farm.';
+    ajuda.textContent = 'Marque os prêmios que deseja disputar. ON: sai do farm faltando 1 minuto, compra até terminar a edição ou atingir a reserva de zeny, e volta ao mapa. Se o prêmio anunciado não estiver marcado, permanece no farm.';
     Object.assign(ajuda.style,{lineHeight:'1.4',marginBottom:'8px',color:'#d2dce4'});
     const status = document.createElement('div');
     status.textContent = 'Estado: '+rifaEstado.etapa+(rifaEstado.detalhe?' · '+rifaEstado.detalhe:'');
@@ -4090,7 +4094,7 @@
       conteudo.append(liga, covilBtn, lucky, rifaLiga, rifaBtn, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, exportar, importar, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.40</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.41</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
