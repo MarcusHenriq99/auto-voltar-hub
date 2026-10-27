@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.42
+// @version      2.43
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3119,9 +3119,9 @@
     const texto = w.document.body.innerText || '';
     const anuncios = [...texto.matchAll(/\[Rifa YggIdle\]\s*([^\n]+?)\s+tirou o n[uú]mero da sorte e levou\s+([^\n]+?)\s+x\d+[!.]?/gi)];
     if (!anuncios.length) return;
-    const edicao = edicaoRifaAtual();
-    if (!edicao || Date.now() < edicao.inicio) return;
-    const registro = cfg.rifa.historico.find(r => r.id === edicao.id && r.confirmados > 0);
+    const registro = cfg.rifa.historico.find(r => r.confirmados > 0 &&
+      Date.now() >= r.inicio && Date.now() <= r.inicio + 95*60000 &&
+      !/^(Ganhou|Não ganhou)$/.test(r.resultado));
     if (!registro || /^(Ganhou|Não ganhou)$/.test(registro.resultado)) return;
     const premioNormal = normalizar(registro.premio || '');
     const anuncio = anuncios.reverse().find(m => premioNormal && normalizar(m[2]).includes(premioNormal));
@@ -4165,7 +4165,7 @@
       conteudo.append(liga, covilBtn, lucky, rifaLiga, rifaBtn, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, exportar, importar, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.42</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.43</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
