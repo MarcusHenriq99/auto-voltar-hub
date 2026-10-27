@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Yggidle — entrar sozinho com o personagem escolhido
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.23
-// @description  Entra com o personagem escolhido e pausa 20 minutos quando o servidor esta fechado.
+// @version      1.24
+// @description  Entra com o personagem escolhido, recupera avisos de conexao e aguarda 10 minutos se o servidor fechar.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
 // @grant        GM_getValue
@@ -260,7 +260,7 @@
   };
   const log = (msg) => { cfg.log = (cfg.log || []).concat(`${new Date().toLocaleTimeString()} ${msg}`).slice(-15); salvar(); console.log('[autologin-ygg]', msg); pintar(); };
 
-  const PAUSA_SERVIDOR_MS = 20 * 60_000;
+  const PAUSA_SERVIDOR_MS = 10 * 60_000;
   const pausadoPeloServidor = () => Number(cfg.pausaServidorAte || 0) > Date.now();
   const tempoDePausa = () => {
     const segundos = Math.max(0, Math.ceil((Number(cfg.pausaServidorAte || 0) - Date.now()) / 1000));
@@ -556,15 +556,49 @@
 
   const AVISO_QUEDA = /conex[aã]o caiu|entre novamente para continuar|servidor\s+(?:est[aá]\s+)?fechado|servidor\s+em\s+manuten[cç][aã]o/i;
   const AVISO_MANUTENCAO = /servidor\s+(?:est[aá]\s+)?fechado|servidor\s+em\s+manuten[cç][aã]o/i;
+  const AVISO_NOVA_VERSAO = /saiu uma vers[aã]o nova do jogo|recarregue para aplicar/i;
+  const AVISO_CONEXAO = /a conex[aã]o caiu e n[aã]o foi poss[ií]vel voltar ao seu personagem a tempo|entre novamente para continuar/i;
   const pausarServidor = () => {
     if (pausadoPeloServidor()) return;
     cfg.pausaServidorAte = Date.now() + PAUSA_SERVIDOR_MS;
-    log('Servidor fechado: auto-login pausado por 20 minutos. Use "Tentar agora" para antecipar.');
+    log('Servidor fechado: auto-login pausado por 10 minutos. Use "Tentar agora" para antecipar.');
   };
   const servidorFechadoVisivel = (doc) => consultar(doc, '[role="alert"], [role="dialog"], .modal, .alert, p, span, div')
     .some((el) => visivel(el) && texto(el).length < 200 && AVISO_MANUTENCAO.test(texto(el)));
   const ehBotaoOk = (b) => /^(ok|확인)$/i.test(texto(b) || b.value || '') || /(^|[_\-\s])ok([_.\-\s]|$)/i.test(`${b.className || ''} ${b.getAttribute('data-background') || ''} ${b.id || ''}`);
   let avisoTravaAte = 0;
+  const recarregarAposAviso = (motivo) => {
+    let anterior = Number(cfg.ultimoAvisoRecarregadoEm || 0);
+    try { anterior = Math.max(anterior, Number(sessionStorage.getItem(CHAVE + '-ultimo-aviso-reload') || 0)); } catch {}
+    if (Date.now() - anterior < 30_000) return;
+    cfg.ultimoAvisoRecarregadoEm = Date.now();
+    try { sessionStorage.setItem(CHAVE + '-ultimo-aviso-reload', String(cfg.ultimoAvisoRecarregadoEm)); } catch {}
+    log(motivo + ': recarregando a pagina do jogo');
+    setTimeout(() => location.reload(), 500);
+  };
+  const textoDeAvisoVisivel = (doc, re) => consultar(doc, '[role="alert"], [role="alertdialog"], [role="dialog"], .modal, .alert, p, span, div')
+    .some((el) => visivel(el) && !(cartaoLogin?.contains(el) || menu?.contains(el)) && texto(el).length < 240 && re.test(texto(el)));
+  const tratarAvisos = (w) => {
+    if (!cfg.ligado) return false;
+    const docs = [document];
+    if (w?.document && w.document !== document) docs.push(w.document);
+    if (docs.some((doc) => textoDeAvisoVisivel(doc, AVISO_MANUTENCAO))) {
+      pausarServidor();
+      for (const doc of docs) fecharAvisoDeQueda({document:doc});
+      return true;
+    }
+    if (pausadoPeloServidor()) return true;
+    if (docs.some((doc) => textoDeAvisoVisivel(doc, AVISO_CONEXAO))) {
+      for (const doc of docs) fecharAvisoDeQueda({document:doc});
+      recarregarAposAviso('Conexao perdida');
+      return true;
+    }
+    if (docs.some((doc) => textoDeAvisoVisivel(doc, AVISO_NOVA_VERSAO))) {
+      recarregarAposAviso('Nova versao do jogo');
+      return true;
+    }
+    return false;
+  };
   const fecharAvisoDeQueda = (w) => {
     if (Date.now() < avisoTravaAte) return false;
     const raizes = [w.document];
@@ -613,22 +647,22 @@
   let ultimoEstadoConhecido = '';
   setInterval(() => {
     if (!painel) pintar();
-    if (cfg.pausaServidorAte && !pausadoPeloServidor()) {
+    if (cfg.ligado && cfg.pausaServidorAte && !pausadoPeloServidor()) {
       cfg.pausaServidorAte = 0;
       loginTravaAte = 0;
       noMapaEm = Date.now();
-      log('Pausa de 20 minutos terminou: recarregando para tentar entrar novamente.');
+      log('Pausa de 10 minutos terminou: recarregando para tentar entrar novamente.');
       setTimeout(() => location.reload(), 500);
       return;
     }
     if (pausadoPeloServidor()) pintar();
     if (menu) { const aviso = menu.querySelector('[data-pausa-servidor]'); if (aviso) aviso.textContent = pausadoPeloServidor() ? `Servidor fechado: nova tentativa em ${tempoDePausa()}` : ''; }
     const w = jogo();
-    if (!w) { if (ultimoEstadoConhecido !== 'sem-jogo') { ultimoEstadoConhecido = 'sem-jogo'; } return; }
-    sincronizarPerfil(w);
+    if (w) sincronizarPerfil(w);
+    if (tratarAvisos(w)) return;
+    if (!w) { ultimoEstadoConhecido = 'sem-jogo'; vigiar(null); return; }
     vigiar(w);
     ouvirCliques(w);
-    if (cfg.ligado && fecharAvisoDeQueda(w)) return;
     if (ocupado) return;
     const tela = telaDePersonagens(w.document);
     if (tela) { ultimoEstadoConhecido = 'selecao'; entrar(w); return; }
@@ -694,7 +728,7 @@
   function pintar() {
     if (!document.body) return;
     if (!painel) {
-      cartaoLogin = fznCartaoYgg('Auto-login', 'v1.23', 'fzn-autologin-ygg-posicao-v4', { right: '12px', bottom: '156px' }, 'fzn-encolhido-autologin-ygg-v4').caixa;
+      cartaoLogin = fznCartaoYgg('Auto-login', 'v1.24', 'fzn-autologin-ygg-posicao-v4', { right: '12px', bottom: '156px' }, 'fzn-encolhido-autologin-ygg-v4').caixa;
       painel = document.createElement('button');
       painel.addEventListener('click', abrirMenu);
       cartaoLogin.lastChild.appendChild(painel);
@@ -708,6 +742,6 @@
     painel.title = (cfg.log || []).slice(-8).join('\n') || 'sem eventos ainda';
   }
 
-  log('v1.23: perfil separado por conta e pausa de 20 min para servidor fechado');
+  log('v1.24: recupera avisos de conexao e nova versao; pausa 10 min para servidor fechado');
 })();
 
