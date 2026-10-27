@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.41
+// @version      2.42
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -244,7 +244,8 @@
     ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
   if (!cfg.backupId) cfg.backupId = novoIdBackup();
   cfg.lucky = Array.isArray(cfg.lucky) ? cfg.lucky.filter((s) => typeof s === 'string' && s.trim()) : ['Ovo da La Voisin'];
-  cfg.rifa = { ligado: false, premios: [], reserva: 0, ...(cfg.rifa || {}) };
+  cfg.rifa = { ligado: false, premios: [], reserva: 0, personagem: '', historico: [], ...(cfg.rifa || {}) };
+  if (!Array.isArray(cfg.rifa.historico)) cfg.rifa.historico = [];
   if ('comprarPocao' in cfg) {
     cfg.comprar = cfg.comprarPocao;
     for (const k of ['comprarPocao', 'pocaoNome', 'pocaoId', 'pocaoMinimo', 'pocaoAlvo']) delete cfg[k];
@@ -3095,6 +3096,47 @@
   ];
   const rifaEstado = { etapa: 'Aguardando', premio: '', edicao: '', compras: 0, detalhe: '' };
   let rifaRodando = false, rifaFarmPausado = false, rifaMenu = null;
+  const registroRifa = (edicao,premio='') => {
+    let registro = cfg.rifa.historico.find(x => x.id === edicao.id);
+    if (!registro) {
+      registro = { id: edicao.id, inicio: edicao.inicio, premio, tentativas: 0,
+        confirmados: 0, gasto: 0, resultado: 'Aguardando sorteio', vencedor: '' };
+      cfg.rifa.historico.unshift(registro);
+      cfg.rifa.historico = cfg.rifa.historico.slice(0,30);
+      salvarCfg();
+    } else if (premio && !registro.premio) registro.premio = premio;
+    return registro;
+  };
+  const textoHistoricoRifa = () => (cfg.rifa.historico.length
+    ? cfg.rifa.historico.map(r => {
+      const quando = new Date(r.inicio).toLocaleString('pt-BR');
+      return quando+' · '+(r.premio||'Prêmio a confirmar')+'\n'+
+        'Tentativas: '+r.tentativas+' · Comprados: '+r.confirmados+
+        ' · Gasto: '+Number(r.gasto||0).toLocaleString('pt-BR')+'z\n'+
+        'Resultado: '+r.resultado+(r.vencedor?' · Vencedor: '+r.vencedor:'');
+    }).join('\n\n') : 'Nenhuma participação registrada neste personagem.');
+  const conferirResultadoRifa = (w) => {
+    const texto = w.document.body.innerText || '';
+    const anuncios = [...texto.matchAll(/\[Rifa YggIdle\]\s*([^\n]+?)\s+tirou o n[uú]mero da sorte e levou\s+([^\n]+?)\s+x\d+[!.]?/gi)];
+    if (!anuncios.length) return;
+    const edicao = edicaoRifaAtual();
+    if (!edicao || Date.now() < edicao.inicio) return;
+    const registro = cfg.rifa.historico.find(r => r.id === edicao.id && r.confirmados > 0);
+    if (!registro || /^(Ganhou|Não ganhou)$/.test(registro.resultado)) return;
+    const premioNormal = normalizar(registro.premio || '');
+    const anuncio = anuncios.reverse().find(m => premioNormal && normalizar(m[2]).includes(premioNormal));
+    if (!anuncio) return;
+    const vencedor = anuncio[1].trim();
+    const personagem = String(cfg.rifa.personagem || '').trim();
+    registro.vencedor = vencedor;
+    registro.resultado = personagem ?
+      (normalizar(vencedor) === normalizar(personagem) ? 'Ganhou' : 'Não ganhou') :
+      'Vencedor anunciado; informe o nome do personagem para conferir';
+    salvarCfg();
+    log('Rifa: '+registro.resultado+' · '+registro.premio+' · vencedor '+vencedor);
+    const h = rifaMenu?.querySelector('[data-rifa-historico]');
+    if (h) h.textContent = textoHistoricoRifa();
+  };
   const rifaStatus = (etapa, detalhe = '') => {
     const mudou = rifaEstado.etapa !== etapa || rifaEstado.detalhe !== detalhe;
     rifaEstado.etapa = etapa; rifaEstado.detalhe = detalhe;
@@ -3218,6 +3260,9 @@
         await esperar(650); continue;
       }
       semBotaoDesde = 0;
+      const registro = registroRifa(edicao,premio);
+      registro.tentativas++;
+      gravarJson(CHAVE_CFG,cfg);
       comprar.click();
       const confirmar = await esperarAte(() => [...w.document.querySelectorAll('button')]
         .filter(b => visivel(b) && !b.disabled &&
@@ -3230,6 +3275,11 @@
         return Number.isFinite(saldo) && Number.isFinite(novo) && novo <= saldo-500000;
       },6000,150);
       if (!debitou) { rifaStatus('Parada','compra não confirmada pelo saldo'); return; }
+      registro.confirmados++; registro.gasto += 500000;
+      if (registro.confirmados % 5 === 0) salvarCfg();
+      else gravarJson(CHAVE_CFG,cfg);
+      const h = rifaMenu?.querySelector('[data-rifa-historico]');
+      if (h) h.textContent = textoHistoricoRifa();
       rifaEstado.compras++;
       rifaStatus('Comprando',rifaEstado.compras+' número(s); '+premio);
       await esperar(600);
@@ -3269,6 +3319,7 @@
           ligarAutopilot(w,true);
         }
       } catch(e) { rifaStatus('Aguardando retorno',String(e?.message||e).slice(0,120)); }
+      salvarCfg();
       rifaFarmPausado = false; rifaRodando = false; ocupado = false; atualizarPainel();
     }
   };
@@ -3328,6 +3379,25 @@
     Object.assign(reserva.style,{width:'130px',padding:'4px',color:'#17212b',background:'#fff'});
     reserva.onchange=()=>{cfg.rifa.reserva=Math.max(0,Math.floor(Number(reserva.value)||0));salvarCfg();};
     reservaLinha.appendChild(reserva);
+    const personagemLinha=document.createElement('label');
+    personagemLinha.textContent='Nome do personagem para conferir vitória: ';
+    Object.assign(personagemLinha.style,{display:'block',margin:'8px 0'});
+    const personagem=document.createElement('input');
+    personagem.type='text';personagem.value=cfg.rifa.personagem||'';
+    Object.assign(personagem.style,{width:'180px',padding:'4px',color:'#17212b',background:'#fff'});
+    personagem.onchange=()=>{cfg.rifa.personagem=personagem.value.trim();
+      for (const r of cfg.rifa.historico) if (r.vencedor && r.resultado.startsWith('Vencedor anunciado'))
+        r.resultado=normalizar(r.vencedor)===normalizar(cfg.rifa.personagem)?'Ganhou':'Não ganhou';
+      salvarCfg();const h=menu.querySelector('[data-rifa-historico]');if(h)h.textContent=textoHistoricoRifa();};
+    personagemLinha.appendChild(personagem);
+    const historicoRifa=document.createElement('details');
+    Object.assign(historicoRifa.style,{margin:'9px 0',border:'1px solid #445967',padding:'7px',borderRadius:'5px'});
+    const tituloHistorico=document.createElement('summary');tituloHistorico.textContent='Histórico de bilhetes e resultados';
+    tituloHistorico.style.cursor='pointer';
+    const conteudoHistorico=document.createElement('pre');conteudoHistorico.dataset.rifaHistorico='1';
+    conteudoHistorico.textContent=textoHistoricoRifa();
+    Object.assign(conteudoHistorico.style,{whiteSpace:'pre-wrap',font:'12px/1.4 Arial,sans-serif',maxHeight:'190px',overflowY:'auto'});
+    historicoRifa.append(tituloHistorico,conteudoHistorico);
     const acoes=document.createElement('div');
     Object.assign(acoes.style,{display:'flex',gap:'6px',justifyContent:'space-between'});
     const botao=(txt,fn)=>{const b=document.createElement('button');b.textContent=txt;b.onclick=fn;
@@ -3340,7 +3410,7 @@
         cfg.rifa.ultimaEdicao=edicao.id;salvarCfg();void executarRifa(w,edicao);}),
       botao('Fechar',()=>{menu.remove();rifaMenu=null;})
     );
-    menu.append(topo,ajuda,status,lista,reservaLinha,acoes);
+    menu.append(topo,ajuda,status,lista,reservaLinha,personagemLinha,historicoRifa,acoes);
     document.body.appendChild(menu);rifaMenu=menu;
     fznArrastavel(menu,topo,'fzn-rifa-ygg-pos-v1');
   };
@@ -3348,6 +3418,7 @@
     atualizarPainel();
     const w = jogo();
     if (!w) return;
+    conferirResultadoRifa(w);
     if (rifaRodando) {
       if (rifaFarmPausado) {
         botaoHunt(w, true)?.click();
@@ -4094,7 +4165,7 @@
       conteudo.append(liga, covilBtn, lucky, rifaLiga, rifaBtn, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, exportar, importar, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.41</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.42</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
