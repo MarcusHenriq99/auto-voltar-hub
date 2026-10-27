@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.43
+// @version      2.44
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -244,7 +244,9 @@
     ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
   if (!cfg.backupId) cfg.backupId = novoIdBackup();
   cfg.lucky = Array.isArray(cfg.lucky) ? cfg.lucky.filter((s) => typeof s === 'string' && s.trim()) : ['Ovo da La Voisin'];
-  cfg.rifa = { ligado: false, premios: [], reserva: 0, personagem: '', historico: [], ...(cfg.rifa || {}) };
+  cfg.rifa = { ligado: false, premios: [], limiteGasto: 0, personagem: '', historico: [], ...(cfg.rifa || {}) };
+  delete cfg.rifa.reserva;
+  cfg.rifa.limiteGasto = Math.max(0, Math.floor(Number(cfg.rifa.limiteGasto) || 0));
   if (!Array.isArray(cfg.rifa.historico)) cfg.rifa.historico = [];
   if ('comprarPocao' in cfg) {
     cfg.comprar = cfg.comprarPocao;
@@ -3244,11 +3246,14 @@
         return;
       }
       rifaEstado.premio = premio;
-      const saldo = zenyRifa(w), reserva = Math.max(0,Number(cfg.rifa.reserva)||0);
-      if (!Number.isFinite(saldo)) { rifaStatus('Parada','saldo de zeny não identificado'); return; }
-      if (Number.isFinite(saldo) && saldo-reserva < 500000) {
-        rifaStatus('Sem saldo','saldo atingiu a reserva'); return;
+      const limite = Math.max(0, Math.floor(Number(cfg.rifa.limiteGasto) || 0));
+      const registro = registroRifa(edicao,premio);
+      if ((registro.tentativas + 1)*500000 > limite) {
+        rifaStatus('Limite atingido','máximo de '+limite.toLocaleString('pt-BR')+'z nesta edição'); return;
       }
+      const saldo = zenyRifa(w);
+      if (!Number.isFinite(saldo)) { rifaStatus('Parada','saldo de zeny não identificado'); return; }
+      if (saldo < 500000) { rifaStatus('Sem saldo','menos de 500.000z para outro bilhete'); return; }
       const comprar = [...modal.querySelectorAll('button')].find(b => /comprar n[uú]mero/i.test(textoDe(b)));
       if (!comprar || comprar.disabled) {
         if (Date.now() < edicao.inicio) {
@@ -3260,7 +3265,6 @@
         await esperar(650); continue;
       }
       semBotaoDesde = 0;
-      const registro = registroRifa(edicao,premio);
       registro.tentativas++;
       gravarJson(CHAVE_CFG,cfg);
       comprar.click();
@@ -3286,7 +3290,8 @@
     }
   };
   const executarRifa = async (w,edicao) => {
-    if (ocupado || rifaRodando || !cfg.rifa.ligado || !cfg.ligado || !(cfg.rifa.premios||[]).length) return;
+    if (ocupado || rifaRodando || !cfg.rifa.ligado || !cfg.ligado ||
+        !(cfg.rifa.premios||[]).length || !(Number(cfg.rifa.limiteGasto) >= 500000)) return;
     rifaRodando = true; ocupado = true;
     const origem = posicao(w), cacava = autopilotLigado(w) || !!botaoHunt(w,true);
     const premioAvisado = rifaEstado.premio;
@@ -3326,6 +3331,9 @@
   const vigiarRifa = (w) => {
     const edicao = edicaoRifaAtual();
     if (!edicao || !cfg.rifa.ligado || !cfg.ligado || !(cfg.rifa.premios||[]).length) return;
+    if (!(Number(cfg.rifa.limiteGasto) >= 500000)) {
+      rifaStatus('Sem limite','defina quanto gastar por rifa; mínimo 500.000z'); return;
+    }
     if (rifaEstado.edicao !== edicao.id) { rifaEstado.edicao = edicao.id; rifaEstado.premio = ''; }
     const anunciado = anuncioRifa(w);
     if (anunciado) rifaEstado.premio = anunciado;
@@ -3353,7 +3361,7 @@
     topo.textContent = 'Rifa YggIdle · 500.000z por número';
     Object.assign(topo.style,{fontWeight:'bold',cursor:'move',marginBottom:'9px'});
     const ajuda = document.createElement('div');
-    ajuda.textContent = 'Marque os prêmios que deseja disputar. ON: sai do farm faltando 1 minuto, compra até terminar a edição ou atingir a reserva de zeny, e volta ao mapa. Se o prêmio anunciado não estiver marcado, permanece no farm.';
+    ajuda.textContent = 'Marque os prêmios que deseja disputar. ON: sai do farm faltando 1 minuto e compra até acabar a edição, faltar zeny ou atingir o gasto máximo definido para esta rifa. Depois volta ao mapa. Se o prêmio não estiver marcado, permanece no farm.';
     Object.assign(ajuda.style,{lineHeight:'1.4',marginBottom:'8px',color:'#d2dce4'});
     const status = document.createElement('div');
     status.textContent = 'Estado: '+rifaEstado.etapa+(rifaEstado.detalhe?' · '+rifaEstado.detalhe:'');
@@ -3371,14 +3379,15 @@
         : (cfg.rifa.premios||[]).filter(x=>x!==nome); salvarCfg(); atualizarPainel();};
       linha.append(check,document.createTextNode(nome)); lista.appendChild(linha);
     }
-    const reservaLinha=document.createElement('label');
-    reservaLinha.textContent='Zeny para preservar: ';
-    Object.assign(reservaLinha.style,{display:'block',margin:'10px 0'});
-    const reserva=document.createElement('input');
-    reserva.type='number';reserva.min='0';reserva.step='500000';reserva.value=String(cfg.rifa.reserva||0);
-    Object.assign(reserva.style,{width:'130px',padding:'4px',color:'#17212b',background:'#fff'});
-    reserva.onchange=()=>{cfg.rifa.reserva=Math.max(0,Math.floor(Number(reserva.value)||0));salvarCfg();};
-    reservaLinha.appendChild(reserva);
+    const limiteLinha=document.createElement('label');
+    limiteLinha.textContent='Quanto gastar por rifa (zeny): ';
+    Object.assign(limiteLinha.style,{display:'block',margin:'10px 0'});
+    const limiteCampo=document.createElement('input');
+    limiteCampo.type='number';limiteCampo.min='0';limiteCampo.step='500000';limiteCampo.value=String(cfg.rifa.limiteGasto||0);
+    Object.assign(limiteCampo.style,{width:'145px',padding:'4px',color:'#17212b',background:'#fff'});
+    limiteCampo.onchange=()=>{cfg.rifa.limiteGasto=Math.max(0,Math.floor(Number(limiteCampo.value)||0));
+      limiteCampo.value=String(cfg.rifa.limiteGasto);salvarCfg();rifaStatus('Aguardando','limite de '+cfg.rifa.limiteGasto.toLocaleString('pt-BR')+'z por edição');};
+    limiteLinha.appendChild(limiteCampo);
     const personagemLinha=document.createElement('label');
     personagemLinha.textContent='Nome do personagem para conferir vitória: ';
     Object.assign(personagemLinha.style,{display:'block',margin:'8px 0'});
@@ -3407,10 +3416,11 @@
       botao('Executar agora',()=>{const w=jogo(),edicao=edicaoRifaAtual();
         if (!w||!edicao) {rifaStatus('Aguardando','não há edição próxima ou aberta');return;}
         if (!cfg.rifa.ligado||!cfg.ligado) {rifaStatus('Desligada','ligue Rifa e Auto-voltar');return;}
+        if (!(Number(cfg.rifa.limiteGasto)>=500000)) {rifaStatus('Sem limite','defina quanto gastar por rifa');return;}
         cfg.rifa.ultimaEdicao=edicao.id;salvarCfg();void executarRifa(w,edicao);}),
       botao('Fechar',()=>{menu.remove();rifaMenu=null;})
     );
-    menu.append(topo,ajuda,status,lista,reservaLinha,personagemLinha,historicoRifa,acoes);
+    menu.append(topo,ajuda,status,lista,limiteLinha,personagemLinha,historicoRifa,acoes);
     document.body.appendChild(menu);rifaMenu=menu;
     fznArrastavel(menu,topo,'fzn-rifa-ygg-pos-v1');
   };
@@ -4159,13 +4169,13 @@
       limites.addEventListener('click', () => { if (ocupado) return; cfg.rotinaLimites = cfg.rotinaLimites === false; salvarCfg(); log('Rotina automatica por peso e espacos ' + (cfg.rotinaLimites ? 'ligada' : 'desligada') + ' nesta conta'); atualizarStatus(); });
       const mapaFarm=document.createElement('button');estilo(mapaFarm);mapaFarm.textContent='Mapa de farm';mapaFarm.addEventListener('click',abrirMapaFarm);
       const lucky = document.createElement('button'); estilo(lucky); lucky.dataset.lucky = '1'; lucky.addEventListener('click', abrirMenuLucky);
-      const rifaBtn = document.createElement('button'); estilo(rifaBtn); rifaBtn.dataset.rifa = '1'; rifaBtn.title = 'Escolher premios, reserva e executar agora'; rifaBtn.addEventListener('click', abrirMenuRifa);
+      const rifaBtn = document.createElement('button'); estilo(rifaBtn); rifaBtn.dataset.rifa = '1'; rifaBtn.title = 'Escolher premios, quanto gastar por rifa e executar agora'; rifaBtn.addEventListener('click', abrirMenuRifa);
       const rifaLiga = document.createElement('button'); estilo(rifaLiga); rifaLiga.dataset.rifaLiga = '1'; rifaLiga.addEventListener('click', () => { cfg.rifa.ligado = !cfg.rifa.ligado; salvarCfg(); log('Rifa '+(cfg.rifa.ligado?'ligada':'desligada')); atualizarPainel(); });
       const covilBtn = document.createElement('button'); covilBtn.dataset.covil = '1'; covilBtn.addEventListener('click', abrirMenuCovil);
       conteudo.append(liga, covilBtn, lucky, rifaLiga, rifaBtn, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, exportar, importar, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.43</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.44</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
