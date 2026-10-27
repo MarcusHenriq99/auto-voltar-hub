@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.45
+// @version      2.46
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3312,13 +3312,21 @@
       try {
         fecharRifa(w);
         if (posicao(w)?.mapa === 'prontera') {
-          rifaStatus('Voltando ao farm');
-          const voltou = await voltarAoMapa(w);
+          const peso = lerPeso(w);
+          const precisaLimparMochila = cfg.rotinaLimites !== false &&
+            (!peso || peso.pct >= limiteSeguro() || Boolean(mochilaCheiaConfirmada(w)));
+          rifaStatus(precisaLimparMochila ? 'Liberando mochila antes do farm' : 'Voltando ao farm');
+          const voltou = precisaLimparMochila
+            ? await rotinaDaCidade(w, cacava, true)
+            : await voltarAoMapa(w);
           if (voltou) {
             rifaFarmPausado = false;
             if (cacava) await retomarCacada(w);
           }
-          if (!voltou) rifaStatus('Aguardando retorno','verifique mapa e peso no Auto-voltar');
+          if (!voltou) {
+            if (vigia?.refazerCidade) vigia.ultimaEm = Date.now() - VIGIA_INTERVALO_MS + 10000;
+            rifaStatus('Aguardando retorno','rotina da cidade será repetida automaticamente se necessário');
+          }
         } else if (cacava && posicao(w)?.mapa === origem?.mapa) {
           rifaFarmPausado = false;
           ligarAutopilot(w,true);
@@ -4174,7 +4182,7 @@
       conteudo.append(liga, covilBtn, lucky, rifaLiga, rifaBtn, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, exportar, importar, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.45</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.46</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
