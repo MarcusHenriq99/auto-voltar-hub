@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.47
+// @version      2.48
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3166,6 +3166,17 @@
     const m = /Zeny\s+([\d.,]+)/i.exec(w.document.body.innerText || '');
     return m ? Number(m[1].replace(/[^\d]/g, '')) : NaN;
   };
+  const numerosCompradosRifa = (modal) => {
+    const texto = modal?.innerText || '';
+    const trecho = /Seus n[uú]meros nesta edi[cç][aã]o\s*([\s\S]*?)(?=Comprar n[uú]mero|$)/i.exec(texto)?.[1];
+    if (trecho == null) return NaN;
+    if (/ainda n[aã]o comprou nenhum n[uú]mero/i.test(trecho)) return 0;
+    return (trecho.match(/\b\d{1,4}\b/g) || []).length;
+  };
+  const rifaEsgotada = (texto) => {
+    const vendidos = /(\d+)\s+de\s+(\d+)\s+n[uú]meros vendidos/i.exec(texto || '');
+    return Boolean(vendidos && Number(vendidos[2]) > 0 && Number(vendidos[1]) >= Number(vendidos[2]));
+  };
   const anuncioRifa = (w) => {
     const t = w.document.body.innerText || '';
     const matches = [...t.matchAll(/\[Rifa YggIdle\]\s*Em\s*(?:10|5|1)\s*minuto[^\n]{0,150}?Pr[eê]mio:\s*([^\n]+)/gi)];
@@ -3226,67 +3237,118 @@
     fechar?.click();
   };
   const comprarRifa = async (w,edicao,premioAvisado) => {
-    let premio = premioAvisado, semBotaoDesde = 0;
+    let premio = premioAvisado, semBotaoDesde = 0, falhasSeguidas = 0, registro = null;
+    const parar = (etapa, detalhe) => {
+      if (registro && !registro.confirmados && registro.resultado === 'Aguardando sorteio') {
+        registro.resultado = 'Sem bilhete — ' + detalhe;
+        salvarCfg();
+        const h = rifaMenu?.querySelector('[data-rifa-historico]');
+        if (h) h.textContent = textoHistoricoRifa();
+      }
+      rifaStatus(etapa, detalhe);
+    };
     while (cfg.rifa.ligado && cfg.ligado && posicao(w)?.mapa === 'prontera') {
       const modal = janelaRifa(w);
       if (!modal) {
-        if (!await abrirRifaNoNpc(w)) { rifaStatus('Parada','janela da rifa não abriu'); return; }
+        if (!await abrirRifaNoNpc(w)) { parar('Parada','janela da rifa não abriu'); return; }
         continue;
       }
       const texto = modal.innerText || '';
-      if (/edi[cç][aã]o encerrada|n[aã]o est[aá] aberta para compras/i.test(texto)) { rifaStatus('Encerrada','edição finalizada'); return; }
+      if (/edi[cç][aã]o encerrada|n[aã]o est[aá] aberta para compras/i.test(texto) ||
+          rifaEsgotada(texto)) {
+        parar('Encerrada',rifaEsgotada(texto) ? 'todos os números vendidos' : 'edição finalizada'); return;
+      }
       if (/nenhuma edi[cç][aã]o aberta/i.test(texto)) {
-        if (Date.now() > edicao.inicio + 120000) { rifaStatus('Encerrada','nenhuma edição aberta'); return; }
-        await esperar(500); continue;
+        if (Date.now() > edicao.inicio + 120000) { parar('Encerrada','nenhuma edição aberta'); return; }
+        await esperar(350); continue;
+      }
+      // O botão pode aparecer antes de o servidor aceitar compras. O texto
+      // "Abre em" e o horário da edição evitam uma tentativa prematura.
+      if (/abre em/i.test(texto) || Date.now() < edicao.inicio + 250) {
+        rifaStatus('Aguardando abertura','compra começa no horário anunciado');
+        await esperar(250); continue;
       }
       const premiosNoModal = PREMIOS_RIFA.filter(nome => normalizar(texto).includes(normalizar(nome)));
       premio = premiosNoModal.join(' + ');
       if (!premio || !premioMarcadoRifa(premio)) {
-        rifaStatus('Ignorada',premio ? 'prêmio não selecionado: '+premio : 'prêmio não confirmado');
+        parar('Ignorada',premio ? 'prêmio não selecionado: '+premio : 'prêmio não confirmado');
         return;
       }
       rifaEstado.premio = premio;
+      registro = registroRifa(edicao,premio);
       const limite = Math.max(0, Math.floor(Number(cfg.rifa.limiteGasto) || 0));
-      const registro = registroRifa(edicao,premio);
-      if ((registro.tentativas + 1)*500000 > limite) {
+      const saldo = zenyRifa(w);
+      if (!Number.isFinite(saldo)) { parar('Parada','saldo de zeny não identificado'); return; }
+      if (!Number.isFinite(registro.saldoInicial)) {
+        registro.saldoInicial = saldo;
+        gravarJson(CHAVE_CFG,cfg);
+      }
+      const gastoEfetivo = Math.max(Number(registro.gasto) || 0,
+        Math.max(0, Number(registro.saldoInicial) - saldo));
+      if (gastoEfetivo + 500000 > limite) {
         rifaStatus('Limite atingido','máximo de '+limite.toLocaleString('pt-BR')+'z nesta edição'); return;
       }
-      const saldo = zenyRifa(w);
-      if (!Number.isFinite(saldo)) { rifaStatus('Parada','saldo de zeny não identificado'); return; }
       if (saldo < 500000) { rifaStatus('Sem saldo','menos de 500.000z para outro bilhete'); return; }
       const comprar = [...modal.querySelectorAll('button')].find(b => /comprar n[uú]mero/i.test(textoDe(b)));
       if (!comprar || comprar.disabled) {
-        if (Date.now() < edicao.inicio) {
-          rifaStatus('Aguardando abertura','compra começa no horário anunciado');
-          await esperar(650); continue;
-        }
         if (!semBotaoDesde) semBotaoDesde = Date.now();
-        if (Date.now()-semBotaoDesde > 12000) { rifaStatus('Encerrada','botão indisponível por 12 s'); return; }
-        await esperar(650); continue;
+        if (Date.now()-semBotaoDesde > 30000) {
+          parar('Encerrada','botão indisponível por 30 s'); return;
+        }
+        rifaStatus('Aguardando botão','aguardando liberação da compra');
+        await esperar(350); continue;
       }
       semBotaoDesde = 0;
+      const numerosAntes = numerosCompradosRifa(modal);
       registro.tentativas++;
       gravarJson(CHAVE_CFG,cfg);
       comprar.click();
       const confirmar = await esperarAte(() => [...w.document.querySelectorAll('button')]
         .filter(b => visivel(b) && !b.disabled &&
           /^comprar\s*[—-]\s*500[.,]000z?$/i.test(textoDe(b)))
-        .find(b => /confirmar compra|voc[eê] vai gastar/i.test(b.parentElement?.parentElement?.innerText || '')),3500,100);
-      if (!confirmar) { rifaStatus('Parada','confirmação da compra não apareceu'); return; }
+        .find(b => /confirmar compra|voc[eê] vai gastar/i.test(b.parentElement?.parentElement?.innerText || '')),3500,75);
+      if (!confirmar) {
+        falhasSeguidas++;
+        if (falhasSeguidas >= 5) { parar('Parada','confirmação não apareceu em 5 tentativas'); return; }
+        rifaStatus('Tentando novamente','confirmação não apareceu; tentativa '+falhasSeguidas+'/5');
+        await esperar(300); continue;
+      }
       confirmar.click();
-      const debitou = await esperarAte(() => {
-        const novo = zenyRifa(w);
-        return Number.isFinite(saldo) && Number.isFinite(novo) && novo <= saldo-500000;
-      },6000,150);
-      if (!debitou) { rifaStatus('Parada','compra não confirmada pelo saldo'); return; }
-      registro.confirmados++; registro.gasto += 500000;
+      const confirmado = await esperarAte(() => {
+        const novoSaldo = zenyRifa(w);
+        const novosNumeros = numerosCompradosRifa(janelaRifa(w));
+        if (Number.isFinite(numerosAntes) && Number.isFinite(novosNumeros) &&
+            novosNumeros > numerosAntes) return { saldo: novoSaldo, numeros: novosNumeros };
+        if (Number.isFinite(novoSaldo) && novoSaldo <= saldo - 500000)
+          return { saldo: novoSaldo, numeros: novosNumeros };
+        return null;
+      },3500,75);
+      if (!confirmado) {
+        const atual = janelaRifa(w);
+        if (atual && rifaEsgotada(atual.innerText || '')) {
+          parar('Encerrada','todos os números vendidos'); return;
+        }
+        falhasSeguidas++;
+        if (falhasSeguidas >= 5) { parar('Parada','compra sem confirmação após 5 tentativas'); return; }
+        rifaStatus('Tentando novamente','compra não confirmada; tentativa '+falhasSeguidas+'/5');
+        await esperar(350); continue;
+      }
+      falhasSeguidas = 0;
+      const porNumeros = Number.isFinite(numerosAntes) && Number.isFinite(confirmado.numeros)
+        ? confirmado.numeros - numerosAntes : 0;
+      const porZeny = Number.isFinite(confirmado.saldo)
+        ? Math.floor((saldo - confirmado.saldo) / 500000) : 0;
+      const comprados = Math.max(1, porNumeros, porZeny);
+      registro.confirmados += comprados;
+      registro.gasto += 500000 * comprados;
+      if (registro.resultado.startsWith('Sem bilhete')) registro.resultado = 'Aguardando sorteio';
       if (registro.confirmados % 5 === 0) salvarCfg();
       else gravarJson(CHAVE_CFG,cfg);
       const h = rifaMenu?.querySelector('[data-rifa-historico]');
       if (h) h.textContent = textoHistoricoRifa();
-      rifaEstado.compras++;
+      rifaEstado.compras += comprados;
       rifaStatus('Comprando',rifaEstado.compras+' número(s); '+premio);
-      await esperar(600);
+      await esperar(550);
     }
   };
   const executarRifa = async (w,edicao) => {
