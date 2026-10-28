@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Yggidle - contador de abates por sessao
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.8
-// @description  Conta monstros derrotados apos um golpe proprio, por especie e hora.
+// @version      1.9
+// @description  Conta monstros derrotados apos um golpe proprio, separados por dia, especie e hora.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
 // ==/UserScript==
@@ -24,10 +24,11 @@
   let dragging = null;
   const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const fmt = (ms) => new Date(ms).toLocaleString('pt-BR');
-  const hour = (ms) => {
-    const d = new Date(ms), two = (n) => String(n).padStart(2, '0');
-    return two(d.getDate()) + '/' + two(d.getMonth() + 1) + ' ' + two(d.getHours()) + ':00';
-  };
+  const dayKey = (ms) => { const d = new Date(ms); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  const dayLabel = (ms) => { const d = new Date(ms); return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear(); };
+  const hourOfDay = (ms) => String(new Date(ms).getHours()).padStart(2, '0') + ':00';
+  const openDays = new Set([dayKey(Date.now())]);
+  let shownDay = dayKey(Date.now());
   const findGame = () => {
     for (const f of document.querySelectorAll('iframe')) {
       try { if (f.contentWindow?.document && f.contentWindow.ELRAG_CLIENT_BUILD) return f.contentWindow; } catch {}
@@ -191,14 +192,33 @@
     panel.style.width = '320px';
     statusLine = null; debugLine = null;
     const button = (text, click) => { const b = document.createElement('button'); b.textContent = text; b.style.cssText = 'cursor:pointer;margin:2px;padding:4px 7px;background:#29465e;color:white;border:1px solid #718da6;border-radius:5px'; b.onclick = click; return b; };
-    const totals = new Map();
-    for (const ev of data.events) totals.set(ev.id, { name: ev.name, count: (totals.get(ev.id)?.count || 0) + 1 });
-    const targetCount = data.events.filter((ev) => norm(ev.name) === norm(data.target)).length;
+    const today = dayKey(Date.now());
+    const days = new Map();
+    let todayCount = 0, todayTarget = 0;
+    for (const ev of data.events) {
+      const key = dayKey(ev.at);
+      let row = days.get(key);
+      if (!row) {
+        row = { key, date: dayLabel(ev.at), count: 0, target: 0,
+          monsters: new Map(), hours: new Map(), hourMonsters: new Map() };
+        days.set(key, row);
+      }
+      row.count++;
+      const isTarget = norm(ev.name) === norm(data.target);
+      if (isTarget) row.target++;
+      if (key === today) { todayCount++; if (isTarget) todayTarget++; }
+      const monster = row.monsters.get(ev.id);
+      row.monsters.set(ev.id, { name: ev.name, count: (monster?.count || 0) + 1 });
+      const h = hourOfDay(ev.at);
+      row.hours.set(h, (row.hours.get(h) || 0) + 1);
+      const hmKey = h + '\u0000' + ev.id, hm = row.hourMonsters.get(hmKey);
+      row.hourMonsters.set(hmKey, { hour: h, name: ev.name, count: (hm?.count || 0) + 1 });
+    }
     const header = document.createElement('div'); header.style.cssText = 'display:flex;align-items:center;gap:3px';
     const grip = document.createElement('span'); grip.dataset.abatesArrastar = '1'; grip.textContent = '⠿'; grip.title = 'Arraste para mover o contador';
     grip.style.cssText = 'cursor:grab;touch-action:none;user-select:none;padding:4px 5px;color:#cfe3f0';
     header.append(grip);
-    header.append(button('Abates ' + data.events.length + ' · ' + targetCount + ' alvo' + (data.paused ? ' · pausado' : ''), () => { expanded = !expanded; render(); }));
+    header.append(button('Hoje ' + todayCount + ' abates · ' + todayTarget + ' alvo' + (data.paused ? ' · pausado' : ''), () => { expanded = !expanded; render(); }));
     const minimize = button('–', () => {
       const r = panel.getBoundingClientRect();
       view.bx = Math.round(Math.max(0, Math.min(r.right - 16, window.innerWidth - 16)));
@@ -210,8 +230,9 @@
     header.append(minimize);
     panel.append(header);
     if (!expanded) return;
-    const line = (text) => { const d = document.createElement('div'); d.textContent = text; d.style.margin = '5px 2px'; panel.append(d); };
-    line('Sessão iniciada: ' + fmt(data.startedAt));
+    const line = (value, parent = panel) => { const d = document.createElement('div'); d.textContent = value; d.style.margin = '5px 2px'; parent.append(d); };
+    line('Hoje: ' + dayLabel(Date.now()) + ' · ' + todayCount + ' abates · ' + todayTarget + ' alvo');
+    line('Sessão: ' + data.events.length + ' abates desde ' + fmt(data.startedAt));
     statusLine = document.createElement('div'); statusLine.style.margin = '5px 2px';
     statusLine.textContent = game?.__fznAbatesStatus || 'Aguardando o jogo'; panel.append(statusLine);
     debugLine = document.createElement('div'); debugLine.style.margin = '5px 2px'; panel.append(debugLine);
@@ -221,22 +242,30 @@
     panel.append(button(data.paused ? 'Retomar' : 'Pausar', () => { data.paused = !data.paused; save(); render(); }));
     panel.append(button('Nova sessão', () => { if (!window.confirm('Iniciar nova sessão e zerar os abates registrados nesta conta?')) return; data.events = []; data.startedAt = Date.now(); data.paused = false; save(); render(); }));
     panel.append(button('CSV', () => {
-      const csv = ['data_hora;monstro;mob_id', ...data.events.map((e) => [fmt(e.at), e.name, e.id].map((s) => '"' + String(s).replace(/"/g, '""') + '"').join(';'))].join('\r\n');
+      const csv = ['dia;data_hora;monstro;mob_id', ...data.events.map((e) => [dayLabel(e.at), fmt(e.at), e.name, e.id].map((value) => '"' + String(value).replace(/"/g, '""') + '"').join(';'))].join('\r\n');
       const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })); a.download = 'abates-yggidle.csv'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     }));
-    line('Por monstro:');
-    for (const row of [...totals.values()].sort((a, b) => b.count - a.count)) line(row.name + ': ' + row.count);
-    if (!totals.size) line('Nenhum abate registrado nesta sessão.');
-    const hours = new Map();
-    for (const ev of data.events) { const k = hour(ev.at); hours.set(k, (hours.get(k) || 0) + 1); }
-    line('Por hora:'); for (const [k, n] of [...hours].reverse()) line(k + ' — ' + n);
-    line('Por monstro em cada hora:');
-    const hourlyMobs = new Map();
-    for (const ev of data.events) {
-      const key = hour(ev.at) + '\u0000' + ev.id, old = hourlyMobs.get(key);
-      hourlyMobs.set(key, { hour: hour(ev.at), name: ev.name, count: (old?.count || 0) + 1 });
+    line('Histórico por dia:');
+    for (const row of [...days.values()].sort((x, y) => y.key.localeCompare(x.key))) {
+      const details = document.createElement('details');
+      details.open = openDays.has(row.key);
+      details.style.cssText = 'border:1px solid #607b91;border-radius:5px;margin:4px 0;padding:4px';
+      const summary = document.createElement('summary');
+      summary.textContent = row.date + (row.key === today ? ' (hoje)' : '') + ': ' + row.count + ' abates · ' + row.target + ' alvo';
+      summary.style.cursor = 'pointer';
+      details.append(summary);
+      details.addEventListener('toggle', () => {
+        if (details.open) openDays.add(row.key); else openDays.delete(row.key);
+      });
+      line('Por monstro:', details);
+      for (const mob of [...row.monsters.values()].sort((x, y) => y.count - x.count)) line(mob.name + ': ' + mob.count, details);
+      line('Por hora:', details);
+      for (const [h, count] of [...row.hours].sort((x, y) => x[0].localeCompare(y[0]))) line(h + ' — ' + count, details);
+      line('Por monstro em cada hora:', details);
+      for (const hm of [...row.hourMonsters.values()].sort((x, y) => x.hour.localeCompare(y.hour))) line(hm.hour + ' · ' + hm.name + ': ' + hm.count, details);
+      panel.append(details);
     }
-    for (const row of [...hourlyMobs.values()].reverse()) line(row.hour + ' · ' + row.name + ': ' + row.count);
+    if (!days.size) line('Nenhum abate registrado nesta sessão.');
   };
 
   // Captura o registro de callbacks do jogo logo no carregamento do frame.
@@ -258,9 +287,12 @@
         if (changed) save();
       }
     }
+    const currentDay = dayKey(Date.now());
+    if (currentDay !== shownDay) { shownDay = currentDay; openDays.add(currentDay); render(); }
     if (panel?.isConnected && !expanded && !hidden) {
+      const eventsToday = data.events.filter((ev) => dayKey(ev.at) === currentDay);
       const b = panel.querySelector('button');
-      if (b) b.textContent = 'Abates ' + data.events.length + ' · ' + data.events.filter((ev) => norm(ev.name) === norm(data.target)).length + ' alvo' + (data.paused ? ' · pausado' : '');
+      if (b) b.textContent = 'Hoje ' + eventsToday.length + ' abates · ' + eventsToday.filter((ev) => norm(ev.name) === norm(data.target)).length + ' alvo' + (data.paused ? ' · pausado' : '');
     } else if (!panel?.isConnected || changed) render();
     if (statusLine?.isConnected) statusLine.textContent = game?.__fznAbatesStatus || 'Aguardando o jogo';
     if (debugLine?.isConnected) {
