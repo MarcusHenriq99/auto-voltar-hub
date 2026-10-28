@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.49
+// @version      2.50
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -12,6 +12,11 @@
 
 (() => {
   'use strict';
+
+  // O Hub pode injetar uma atualizacao na pagina sem encerrar a copia anterior.
+  // Uma unica instancia por janela impede duas rotinas clicando na mesma rifa.
+  if (window.__fznAutoVoltarInstancia) return;
+  window.__fznAutoVoltarInstancia = true;
 
   const fznBypassIsTrusted = (win) => {
     if (!win || win.__fznIsTrustedHook) return;
@@ -4246,7 +4251,7 @@
       conteudo.append(liga, covilBtn, lucky, rifaLiga, rifaBtn, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, exportar, importar, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.49</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.50</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
