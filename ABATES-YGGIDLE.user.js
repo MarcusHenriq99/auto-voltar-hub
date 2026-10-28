@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle - contador de abates por sessao
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.7
+// @version      1.8
 // @description  Conta monstros derrotados apos um golpe proprio, por especie e hora.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -35,71 +35,66 @@
     return window.ELRAG_CLIENT_BUILD ? window : null;
   };
 
-  // Este modulo executa no mesmo frame e no mesmo registro de modulos do jogo.
-  // Os pacotes continuam com seus callbacks originais; apenas observamos os dados.
+  // Observa sinais do jogo que continuam disponiveis mesmo se o contador
+  // iniciar depois do registro dos pacotes de combate.
   const installSource = `
     (async () => {
       if (window.__fznAbatesInstalando) return;
       window.__fznAbatesInstalando = true;
       window.__fznAbatesQueue = window.__fznAbatesQueue || [];
-      const debug = window.__fznAbatesDebug = { hooks: 0, ataques: 0, golpesProprios: 0, mortes: 0, mobs: 0, relacionados: 0, ultimoGid: 0, ultimaOrigem: 0 };
+      const debug = window.__fznAbatesDebug = { golpesProprios: 0, mortes: 0, mobs: 0, relacionados: 0 };
       const status = (s) => { window.__fznAbatesStatus = s; };
       try {
         const build = String(window.ELRAG_CLIENT_BUILD || '').trim();
         if (!/^[0-9a-f]{6,64}$/.test(build)) throw new Error('build do cliente indisponivel');
         const base = '/v/' + build + '/src/';
-        // Nenhum modulo do jogo pode ser importado enquanto o motor ainda monta
-        // seus modulos circulares. Mesmo SessionStorage pode puxar EntityManager.
         status('Aguardando inicializacao do motor do jogo');
-        while (!window.__elragEngine?.renderer) {
+        // O MapEngine instala este sinal quando seus modulos e callbacks
+        // estao prontos. A propriedade renderer usada antes nao existe.
+        while (!window.__elragEngine?.getCharacterCartMountState || !window.__elragUI?.pushDpsSample) {
           await new Promise((resolve) => setTimeout(resolve, 250));
         }
-        const [netMod, packetMod, sessionMod] = await Promise.all([
-          import(base + 'Network/NetworkManager.js'), import(base + 'Network/PacketStructure.js'),
-          import(base + 'Engine/SessionStorage.js')
+        const [managerMod, entityMod, dbMod, sessionMod] = await Promise.all([
+          import(base + 'Renderer/EntityManager.js'), import(base + 'Renderer/Entity/Entity.js'),
+          import(base + 'DB/DBManager.js'), import(base + 'Engine/SessionStorage.js')
         ]);
-        const Network = netMod.default, PACKET = packetMod.default, Session = sessionMod.default;
-        const recent = new Map(), owners = new Map();
-        const own = () => Number(Session.Entity?.GID || 0);
-        const note = (gid, source, damage, action) => {
-          gid = Number(gid); source = Number(source);
-          debug.ataques++; debug.ultimoGid = own(); debug.ultimaOrigem = source;
-          if (!gid || !(Number(damage) > 0) || [1, 2, 3, 11].includes(Number(action))) return;
-          if (source !== own() && owners.get(source) !== own()) return;
+        const Entities = managerMod.default, Entity = entityMod.default;
+        const DB = dbMod.default, Session = sessionMod.default;
+        const recent = new Map();
+        let lastMobLookup = 0, lastMobLookupAt = 0;
+        const origGet = Entities.get;
+        Entities.get = function(gid) {
+          const entity = origGet.apply(this, arguments);
+          if (entity?.objecttype === Entity.TYPE_MOB) {
+            lastMobLookup = Number(gid) || 0;
+            lastMobLookupAt = Date.now();
+          }
+          return entity;
+        };
+        const observeOwnDamage = (_at, damage) => {
+          if (!(Number(damage) > 0)) return;
           debug.golpesProprios++;
-          recent.set(gid, Date.now());
+          // Os manipuladores de ataque consultam o alvo antes de emitir
+          // a amostra de dano proprio; isso inclui ataques e habilidades.
+          const gid = Date.now() - lastMobLookupAt < 100
+            ? lastMobLookup : Number(Session.Entity?.targetGID || 0);
+          if (gid) recent.set(gid, Date.now());
           if (recent.size > 500) for (const [k, t] of recent) if (Date.now() - t > 30000) recent.delete(k);
         };
-        const watched = new Map([
-          [PACKET.ZC.NOTIFY_ACT, (p) => note(p.targetGID, p.GID, (Number(p.damage) || 0) + (Number(p.leftDamage) || 0), p.action)],
-          [PACKET.ZC.NOTIFY_ACT2, (p) => note(p.targetGID, p.GID, (Number(p.damage) || 0) + (Number(p.leftDamage) || 0), p.action)],
-          [PACKET.ZC.NOTIFY_ACT3, (p) => note(p.targetGID, p.GID, (Number(p.damage) || 0) + (Number(p.leftDamage) || 0), p.action)],
-          [PACKET.ZC.NOTIFY_SKILL, (p) => note(p.targetID, p.AID, p.damage, p.action)],
-          [PACKET.ZC.NOTIFY_SKILL2, (p) => note(p.targetID, p.AID, p.damage, p.action)],
-          [PACKET.ZC.NOTIFY_SKILL_POSITION, (p) => note(p.targetID, p.AID, p.damage, p.action)],
-          [PACKET.ZC.SKILL_ENTRY, (p) => owners.set(Number(p.AID), Number(p.creatorAID))],
-          [PACKET.ZC.SKILL_ENTRY2, (p) => owners.set(Number(p.AID), Number(p.creatorAID))],
-          [PACKET.ZC.SKILL_ENTRY3, (p) => owners.set(Number(p.AID), Number(p.creatorAID))],
-          [PACKET.ZC.SKILL_ENTRY4, (p) => owners.set(Number(p.AID), Number(p.creatorAID))],
-          [PACKET.ZC.SKILL_ENTRY5, (p) => owners.set(Number(p.AID), Number(p.creatorAID))],
-          [PACKET.ZC.SKILL_DISAPPEAR, (p) => owners.delete(Number(p.AID))]
-        ]);
-        const attackPackets = new Set([PACKET.ZC.NOTIFY_ACT, PACKET.ZC.NOTIFY_ACT2, PACKET.ZC.NOTIFY_ACT3, PACKET.ZC.NOTIFY_SKILL, PACKET.ZC.NOTIFY_SKILL2, PACKET.ZC.NOTIFY_SKILL_POSITION]);
-        let hooked = 0;
-        const origHook = Network.hookPacket;
-        Network.hookPacket = function(packet, callback) {
-          const observe = watched.get(packet);
-          if (!observe || typeof callback !== 'function') return origHook.call(this, packet, callback);
-          if (attackPackets.has(packet)) { hooked++; debug.hooks = hooked; }
-          return origHook.call(this, packet, function(pkt) {
-            try { observe(pkt); } catch {}
-            return callback.apply(this, arguments);
-          });
+        const wrapDps = () => {
+          const ui = window.__elragUI;
+          const current = ui?.pushDpsSample;
+          if (typeof current !== 'function' || current.__fznAbatesWrapped) return;
+          const wrapped = function(at, damage) {
+            try { observeOwnDamage(at, damage); }
+            catch (e) { debug.erro = String(e?.message || e).slice(0, 80); }
+            return current.apply(this, arguments);
+          };
+          wrapped.__fznAbatesWrapped = true;
+          ui.pushDpsSample = wrapped;
         };
-        const managerMod = await import(base + 'Renderer/EntityManager.js');
-        const entityMod = await import(base + 'Renderer/Entity/Entity.js');
-        const dbMod = await import(base + 'DB/DBManager.js');
-        const Entities = managerMod.default, Entity = entityMod.default, DB = dbMod.default;
+        wrapDps();
+        window.setInterval(wrapDps, 1000);
         const origDeath = Entities.removeLife;
         Entities.removeLife = function(gid) {
           try {
@@ -118,8 +113,7 @@
           } catch (e) { debug.erro = String(e?.message || e).slice(0, 80); }
           return origDeath.apply(this, arguments);
         };
-        window.setInterval(() => status(hooked >= 2 ? 'Capturando golpes e mortes' : 'Pacotes de combate anteriores ao contador; recarregue esta conta'), 1000);
-        status('Aguardando pacotes de combate');
+        status('Capturando golpes e mortes');
       } catch (e) { status('Captura indisponivel: ' + String(e?.message || e).slice(0, 100)); }
     })();
   `;
@@ -258,7 +252,7 @@
     let changed = false;
     if (w?.__fznAbatesQueue?.length) {
       const events = w.__fznAbatesQueue.splice(0);
-      if (!data.paused && w.__fznAbatesStatus === 'Capturando golpes e mortes') {
+      if (!data.paused) {
         for (const ev of events) if (Number.isFinite(ev.id) && ev.name && Number.isFinite(ev.at)) { data.events.push(ev); changed = true; }
         if (data.events.length > 50000) data.events.splice(0, data.events.length - 50000);
         if (changed) save();
