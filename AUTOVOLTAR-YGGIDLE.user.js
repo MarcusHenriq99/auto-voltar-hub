@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.46
+// @version      2.47
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3338,7 +3338,7 @@
   };
   const vigiarRifa = (w) => {
     const edicao = edicaoRifaAtual();
-    if (!edicao || !cfg.rifa.ligado || !cfg.ligado || !(cfg.rifa.premios||[]).length) return;
+    if (!edicao || !cfg.rifa.ligado || !(cfg.rifa.premios||[]).length) return;
     if (!(Number(cfg.rifa.limiteGasto) >= 500000)) {
       rifaStatus('Sem limite','defina quanto gastar por rifa; mínimo 500.000z'); return;
     }
@@ -3354,6 +3354,7 @@
       return;
     }
     if (!rifaEstado.premio && !edicao.abriu) return;
+    if (!cfg.ligado) { cfg.ligado = true; log('Rifa: Auto-voltar ligado automaticamente para disputar e retornar ao farm'); }
     cfg.rifa.ultimaEdicao = edicao.id; salvarCfg();
     void executarRifa(w,edicao);
   };
@@ -3422,8 +3423,9 @@
     acoes.append(
       botao('Executar agora',()=>{const w=jogo(),edicao=edicaoRifaAtual();
         if (!w||!edicao) {rifaStatus('Aguardando','não há edição próxima ou aberta');return;}
-        if (!cfg.rifa.ligado||!cfg.ligado) {rifaStatus('Desligada','ligue Rifa e Auto-voltar');return;}
+        if (!cfg.rifa.ligado) {rifaStatus('Desligada','ligue Rifa');return;}
         if (!(Number(cfg.rifa.limiteGasto)>=500000)) {rifaStatus('Sem limite','defina quanto gastar por rifa');return;}
+        if (!cfg.ligado) {cfg.ligado=true;log('Rifa: Auto-voltar ligado para disputar e retornar ao farm');}
         cfg.rifa.ultimaEdicao=edicao.id;salvarCfg();void executarRifa(w,edicao);}),
       botao('Fechar',()=>{menu.remove();rifaMenu=null;})
     );
@@ -4177,12 +4179,12 @@
       const mapaFarm=document.createElement('button');estilo(mapaFarm);mapaFarm.textContent='Mapa de farm';mapaFarm.addEventListener('click',abrirMapaFarm);
       const lucky = document.createElement('button'); estilo(lucky); lucky.dataset.lucky = '1'; lucky.addEventListener('click', abrirMenuLucky);
       const rifaBtn = document.createElement('button'); estilo(rifaBtn); rifaBtn.dataset.rifa = '1'; rifaBtn.title = 'Escolher premios, quanto gastar por rifa e executar agora'; rifaBtn.addEventListener('click', abrirMenuRifa);
-      const rifaLiga = document.createElement('button'); estilo(rifaLiga); rifaLiga.dataset.rifaLiga = '1'; rifaLiga.addEventListener('click', () => { cfg.rifa.ligado = !cfg.rifa.ligado; salvarCfg(); log('Rifa '+(cfg.rifa.ligado?'ligada':'desligada')); atualizarPainel(); });
+      const rifaLiga = document.createElement('button'); estilo(rifaLiga); rifaLiga.dataset.rifaLiga = '1'; rifaLiga.addEventListener('click', () => { cfg.rifa.ligado = !cfg.rifa.ligado; salvarCfg(); log('Rifa '+(cfg.rifa.ligado?'ligada; Auto-voltar será ligado ao iniciar a edição':'desligada')); atualizarPainel(); });
       const covilBtn = document.createElement('button'); covilBtn.dataset.covil = '1'; covilBtn.addEventListener('click', abrirMenuCovil);
       conteudo.append(liga, covilBtn, lucky, rifaLiga, rifaBtn, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, exportar, importar, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.46</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.47</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
