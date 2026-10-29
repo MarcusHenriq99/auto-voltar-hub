@@ -2,7 +2,7 @@
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
 // @version      1.55
-// @description  Complementa o autopilot do jogo: quando ele fica sem alvo, fixa o monstro visivel mais proximo ou anda explorando o mapa ate aparecer um. v1.54: clique completo no canvas e nos paineis.
+// @description  Complementa o Autopilot; teleporte opcional na Cheffenia e retorno pelo Arauto quando Poder Infernal impedir renascer.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
 // @noframes
