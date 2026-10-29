@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.61
+// @version      2.62
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3847,6 +3847,12 @@
     if (ajustesBtn) ajustesBtn.className = ajustesAbertos ? 'fzn-av--on' : '';
     const detalhe = painel.querySelector('[data-detalhe]');
     if (detalhe) detalhe.textContent = andamento.detalhe;
+    const alternarHistorico = painel.querySelector('[data-historico-toggle]');
+    if (alternarHistorico) {
+      alternarHistorico.textContent = detalhesProcesso ? '− Histórico' : '+ Histórico';
+      alternarHistorico.title = detalhesProcesso ? 'Recolher histórico' : 'Mostrar histórico';
+      alternarHistorico.setAttribute('aria-expanded', String(detalhesProcesso));
+    }
     const cartao = painel.querySelector('[data-cartao-farm]');
     if (cartao) { cartao.textContent = 'Cartao Kafra'; cartao.setAttribute('aria-pressed', String(cfg.armazem.tudoNoMapa)); cartao.disabled = ocupado; cartao.className = cfg.armazem.tudoNoMapa ? 'fzn-av--on' : 'fzn-av--off'; }
     const modo = painel.querySelector('[data-modo-inventario]');
@@ -4425,7 +4431,13 @@
       const status = document.createElement('div'); status.dataset.status = '1';
       Object.assign(status.style, { width: '100%', color: '#cfe3f0', fontWeight: '600', fontVariantNumeric: 'tabular-nums' });
       const detalhe = document.createElement('div'); detalhe.dataset.detalhe = '1';
-      Object.assign(detalhe.style, { width: '100%', color: '#f2eedc' });
+      Object.assign(detalhe.style, { flex: '1', minWidth: '0', color: '#f2eedc' });
+      const alternarHistorico = document.createElement('button'); estilo(alternarHistorico);
+      alternarHistorico.dataset.historicoToggle = '1';
+      alternarHistorico.addEventListener('click', () => { detalhesProcesso = !detalhesProcesso; atualizarStatus(); });
+      const linhaHistorico = document.createElement('div');
+      Object.assign(linhaHistorico.style, { display: 'flex', alignItems: 'center', gap: '8px', width: '100%' });
+      linhaHistorico.append(detalhe, alternarHistorico);
       const historico = document.createElement('pre'); historico.dataset.historico = '1';
       Object.assign(historico.style, { whiteSpace: 'pre-wrap', width: '100%', maxHeight: '28vh', overflow: 'auto', margin: '3px 0', font: '11px/1.35 system-ui,sans-serif' });
       const abrir = document.createElement('button'); estilo(abrir); abrir.dataset.abrir = '1';
@@ -4462,10 +4474,10 @@
         grupo('Rotina', limites, modoInventario, cartaoFarm, bolso, ferreiro, evento),
         grupo('Extras', covilBtn, rifaLiga, lucky),
         grupo('Configurar', mapaFarm, compras, venda, rifaBtn, calibrar, importar));
-      conteudo.append(barra, status, gaveta, detalhe, historico);
+      conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.61</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.62</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
