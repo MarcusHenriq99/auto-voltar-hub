@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.53
+// @version      2.56
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -90,12 +90,12 @@
     painel.dataset.fznRedim = '1';
     const doc = painel.ownerDocument;
     const win = doc.defaultView;
-    const orig = { width: painel.style.width, height: painel.style.height, maxWidth: painel.style.maxWidth, maxHeight: painel.style.maxHeight, overflow: painel.style.overflow, boxSizing: painel.style.boxSizing };
+    const orig = { width: painel.style.width, height: painel.style.height, maxWidth: painel.style.maxWidth, maxHeight: painel.style.maxHeight, minHeight: painel.style.minHeight, overflow: painel.style.overflow, boxSizing: painel.style.boxSizing };
     let tam = null;
     try { tam = JSON.parse(localStorage.getItem(chave)); } catch {}
     const aplicar = () => {
       if (!tam) { Object.assign(painel.style, orig); return; }
-      Object.assign(painel.style, { width: tam.w + 'px', height: tam.h + 'px', maxWidth: '98vw', maxHeight: '98vh', overflow: 'auto', boxSizing: 'border-box' });
+      Object.assign(painel.style, { width: tam.w + 'px', height: 'auto', minHeight: tam.h + 'px', maxWidth: '98vw', maxHeight: '98vh', overflow: 'auto', boxSizing: 'border-box' });
     };
     aplicar();
     const alca = doc.createElement('div');
@@ -289,6 +289,7 @@
   const andamento = { etapa: 'Aguardando', detalhe: 'Monitorando peso e morte', desde: Date.now() };
   let detalhesProcesso = false;
   let controlesAbertos = true;
+  let ajustesAbertos = false;
   const etapa = (nome, detalhe = '') => {
     andamento.etapa = nome; andamento.detalhe = detalhe; andamento.desde = Date.now();
     log(nome + (detalhe ? ': ' + detalhe : ''));
@@ -1458,8 +1459,27 @@
     return null;
   };
 
+  // v2.54: trava absoluta — nunca vender nem desmantelar, vale antes de qualquer outra regra
+  const NUNCA_VENDER_FIXO = ['Mana Coagulada', 'Cristal do Tempo', 'Energia Instável', 'Frio dos Mortos', 'Mana Sombria'];
+  const nuncaVenderNome = (nome) => {
+    const n = nomeBase(nome);
+    if (!n) return null;
+    if (NUNCA_VENDER_FIXO.some((x) => n.includes(normalizar(x)))) return 'NUNCA VENDER (item raro)';
+    if (PREMIOS_RIFA.some((x) => n.includes(normalizar(x)))) return 'NUNCA VENDER (premio da rifa)';
+    return null;
+  };
+  const nuncaVender = (item) => {
+    const porNome = nuncaVenderNome(item?.name);
+    if (porNome) return porNome;
+    // tier do jogo (src-ui/itemRarity.ts): 5 = Lendario (fundo dourado), 6 = Mitico
+    if (Number(item?.rarity?.tier) >= 5 || /lendari|mitic/.test(normalizar(item?.rarity?.label || ''))) return 'NUNCA VENDER (lendario)';
+    return null;
+  };
+
   const motivoProtecao = (item, tipo) => {
     const v = cfg.venda;
+    const trava = nuncaVender(item);
+    if (trava) return trava;
     if (alvoLucky(item)) return 'lucky drop procurado';
     const deCaixa = protecaoDeCaixa(item);
     if (deCaixa) return deCaixa;
@@ -1484,6 +1504,8 @@
 
   const protecaoDaLinha = (nomeLinha) => {
     if (!nomeLinha) return null;
+    const travaNome = nuncaVenderNome(nomeLinha);
+    if (travaNome) return travaNome;
     const alvo = nomeBase(nomeLinha);
     const mochila = estadoLoja.mochila || {};
     const correspondentes = [];
@@ -2725,7 +2747,7 @@
 
   const rondaDaRecuperacao = async (w) => {
     const r = recuperacao;
-    const espera = r.tentativas < 5 ? 60000 : 600000;
+    const espera = r.tentativas < 5 ? 20000 : 120000;
     if (Date.now() - r.ultimaEm < espera) return;
     const p = posicao(w);
     r.ultimaEm = Date.now();
@@ -2753,6 +2775,18 @@
           await retomarCacada(w);
           etapa('Aguardando', 'Recuperado no mapa ' + p.mapa);
         }
+        return;
+      }
+      // v2.52: peso e mochila tranquilos -> volta direto (Bio4 pelo Porteiro), sem refazer a cidade
+      const pesoAgora = lerPeso(w);
+      if (normalizar(p.mapa) === 'prontera' && !cfg.retornoEvento && destino && !r.atalhoFalhou &&
+          pesoAgora && pesoAgora.pct < limiteSeguro() - 5 && !mochilaCheia(w)) {
+        log('Recuperando (' + r.tentativas + '): em Prontera com peso ' + pesoAgora.pct.toFixed(0) + '%; volta direta a ' + destino);
+        recuperacao = null;
+        const voltou = await voltarAoMapa(w);
+        if (voltou) { if (r.retomarAutopilot) await retomarCacada(w); }
+        else if (!recuperacao) recuperacao = { ...r, atalhoFalhou: true, ultimaEm: Date.now() - 45000 };
+        else recuperacao.atalhoFalhou = true;
         return;
       }
       if (normalizar(p.mapa) === 'prontera') {
@@ -3044,9 +3078,9 @@
       return false;
     }
     if (!cidadeSemRotinaDesde) { cidadeSemRotinaDesde = Date.now(); return false; }
-    if (Date.now() - cidadeSemRotinaDesde < 8000) return false;
+    if (Date.now() - cidadeSemRotinaDesde < 5000) return false;
     cidadeSemRotinaDesde = 0;
-    log('Prontera sem rotina ativa por 8 s; retomando o retorno a ' + destino);
+    log('Prontera sem rotina ativa por 5 s; retomando o retorno a ' + destino);
     etapa('Recuperando', 'Em Prontera com Auto-voltar ON; retomando Kafra, venda e retorno a ' + destino);
     recuperacao = { motivo: 'parado na cidade', desde: Date.now(), ultimaEm: Date.now() - 60000, tentativas: 0, retomarAutopilot: true };
     return true;
@@ -3540,7 +3574,7 @@
         const destino = cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
         if (normalizar(p0.mapa) === 'prontera' && (destino || cfg.retornoEvento) && !recuperacao) {
           log('Carreguei em Prontera; retorno ' + (cfg.retornoEvento ? 'pelo Gerente de Eventos' : 'ao mapa de farm ' + destino) + ': iniciando em instantes');
-          recuperacao = { motivo: 'carregou na cidade', desde: Date.now(), ultimaEm: Date.now() - 50000, tentativas: 0, retomarAutopilot: true };
+          recuperacao = { motivo: 'carregou na cidade', desde: Date.now(), ultimaEm: Date.now() - 15000, tentativas: 0, retomarAutopilot: true };
         }
       }
     }
@@ -3657,31 +3691,35 @@
     if (controles) controles.style.display = controlesAbertos ? 'flex' : 'none';
     const w = jogo(), peso = w && lerPeso(w);
     const texto = painel.querySelector('[data-status]');
-    if (texto) texto.textContent = andamento.etapa + ' | Peso ' + (peso ? peso.pct.toFixed(1) + '%' : '?') +
-      (cfg.destinoFarm?.mapa ? ' | Destino: ' + cfg.destinoFarm.mapa : '') +
-      (cfg.rotinaLimites === false ? ' | Limites ignorados' : '') +
-      (cfg.retornoEvento ? ' | Retorno: Gerente de Premios' : '') +
-      (ocupado ? ' | ' + Math.floor((Date.now() - andamento.desde) / 1000) + 's nesta etapa' : '');
+    if (texto) texto.textContent = andamento.etapa + ' · Peso ' + (peso ? peso.pct.toFixed(0) + '%' : '?') +
+      (cfg.destinoFarm?.mapa ? ' · ' + cfg.destinoFarm.mapa : '') +
+      (cfg.rifa?.ligado && rifaEstado.etapa && rifaEstado.etapa !== 'Aguardando' ? ' · Rifa: ' + rifaEstado.etapa : '') +
+      (ocupado ? ' · ' + Math.floor((Date.now() - andamento.desde) / 1000) + 's' : '') +
+      (detalhesProcesso ? ' ▾' : ' ▸');
+    const gaveta = painel.querySelector('[data-gaveta]');
+    if (gaveta) gaveta.style.display = ajustesAbertos ? 'flex' : 'none';
+    const ajustesBtn = painel.querySelector('[data-ajustes]');
+    if (ajustesBtn) ajustesBtn.className = ajustesAbertos ? 'fzn-av--on' : '';
     const detalhe = painel.querySelector('[data-detalhe]');
     if (detalhe) detalhe.textContent = andamento.detalhe;
     const cartao = painel.querySelector('[data-cartao-farm]');
-    if (cartao) { cartao.textContent = 'Cartao Kafra: ' + (cfg.armazem.tudoNoMapa ? 'ON' : 'OFF'); cartao.setAttribute('aria-pressed', String(cfg.armazem.tudoNoMapa)); cartao.disabled = ocupado; cartao.className = cfg.armazem.tudoNoMapa ? 'fzn-av--on' : ''; }
+    if (cartao) { cartao.textContent = 'Cartao Kafra'; cartao.setAttribute('aria-pressed', String(cfg.armazem.tudoNoMapa)); cartao.disabled = ocupado; cartao.className = cfg.armazem.tudoNoMapa ? 'fzn-av--on' : 'fzn-av--off'; }
     const modo = painel.querySelector('[data-modo-inventario]');
-    if (modo) { modo.textContent = 'Modo: ' + (guardarTudo() ? 'Guardar tudo' : 'Vender permitidos'); modo.disabled = ocupado; modo.className = guardarTudo() ? 'fzn-av--on' : ''; }
+    if (modo) { modo.textContent = guardarTudo() ? 'Guardar tudo' : 'Vender permitidos'; modo.disabled = ocupado; modo.className = ''; }
     const evento = painel.querySelector('[data-evento]');
-    if (evento) { evento.textContent = 'Evento: ' + (cfg.retornoEvento ? 'ON' : 'OFF'); evento.disabled = ocupado; evento.className = cfg.retornoEvento ? 'fzn-av--on' : ''; evento.setAttribute('aria-pressed', String(Boolean(cfg.retornoEvento))); }
+    if (evento) { evento.textContent = 'Evento'; evento.disabled = ocupado; evento.className = cfg.retornoEvento ? 'fzn-av--on' : 'fzn-av--off'; evento.setAttribute('aria-pressed', String(Boolean(cfg.retornoEvento))); }
     const limites = painel.querySelector('[data-rotina-limites]');
-    if (limites) { limites.textContent = 'Rotina por limite: ' + (cfg.rotinaLimites === false ? 'OFF' : 'ON'); limites.disabled = ocupado; limites.className = cfg.rotinaLimites === false ? 'fzn-av--off' : 'fzn-av--on'; limites.setAttribute('aria-pressed', String(cfg.rotinaLimites !== false)); }
+    if (limites) { limites.textContent = 'Rotina por limite'; limites.disabled = ocupado; limites.className = cfg.rotinaLimites === false ? 'fzn-av--off' : 'fzn-av--on'; limites.setAttribute('aria-pressed', String(cfg.rotinaLimites !== false)); }
     const lucky = painel.querySelector('[data-lucky]');
     if (lucky) {
       const encontrados = (cfg.lucky || []).filter((alvo) => estadoLoja.mochila && totalLucky(alvo, itensMochila()) > 0).length;
-      lucky.textContent = `Lucky drops: ${encontrados}/${cfg.lucky.length}`;
+      lucky.textContent = `Lucky ${encontrados}/${cfg.lucky.length}`;
       lucky.className = encontrados ? 'fzn-av--on' : '';
       lucky.title = 'Configurar nomes procurados e ver mochila/Kafra. Itens da lista nunca sao vendidos nem desmantelados.';
     }
     if (menuLucky?.isConnected) atualizarMenuLucky();
     const executar = painel.querySelector('[data-executar]');
-    if (executar) { executar.disabled = ocupado; executar.textContent = ocupado ? 'Processo em andamento' : 'Executar agora'; }
+    if (executar) { executar.disabled = ocupado; executar.textContent = ocupado ? '⏳ Em andamento' : '▶ Executar'; }
     const historico = painel.querySelector('[data-historico]');
     if (historico) { historico.style.display = detalhesProcesso ? 'block' : 'none'; historico.textContent =
       (cfg.rotinaLimites === false ? 'Rotina por limite OFF: peso e espacos nao iniciam viagens automaticas. Executar agora continua disponivel; morte e falta de suprimentos seguem suas rotinas.\n' : 'Rotina por limite ON: peso inicia em 70%; espacos em 95/100 ou 190/200. Com Ferreiro ON, vai a Prontera para desmantelar antes de guardar e vender.\n') +
@@ -3801,7 +3839,7 @@
       cfg.mapaFarmManual=codigo;
       if(codigo)cfg.destinoFarm={mapa:codigo,nome:codigo};else{const w=jogo();if(w)registrarDestinoFarm(w);}
       salvarCfg();log('Mapa de farm desta conta: '+(codigo||'acompanhar mapa atual'));abrirMapaFarm();atualizarPainel();
-    };p.append(salvar);const fechar=document.createElement('button');fechar.textContent='Fechar mapa de farm';fechar.onclick=abrirMapaFarm;p.append(fechar);document.body.append(p);
+    };p.append(salvar);const usarAtual=document.createElement('button');usarAtual.textContent='Usar mapa atual';usarAtual.title='Limpa o bloqueio antigo e retoma a automacao neste mapa';usarAtual.onclick=async()=>{if(ocupado)return;const pos=posicao(jogo());if(pos?.mapa && pos.mapa!=='prontera'){cfg.mapaFarmManual=pos.mapa;salvarCfg();}abrirMapaFarm();await retomarNoMapaAtual();};p.append(usarAtual);const fechar=document.createElement('button');fechar.textContent='Fechar mapa de farm';fechar.onclick=abrirMapaFarm;p.append(fechar);document.body.append(p);
   };
   let editor = null;
 
@@ -4093,6 +4131,16 @@
           }
           [data-fzn-auto-voltar] input[type="text"] { padding:4px 6px; max-width:100%; box-sizing:border-box; }
           [data-fzn-auto-voltar] input::placeholder {color:#8fa3b3; opacity:1;}
+          [data-fzn-auto-voltar] .fzn-av__barra { display:flex; gap:4px; align-items:center; width:100%; }
+          [data-fzn-auto-voltar] .fzn-av__barra [data-liga] { min-width:64px; }
+          [data-fzn-auto-voltar] .fzn-av__barra [data-ajustes] { margin-left:auto; padding:4px 8px; }
+          [data-fzn-auto-voltar] .fzn-av__gaveta { width:100%; display:flex; flex-direction:column; gap:5px; padding:6px 0 2px; border-top:1px solid rgba(120,200,255,.15); }
+          [data-fzn-auto-voltar] .fzn-av__grupo { display:flex; flex-wrap:wrap; gap:4px; align-items:center; }
+          [data-fzn-auto-voltar] .fzn-av__grupo > span { width:100%; font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:#8fa3b3; }
+          [data-fzn-auto-voltar] .fzn-av__gaveta button { font-weight:600; background:transparent; color:#aab8c4; border-color:rgba(143,163,179,.35); }
+          [data-fzn-auto-voltar] .fzn-av__gaveta button.fzn-av--on { background:rgba(111,227,138,.14); color:#6fe38a; border-color:rgba(111,227,138,.55); }
+          [data-fzn-auto-voltar] .fzn-av__gaveta button.fzn-av--off { background:transparent; color:#8f8aa3; border-color:rgba(143,138,163,.35); }
+          [data-fzn-auto-voltar] [data-status] { cursor:pointer; font-size:11px; }
         `;
         document.head.appendChild(css);
       }
@@ -4132,12 +4180,12 @@
       compras.addEventListener('click', abrirEditor);
       const bolso = document.createElement('button');
       bolso.title = 'Loja de Bolso: quando a lista de Compras pedir reposicao (minimo), pausa a cacada, compra pelo item Loja de Bolso e continua no mesmo mapa. Confere a cada 1 min.';
-      const pintarBolso = () => { bolso.textContent = 'Loja de Bolso: ' + (cfg.lojaBolso ? 'ON' : 'OFF'); bolso.className = cfg.lojaBolso ? 'fzn-av--on' : 'fzn-av--off'; };
+      const pintarBolso = () => { bolso.textContent = 'Loja de Bolso'; bolso.className = cfg.lojaBolso ? 'fzn-av--on' : 'fzn-av--off'; };
       bolso.addEventListener('click', () => { if (ocupado) return; cfg.lojaBolso = !cfg.lojaBolso; compraBolsoEm = 0; salvarCfg(); log('Loja de Bolso ' + (cfg.lojaBolso ? 'ligada' : 'desligada')); pintarBolso(); });
       pintarBolso();
       const ferreiro = document.createElement('button');
       ferreiro.title = 'Ferreiro (158,191): ao chegar em 95% dos espacos da mochila, vai a Prontera e desmonta os equipamentos elegiveis antes de guardar e vender. Nunca destrava itens.';
-      const pintarFerreiro = () => { ferreiro.textContent = 'Ferreiro: ' + (cfg.ferreiro ? 'ON' : 'OFF'); ferreiro.className = cfg.ferreiro ? 'fzn-av--on' : 'fzn-av--off'; };
+      const pintarFerreiro = () => { ferreiro.textContent = 'Ferreiro'; ferreiro.className = cfg.ferreiro ? 'fzn-av--on' : 'fzn-av--off'; };
       ferreiro.addEventListener('click', () => { if (ocupado) return; cfg.ferreiro = !cfg.ferreiro; salvarCfg(); log('Ferreiro ' + (cfg.ferreiro ? 'ligado' : 'desligado')); pintarFerreiro(); });
       pintarFerreiro();
       const calibrar = document.createElement('button');
@@ -4188,9 +4236,12 @@
         });
         const cab = document.createElement('div');
         Object.assign(cab.style, { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' });
-        const titulo = document.createElement('strong'); titulo.textContent = 'Restaurar ajustes'; cab.appendChild(titulo);
+        const titulo = document.createElement('strong'); titulo.textContent = 'Backup dos ajustes'; cab.appendChild(titulo);
         const fechar = document.createElement('button'); estilo(fechar); fechar.textContent = 'Fechar';
         fechar.addEventListener('click', () => caixa.remove()); cab.appendChild(fechar); caixa.appendChild(cab);
+        const salvarAgora = document.createElement('button'); salvarAgora.textContent = 'Salvar ajustes agora';
+        salvarAgora.addEventListener('click', () => { exportar.click(); caixa.remove(); });
+        Object.assign(salvarAgora.style, { marginTop: '8px' }); caixa.appendChild(salvarAgora);
         const aviso = document.createElement('p');
         aviso.textContent = lista.length ? 'Escolha o backup desta conta pelo mapa e data. Os ajustes do jogo permanecem salvos no Hub mesmo apos limpar o cache do jogo.' : 'Nenhum backup do Hub encontrado. Voce ainda pode escolher um arquivo JSON externo.';
         Object.assign(aviso.style, { margin: '9px 0', color: '#dbe7ef' }); caixa.appendChild(aviso);
@@ -4218,8 +4269,8 @@
         log(conferido ? 'Backup salvo no Hub. Use Restaurar ajustes para recupera-lo apos limpar o cache.' :
           'Backup no Hub nao confirmado; mantenha os ajustes atuais ate conferir o armazenamento.');
       });
-      const importar = document.createElement('button'); estilo(importar); importar.textContent = 'Restaurar ajustes';
-      importar.title = 'Recupere um backup do Hub ou escolha um arquivo JSON externo.';
+      const importar = document.createElement('button'); estilo(importar); importar.textContent = 'Backup';
+      importar.title = 'Salvar os ajustes desta conta no Hub, ou restaurar um backup (do Hub ou arquivo JSON).';
       importar.addEventListener('click', () => {
         if (ocupado) return;
         painelBackups();
@@ -4252,10 +4303,22 @@
       const rifaBtn = document.createElement('button'); estilo(rifaBtn); rifaBtn.dataset.rifa = '1'; rifaBtn.title = 'Escolher premios, quanto gastar por rifa e executar agora'; rifaBtn.addEventListener('click', abrirMenuRifa);
       const rifaLiga = document.createElement('button'); estilo(rifaLiga); rifaLiga.dataset.rifaLiga = '1'; rifaLiga.addEventListener('click', () => { cfg.rifa.ligado = !cfg.rifa.ligado; salvarCfg(); log('Rifa '+(cfg.rifa.ligado?'ligada; Auto-voltar será ligado ao iniciar a edição':'desligada')); atualizarPainel(); });
       const covilBtn = document.createElement('button'); covilBtn.dataset.covil = '1'; covilBtn.addEventListener('click', abrirMenuCovil);
-      conteudo.append(liga, covilBtn, lucky, rifaLiga, rifaBtn, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, exportar, importar, status, detalhe, historico);
+      const ajustesBtn = document.createElement('button'); ajustesBtn.dataset.ajustes = '1'; ajustesBtn.textContent = '⚙'; ajustesBtn.title = 'Ajustes';
+      ajustesBtn.addEventListener('click', () => { ajustesAbertos = !ajustesAbertos; atualizarStatus(); });
+      status.title = 'Clique para ver o historico';
+      status.addEventListener('click', () => detalhes.click());
+      rifaBtn.title = 'Premios, quanto gastar por rifa e executar agora';
+      const barra = document.createElement('div'); barra.className = 'fzn-av__barra'; barra.append(liga, executar, ajustesBtn);
+      const grupo = (titulo, ...itens) => { const g = document.createElement('div'); g.className = 'fzn-av__grupo'; const t = document.createElement('span'); t.textContent = titulo; g.append(t, ...itens); return g; };
+      const gaveta = document.createElement('div'); gaveta.className = 'fzn-av__gaveta'; gaveta.dataset.gaveta = '1';
+      gaveta.append(
+        grupo('Rotina', limites, modoInventario, cartaoFarm, bolso, ferreiro, evento),
+        grupo('Extras', covilBtn, rifaLiga, lucky),
+        grupo('Configurar', mapaFarm, compras, venda, rifaBtn, calibrar, importar));
+      conteudo.append(barra, status, gaveta, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.53</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.56</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
@@ -4263,16 +4326,16 @@
       fznEncolhivel(painel, 'fzn-autovoltar-ygg-encolher-v8');
     }
     const liga = painel.querySelector('[data-liga]');
-    liga.textContent = rifaRodando ? 'Auto-voltar: PAUSADO (RIFA)' : `Auto-voltar: ${cfg.ligado ? 'ON' : 'OFF'}`;
+    liga.textContent = rifaRodando ? '⏸ Rifa' : (cfg.ligado ? '● ON' : '○ OFF');
     liga.disabled = rifaRodando;
     liga.className = cfg.ligado ? 'fzn-av--on' : 'fzn-av--off';
     liga.title = historicoLog().slice(-12).join('\n') || 'sem eventos ainda';
     const rifaBtn = painel.querySelector('[data-rifa]');
-    if (rifaBtn) rifaBtn.textContent = 'Rifa: '+rifaEstado.etapa+' · '+(cfg.rifa.premios||[]).length+' prêmios';
+    if (rifaBtn) rifaBtn.textContent = 'Prêmios da rifa ('+(cfg.rifa.premios||[]).length+')';
     const rifaLiga = painel.querySelector('[data-rifa-liga], [data-rifaLiga]');
-    if (rifaLiga) { rifaLiga.textContent = 'Rifa: '+(cfg.rifa.ligado?'ON':'OFF'); rifaLiga.className=cfg.rifa.ligado?'fzn-av--on':'fzn-av--off'; }
+    if (rifaLiga) { rifaLiga.textContent = 'Rifa'; rifaLiga.className=cfg.rifa.ligado?'fzn-av--on':'fzn-av--off'; }
     const covilBtn = painel.querySelector('[data-covil]');
-    covilBtn.textContent = 'Covil: ' + (cfg.covil?.ligado ? 'ON · ' + cfg.covil.hoje + ' hoje' : 'OFF');
+    covilBtn.textContent = 'Covil' + (cfg.covil?.ligado ? ' · ' + cfg.covil.hoje : '');
     covilBtn.className = cfg.covil?.ligado ? 'fzn-av--on' : 'fzn-av--off';
     atualizarStatus();
   }

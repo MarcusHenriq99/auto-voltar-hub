@@ -4,8 +4,10 @@ Script de automação do Yggidle usado no FZN Idle Hub. Esta pasta contém a ver
 
 ## Arquivos
 
-- `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 2.23.
-- `ABATES-YGGIDLE.user.js`: contador independente de abates por sessão, monstro e hora.
+- `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 2.56.
+- `AUTOLOGIN-YGGIDLE.user.js`: login automático e recuperação de conexão, versão 1.25.
+- `ABATES-YGGIDLE.user.js`: contador independente de abates por dia, monstro e hora.
+- `AUTOHUNT-YGGIDLE.user.js`: complemento do Autopilot, versão 1.62; asa da Cheffenia opcional e retorno pelo Arauto após morte com Poder Infernal.
 - `tests/`: verificações locais dos fluxos de aviso diário, Loja de Cash, evento, mochila e limites.
 
 ## Comportamento principal
@@ -22,7 +24,7 @@ Na versão 2.23, o botão **Lucky drops** aceita um nome exato por linha (por pa
 
 O script separado **Contador de abates** registra monstros que morreram até 15 segundos após receberem um golpe do próprio personagem. Seu botão compacto abre os totais por espécie, por hora e por espécie em cada hora. O campo de monstro de interesse começa com `Stefan J. E. Wolf`; pontuação e espaços diferentes no nome não afetam essa comparação. **Pausar**, **Nova sessão** e **CSV** controlam a análise. A sessão fica salva localmente na conta e continua após recarregar o jogo.
 
-A contagem é uma **estimativa baseada nos eventos visíveis ao cliente**: outro jogador pode dar o golpe final, e mortes ocorridas enquanto a captura não estiver ativa não entram. O painel informa quando precisa recarregar a conta para capturar os pacotes desde o início. O script não ataca nem altera o Auto-voltar.
+A contagem é uma **estimativa baseada nos eventos visíveis ao cliente**: outro jogador pode dar o golpe final, e mortes ocorridas enquanto a captura não estiver ativa não entram. O script não ataca nem altera o Auto-voltar.
 
 ## Verificação local
 
@@ -30,8 +32,9 @@ Com Node.js instalado:
 
 ```powershell
 node --check .\AUTOVOLTAR-YGGIDLE.user.js
+node --check .\AUTOHUNT-YGGIDLE.user.js
+node --check .\AUTOLOGIN-YGGIDLE.user.js
 node --check .\ABATES-YGGIDLE.user.js
-Get-ChildItem .\tests\*.cjs | ForEach-Object { node $_.FullName }
 ```
 
 ## Aplicação no Hub
@@ -39,4 +42,3 @@ Get-ChildItem .\tests\*.cjs | ForEach-Object { node $_.FullName }
 No FZN Idle Hub, em **Scripts**, selecione **GitHub** e use o arquivo [AUTOVOLTAR-YGGIDLE.user.js](https://github.com/MarcusHenriq99/auto-voltar-hub/blob/main/AUTOVOLTAR-YGGIDLE.user.js) da branch `main`. O cartão **Auto voltar GitHub** está ligado para todas as contas; a antiga cópia colada no Hub deve permanecer desligada para evitar duas execuções.
 
 Depois de publicar uma mudança na `main`, clique **Verificar agora** no cartão do script. O Hub consulta o GitHub nesse momento; confirme a nova versão no cartão e no painel do Auto-voltar. Mantenha **Manter jogo em segundo plano** ligado caso queira que o Hub continue rodando ao trocar de janela.
-

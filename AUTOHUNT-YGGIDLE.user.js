@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.55
-// @description  Complementa o Autopilot; teleporte opcional na Cheffenia e retorno pelo Arauto quando Poder Infernal impedir renascer.
+// @version      1.62
+// @description  Complementa o autopilot do jogo: quando ele fica sem alvo, fixa o monstro visivel mais proximo ou anda explorando o mapa ate aparecer um. v1.54: clique completo no canvas e nos paineis.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
 // @noframes
@@ -102,12 +102,12 @@
     painel.dataset.fznRedim = '1';
     const doc = painel.ownerDocument;
     const win = doc.defaultView;
-    const orig = { width: painel.style.width, height: painel.style.height, maxWidth: painel.style.maxWidth, maxHeight: painel.style.maxHeight, overflow: painel.style.overflow, boxSizing: painel.style.boxSizing };
+    const orig = { width: painel.style.width, height: painel.style.height, maxWidth: painel.style.maxWidth, maxHeight: painel.style.maxHeight, minHeight: painel.style.minHeight, overflow: painel.style.overflow, boxSizing: painel.style.boxSizing };
     let tam = null;
     try { tam = JSON.parse(localStorage.getItem(chave)); } catch {}
     const aplicar = () => {
       if (!tam) { Object.assign(painel.style, orig); return; }
-      Object.assign(painel.style, { width: tam.w + 'px', height: tam.h + 'px', maxWidth: '98vw', maxHeight: '98vh', overflow: 'auto', boxSizing: 'border-box' });
+      Object.assign(painel.style, { width: tam.w + 'px', height: 'auto', minHeight: tam.h + 'px', maxWidth: '98vw', maxHeight: '98vh', overflow: 'auto', boxSizing: 'border-box' });
     };
     aplicar();
     const alca = doc.createElement('div');
@@ -225,7 +225,48 @@
     win.setInterval(posicionar, 400);
   };
 
+
+  const fznTemaYggExtra = () => {
+    if (document.getElementById('fzn-ygg-tema-gaveta')) return;
+    const css = document.createElement('style');
+    css.id = 'fzn-ygg-tema-gaveta';
+    css.textContent = `
+      .fzn-ygg__barra { display:flex; gap:4px; align-items:center; width:100%; }
+      .fzn-ygg__barra .fzn-ygg__liga { min-width:64px; }
+      .fzn-ygg__barra [data-ajustes] { margin-left:auto; padding:4px 8px; }
+      .fzn-ygg__status { width:100%; font-size:11px; font-weight:600; color:#cfe3f0; font-variant-numeric:tabular-nums; }
+      .fzn-ygg__status[data-clica] { cursor:pointer; }
+      .fzn-ygg__gaveta { width:100%; display:flex; flex-direction:column; gap:5px; padding:6px 0 2px; border-top:1px solid rgba(120,200,255,.15); }
+      .fzn-ygg__grupo { display:flex; flex-wrap:wrap; gap:4px; align-items:center; }
+      .fzn-ygg__grupo > span { width:100%; font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:#8fa3b3; }
+      .fzn-ygg__gaveta button { font-weight:600; background:transparent; color:#aab8c4; border-color:rgba(143,163,179,.35); }
+      .fzn-ygg__gaveta button.fzn-ygg--on { background:rgba(111,227,138,.14); color:#6fe38a; border-color:rgba(111,227,138,.55); }
+      .fzn-ygg__gaveta button.fzn-ygg--off { background:transparent; color:#8f8aa3; border-color:rgba(143,138,163,.35); }
+    `;
+    (document.head || document.documentElement).appendChild(css);
+  };
+  // Barra principal + linha de status + gaveta de ajustes (aberta/fechada por conta).
+  const fznGavetaYgg = (corpo, chaveAberta) => {
+    fznTemaYggExtra();
+    const barra = document.createElement('div'); barra.className = 'fzn-ygg__barra';
+    const status = document.createElement('div'); status.className = 'fzn-ygg__status';
+    const gaveta = document.createElement('div'); gaveta.className = 'fzn-ygg__gaveta';
+    const ajustes = document.createElement('button'); ajustes.dataset.ajustes = '1'; ajustes.textContent = '\u2699'; ajustes.title = 'Ajustes';
+    let aberta = false;
+    try { aberta = localStorage.getItem(chaveAberta) === '1'; } catch {}
+    const pintar = () => { gaveta.style.display = aberta ? 'flex' : 'none'; ajustes.className = aberta ? 'fzn-ygg--on' : ''; };
+    ajustes.addEventListener('click', () => { aberta = !aberta; try { localStorage.setItem(chaveAberta, aberta ? '1' : '0'); } catch {} pintar(); });
+    pintar();
+    const grupo = (titulo, ...itens) => {
+      const g = document.createElement('div'); g.className = 'fzn-ygg__grupo';
+      const t = document.createElement('span'); t.textContent = titulo;
+      g.append(t, ...itens); gaveta.appendChild(g); return g;
+    };
+    corpo.append(barra, status, gaveta);
+    return { barra, status, gaveta, ajustes, grupo };
+  };
   const fznTemaYgg = () => {
+    fznTemaYggExtra();
     if (document.getElementById('fzn-ygg-tema')) return;
     const css = document.createElement('style');
     css.id = 'fzn-ygg-tema';
@@ -304,6 +345,17 @@
     topo.lastChild.textContent = versao;
     const corpo = document.createElement('div');
     corpo.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;align-items:center';
+    // So clique de mouse de verdade aciona os botoes. Botao clicado ficava com
+    // foco e o Enter/Espaco seguinte (chat, atalho) "clicava" de novo: o log
+    // de 26/10 mostra Hunt desligado 15-20 s depois de ligado, sem clique.
+    // mousedown sem padrao = o botao nem pega foco.
+    corpo.addEventListener('mousedown', (ev) => { if (ev.target.closest('button')) ev.preventDefault(); }, true);
+    corpo.addEventListener('click', (ev) => {
+      if (!ev.target.closest('button') || (ev.isTrusted && ev.detail > 0)) return;
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      try { log(`clique ignorado em "${ev.target.closest('button').textContent}" (${ev.isTrusted ? 'teclado' : 'script'})`); } catch {}
+    }, true);
     caixa.append(topo, corpo);
     document.body.appendChild(caixa);
     fznArrastavelYgg(caixa, topo, chavePos);
@@ -379,6 +431,8 @@
     ? (catIds.has(Number(m?.mobId)) || catNomes.has(normN(m?.name)))
     : (MVP_IDS.has(Number(m?.mobId)) || MVP_NOMES.has(normN(m?.name)));
   let mvpFixado = null, mvpFixadoEm = 0;
+  const EVENTO_NOME = normN('Stefan J.E. Wolf');
+  let eventoFixado = null, eventoFixadoEm = 0;
   const SO_MVP_TELEPORTE_MS = 300;
   let naoMvpDesde = 0;
   const golpesMvp = new Map();
@@ -714,12 +768,21 @@
       mortoAntes = morto;
     } catch {}
   }, 500);
-  let caixaConta = null, botaoConta = null, contaAberta = false;
+  let caixaConta = null, botaoConta = null, contaAberta = false, linhaStatus = null;
+  function pintarStatus() {
+    if (!linhaStatus) return;
+    const c = lerConta(), m = String(mapaAgora || '');
+    let t = m || 'sem mapa';
+    if (/^lhz_dun04/.test(m)) t += ' \u00B7 hoje ' + c.hoje.bio4.kills + ' kills \u00B7 ' + c.hoje.bio4.mortes + ' mortes';
+    else if (/^moro_vol/.test(m)) t += ' \u00B7 hoje ' + (c.hoje.chefSolo.kills + c.hoje.chefGuild.kills) + ' kills \u00B7 ' + (c.hoje.chefSolo.mortes + c.hoje.chefGuild.mortes) + ' mortes';
+    linhaStatus.textContent = t + (contaAberta ? ' \u25BE' : ' \u25B8');
+  }
   function pintarContagem() {
     if (!botaoConta) return;
     const c = lerConta();
     botaoConta.textContent = 'Hoje — Bio4 ' + c.hoje.bio4.kills + ' kills/' + c.hoje.bio4.mortes + ' mortes · Chef Solo ' + c.hoje.chefSolo.kills + '/' + c.hoje.chefSolo.mortes + ' · Chef Guild ' + c.hoje.chefGuild.kills + '/' + c.hoje.chefGuild.mortes;
     caixaConta.style.display = contaAberta ? '' : 'none';
+    pintarStatus();
     if (!contaAberta) return;
     const linhas = [];
     for (const [rot, b] of [['HOJE (' + c.dia + ')', c.hoje], ['TOTAL', c.total]]) {
@@ -732,7 +795,7 @@
     }
     caixaConta.firstChild.textContent = linhas.join('\n');
   }
-  const montarContagem = (corpo) => {
+  const montarContagem = (corpo, gv) => {
     botaoConta = document.createElement('button');
     botaoConta.title = 'Kills de MVP (premio de MVP meu) e mortes na Bio4 e na Chefenia (Solo = sem grupo, Guild = com grupo). Clique para ver por MVP e o total.';
     botaoConta.addEventListener('click', () => { contaAberta = !contaAberta; pintarContagem(); });
@@ -747,7 +810,10 @@
       log('contagem zerada'); pintarContagem();
     });
     caixaConta.appendChild(zerar);
-    corpo.append(botaoConta, caixaConta);
+    botaoConta.style.display = 'none';
+    gv.status.addEventListener('click', () => { contaAberta = !contaAberta; pintarContagem(); });
+    gv.status.after(caixaConta);
+    corpo.append(botaoConta);
     pintarContagem();
     setInterval(pintarContagem, 60000);
   };
@@ -756,12 +822,19 @@
     19: 'Lancas de Fogo', 21: 'Tempestade de Raios', 230: 'Terror Acido',
   };
   let skillPerigo = null;
+  const UNT_PNEUMA = 133;
+  const PNEUMA_VIDA_MS = 12000;
+  const pneumas = new Map();
   const pontesSkill = new WeakSet();
   const ganchoSkill = (w) => {
     if (pontesSkill.has(w)) return;
     pontesSkill.add(w);
     w.__fznAtoCb = (origem, alvo, acao, eu) => { try { anotarGolpe(origem, alvo, acao, eu); } catch {} };
     w.__fznSaiuCb = (gid, tipo) => { try { if (tipo === 1 && lugarDoMapa(mapaAgora) === 'bio4' && Date.now() - (golpeiEm.get(gid) || 0) < 10000) contarAbate(gid); } catch {} };
+    w.__fznUnidCb = (aid, job, x, y, sumiu) => {
+      if (sumiu) { pneumas.delete(aid); return; }
+      if (Number(job) === UNT_PNEUMA) pneumas.set(aid, { x: Number(x), y: Number(y), mapa: mapaAgora, em: Date.now() });
+    };
     w.__fznMvpCb = (dono, meuAid, meuGid) => { try { if (dono && (dono === meuAid || dono === meuGid)) contarMvp(); } catch {} };
     w.__fznSkillCb = (skid, origem, alvo, eu, fase) => {
       if (eu && origem === eu) meuGolpeEm = Date.now();
@@ -774,14 +847,17 @@
     s.type = 'module';
     s.textContent = `Promise.all([import('Network/NetworkManager.js'),import('Network/PacketStructure.js'),import('Engine/SessionStorage.js'),import('Engine/MapEngine/Entity.js')]).then(([n,p,ss,ee])=>{
       const N=n.default,P=p.default,S=ss.default,EE=ee.default; window.__fznEu=()=>S.Entity;
-      import('Renderer/EntityManager.js').then((em)=>{ window.__fznCenso=()=>{const out=[];const eu=S.Entity;const px=eu&&eu.position;try{em.default.forEach((x)=>{if(!x||x.objecttype!==(x.constructor&&x.constructor.TYPE_MOB))return;let an='';if(x.ACTION)for(const k in x.ACTION)if(x.ACTION[k]===x.action){an=k;break;}const d=px&&x.position?Math.ceil(Math.hypot(x.position[0]-px[0],x.position[1]-px[1])):-1;out.push({n:(x.display&&x.display.name)||x._job,d,morto:x.isDead&&x.isDead(),vis:x.isVisible&&x.isVisible(),a:an});});}catch(e){out.push({erro:String(e)})}return out.sort((a,b)=>a.d-b.d);}; window.__fznItens=(raio)=>{let n=0;const px=S.Entity&&S.Entity.position;if(!px)return -1;try{em.default.forEach((x)=>{const C=x&&x.constructor;if(!C||(x.objecttype!==C.TYPE_ITEM&&x.objecttype!==C.TYPE_ITEM2)||!x.position)return;if(Math.hypot(x.position[0]-px[0],x.position[1]-px[1])<=raio)n++;});}catch(e){return -2}return n;}; }).catch((e)=>{ window.__fznCenso=()=>[{erro:'import '+String(e)}]; });
+      import('Renderer/EntityManager.js').then((em)=>{ window.__fznPosDe=(gid)=>{try{const x=em.default.get(gid);return x&&x.position&&!(x.isDead&&x.isDead())?[Math.round(x.position[0]),Math.round(x.position[1])]:null}catch(e){return null}}; window.__fznCenso=()=>{const out=[];const eu=S.Entity;const px=eu&&eu.position;try{em.default.forEach((x)=>{if(!x||x.objecttype!==(x.constructor&&x.constructor.TYPE_MOB))return;let an='';if(x.ACTION)for(const k in x.ACTION)if(x.ACTION[k]===x.action){an=k;break;}const d=px&&x.position?Math.ceil(Math.hypot(x.position[0]-px[0],x.position[1]-px[1])):-1;out.push({n:(x.display&&x.display.name)||x._job,d,morto:x.isDead&&x.isDead(),vis:x.isVisible&&x.isVisible(),a:an});});}catch(e){out.push({erro:String(e)})}return out.sort((a,b)=>a.d-b.d);}; window.__fznItens=(raio)=>{let n=0;const px=S.Entity&&S.Entity.position;if(!px)return -1;try{em.default.forEach((x)=>{const C=x&&x.constructor;if(!C||(x.objecttype!==C.TYPE_ITEM&&x.objecttype!==C.TYPE_ITEM2)||!x.position)return;if(Math.hypot(x.position[0]-px[0],x.position[1]-px[1])<=raio)n++;});}catch(e){return -2}return n;}; }).catch((e)=>{ window.__fznCenso=()=>[{erro:'import '+String(e)}]; });
       if(N.__fznSkill) return;
       const fase=new Map([[P.ZC.USESKILL_ACK,'conjurando'],[P.ZC.USESKILL_ACK2,'conjurando'],[P.ZC.USESKILL_ACK3,'conjurando'],[P.ZC.NOTIFY_SKILL,'golpe'],[P.ZC.NOTIFY_SKILL2,'golpe']].filter(([k])=>k));
       const atos=new Set([P.ZC.NOTIFY_ACT,P.ZC.NOTIFY_ACT2,P.ZC.NOTIFY_ACT3].filter(Boolean));
+      const unid=new Set([P.ZC.SKILL_ENTRY,P.ZC.SKILL_ENTRY2,P.ZC.SKILL_ENTRY3,P.ZC.SKILL_ENTRY4,P.ZC.SKILL_ENTRY5].filter(Boolean));
       const orig=N.hookPacket;
       N.hookPacket=function(pk,cb){ if(fase.has(pk)&&typeof cb==='function'){const c=cb,f=fase.get(pk); cb=function(pkt){try{window.__fznSkillCb&&window.__fznSkillCb(pkt.SKID,pkt.AID,pkt.targetID,(S.Entity&&S.Entity.GID)||S.AID,f)}catch(e){} return c.apply(this,arguments)}}
         else if(atos.has(pk)&&typeof cb==='function'){const c=cb; cb=function(pkt){try{window.__fznAtoCb&&window.__fznAtoCb(pkt.GID,pkt.targetGID,pkt.action,(S.Entity&&S.Entity.GID)||S.AID)}catch(e){} return c.apply(this,arguments)}}
         else if(P.ZC.NOTIFY_VANISH&&pk===P.ZC.NOTIFY_VANISH&&typeof cb==='function'){const c=cb; cb=function(pkt){try{window.__fznSaiuCb&&window.__fznSaiuCb(pkt.GID,pkt.type)}catch(e){} return c.apply(this,arguments)}}
+        else if(unid.has(pk)&&typeof cb==='function'){const c=cb; cb=function(pkt){try{window.__fznUnidCb&&window.__fznUnidCb(pkt.AID,pkt.job,pkt.xPos,pkt.yPos,false)}catch(e){} return c.apply(this,arguments)}}
+        else if(P.ZC.SKILL_DISAPPEAR&&pk===P.ZC.SKILL_DISAPPEAR&&typeof cb==='function'){const c=cb; cb=function(pkt){try{window.__fznUnidCb&&window.__fznUnidCb(pkt.AID,0,0,0,true)}catch(e){} return c.apply(this,arguments)}}
         else if(pk===P.ZC.MVP&&typeof cb==='function'){const c=cb; cb=function(pkt){try{window.__fznMvpCb&&window.__fznMvpCb(pkt.AID,S.AID,S.Entity&&S.Entity.GID)}catch(e){} return c.apply(this,arguments)}}
         if(fase.get(pk)==='golpe'&&typeof cb==='function'){const c2=cb; cb=function(pkt){try{window.__fznAtoCb&&window.__fznAtoCb(pkt.AID,pkt.targetID,6,(S.Entity&&S.Entity.GID)||S.AID)}catch(e){} return c2.apply(this,arguments)}}
         try{return orig.call(this,pk,cb)}catch(e){window.__fznSkillAviso=String(e)}};
@@ -809,6 +885,65 @@
       if (usarAsa(w, e, agora)) { log(skillPerigo.nome + ' em mim -> asa'); diag('fuga', Date.now(), skillPerigo.nome + ' em mim -> asa'); skillPerigo = null; }
     } catch {}
   }, 50);
+  setInterval(() => {
+    try {
+      if (!pneumas.size) return;
+      const agora = Date.now();
+      for (const [id, p] of pneumas) if (agora - p.em > PNEUMA_VIDA_MS || p.mapa !== mapaAgora) pneumas.delete(id);
+      if (!cfg.ligado || !cfg.pneuma || !pneumas.size) return;
+      const w = jogo();
+      const e = w?.__elragEngine;
+      if (!e || !meuAlvoGid || agora - meuGolpeEm > 3000) return;
+      const pos = w.__fznPosDe?.(meuAlvoGid);
+      if (!pos) return;
+      const dentro = [...pneumas.values()].some((p) => Math.abs(p.x - pos[0]) <= 1 && Math.abs(p.y - pos[1]) <= 1);
+      if (!dentro || pneumaFugindo || temJanelaAberta(w)) return;
+      pneumaFuga(w, e, nomesGid.get(meuAlvoGid) || '?', pos);
+    } catch {}
+  }, 100);
+  // v1.57: Tiro Preciso/ataque do autopilot atrapalham a asa -> para o autopilot, espera o cast acabar, asa, religa
+  let pneumaFugindo = false;
+  const pneumaFuga = async (w, e, nome, pos) => {
+    pneumaFugindo = true;
+    const t0 = Date.now();
+    try {
+      try { e.setAutopilotRunning(false); } catch {}
+      if (pinoGid) { pinoGid = 0; try { e.setAutopilotPinnedTarget(0); } catch {} }
+      fixado = null;
+      for (let i = 0; i < 10; i++) {
+        const c = w.__fznEu?.()?.cast;
+        if (!(c && c.delay > 0 && Date.now() < c.tick + c.delay)) break;
+        await esperar(50);
+      }
+      await esperar(80);
+      let foi = false;
+      for (let tentativa = 0; tentativa < 3 && !foi; tentativa++) {
+        while (!asaLiberada()) await esperar(30);
+        asa.aguardando = false;
+        const antes = posicao(e);
+        if (!usarAsa(w, e, Date.now()) || ultimaAsaEm < Date.now() - 100) { await esperar(150); continue; }
+        for (let i = 0; i < 25; i++) {
+          await esperar(40);
+          const p = posicao(e);
+          if (p && antes && (p.x !== antes.x || p.y !== antes.y || p.mapa !== antes.mapa)) { foi = true; break; }
+        }
+      }
+      log('Pneuma em ' + nome + ' (' + pos[0] + ',' + pos[1] + '): autopilot parado -> asa ' + (foi ? 'OK' : 'SEM EFEITO') + ' -> religado (' + (Date.now() - t0) + ' ms)');
+    } catch (err) { log('Pneuma: erro ' + String(err).slice(0, 60)); }
+    finally {
+      try { e.setAutopilotRunning(true); } catch {}
+      meuAlvoGid = 0;
+      pneumaFugindo = false;
+    }
+    // v1.58: o 1o "ligar" logo apos a asa as vezes nao pega (chegada no mapa); insiste a cada 250 ms por 4 s
+    for (let i = 0; i < 16; i++) {
+      await esperar(250);
+      let ap = null;
+      try { ap = e.getAutopilotSnapshot(); } catch {}
+      if (ap && !AUTOPILOT_PARADO.has(ap.runtimeState)) { if (i) log('Pneuma: autopilot religado na tentativa ' + (i + 1) + ' (' + (Date.now() - t0) + ' ms)'); return; }
+      try { e.setAutopilotRunning(true); } catch {}
+    }
+  };
   let presoAvisado = 0;
   setInterval(() => {
     try {
@@ -863,6 +998,7 @@
           const tp = ap.targetPolicy || {};
           pol = 'multidao=' + (tp.crowdEscapeEnabled ? 'LIGADA' : 'off') + ' max=' + tp.maxTargetingMobs + ' miniChefe=' + (tp.fleeFromMiniBoss ? 'foge' : 'off') + ' asaAuto=' + (ap.autoFlyWingEnabled ? 'LIGADA' : 'off') + ' fugaStatus=' + JSON.stringify(ap.threatEscapeStatus ?? null).slice(0, 80);
         } catch {}
+        ultimaAsaEm = Math.max(ultimaAsaEm, agora - 200);
         log('TELEPORTE EXTERNO (nao foi o Auto Hunt): ' + ultPosTrilha.x + ',' + ultPosTrilha.y + ' -> ' + p.x + ',' + p.y + ' | ' + pol + ' | antes: ' + (trilha[trilha.length - 2] || ''));
         gravarTrilha('TELEPORTE EXTERNO ' + pol);
       }
@@ -945,6 +1081,45 @@
     try { if (ocupado) window.top.__FZN_ECONOMIA_YGG__?.acordar('autohunt', 1500); } catch {}
   }, 250);
 
+  const RELIGAR_AP_MS = 3000;
+  const RELIGAR_AP_INTERVALO_MS = 5000;
+  const CIDADES_RE = /^(prontera|prt_in|geffen|payon|morocc|alberta|izlude|aldebaran|yuno|lighthalzen|einbroch|einbech|hugel|rachel|veins|comodo|umbala|amatsu|gonryun|louyang|ayothaya|niflheim|jawaii|moscovia|brasilis|dewata|malangdo|malaya|mora|manuk|splendide|lasagna|dicastes01|eclage)$/;
+  // v1.60: mesma lista do AUTO VOLTAR (Bio4, Chefenia, instancias, Moro vol)
+  const mapaDeRenascer = (mapa) => {
+    const m = String(mapa || '').toLowerCase();
+    return /^lhz_dun04(\.|$)/.test(m) || /chef/.test(m) || /^moro_vol(\.|$)/.test(m) || m.includes('@') || /inv$/.test(m);
+  };
+  const foraDaCidade = (mapa) => Boolean(mapa) && !CIDADES_RE.test(mapa);
+  // v1.60: sempre ativo fora da cidade, renascer nos mapas especiais e destravar "ocupado"
+  let ocupadoDesde = 0, renascerEm = 0, motivoParado = '';
+  const motivo = (txt) => { if (txt !== motivoParado) { motivoParado = txt; if (txt) log('parado: ' + txt); } };
+  setInterval(() => {
+    try {
+      const w = jogo();
+      const e = w?.__elragEngine;
+      if (!e) return;
+      const mapa = String(posicao(e)?.mapa || '');
+      const agora = Date.now();
+      if (!cfg.ligado && foraDaCidade(mapa)) {
+        cfg.ligado = true; gravarJson(CHAVE_CFG, cfg);
+        log('Hunt estava OFF em ' + mapa + ' -> ligado de novo (so desliga na cidade)');
+      }
+      if (ocupado) {
+        if (!ocupadoDesde) ocupadoDesde = agora;
+        else if (agora - ocupadoDesde > 30000) { ocupado = false; ocupadoDesde = 0; log('ocupado preso ha 30 s -> liberado'); }
+      } else ocupadoDesde = 0;
+      const texto = w.document.body?.innerText || '';
+      if (/Renascer agora/.test(texto) && mapaDeRenascer(mapa) && agora - renascerEm > 3000) {
+        const b = [...w.document.querySelectorAll('button')].find((x) => /^Renascer agora/i.test((x.textContent || '').trim()) && !x.disabled);
+        if (b) {
+          renascerEm = agora;
+          log('Morreu em ' + mapa + ': Renascer agora');
+          b.click();
+          setTimeout(() => { try { if (!/Renascer agora/.test(w.document.body?.innerText || '')) { e.setAutopilotRunning(true); log('Renascer: cacada religada em ' + mapa); } } catch {} }, 1500);
+        } else motivo('morto em ' + mapa + ', Renascer agora ainda desabilitado');
+      }
+    } catch {}
+  }, 1000);
   const mapaCheffenia = (mapa) => /^moro_vol(?:$|[._@])|cheffenia|chefenia/i.test(String(mapa || ''));
   const visivelCheff = (el) => { const r = el?.getBoundingClientRect?.(); return !!r && r.width > 0 && r.height > 0 && el.ownerDocument.defaultView.getComputedStyle(el).visibility !== 'hidden'; };
   const botaoCheff = (w, re) => [...w.document.querySelectorAll('button,[role="button"]')].find((b) => visivelCheff(b) && !b.disabled && re.test((b.innerText || b.textContent || '').trim().replace(/\s+/g, ' ')) && !b.closest('.fzn-ygg,[data-fzn-auto-voltar]'));
@@ -1013,7 +1188,7 @@
     } catch (err) { log('Cheffenia: recuperacao falhou: ' + String(err).slice(0, 100)); }
     finally { recuperacaoCheffOcupada = false; window.top.__FZN_CHEFF_RECOVERY__ = { active: recuperacaoCheffPendente, desde: Date.now() }; }
   };
-
+  let apParadoDesde = 0, apReligadoEm = 0;
   const ciclo = async () => {
     if (!cfg.ligado || (ocupado && !cfg.soMvp)) return;
     const w = jogo();
@@ -1031,7 +1206,6 @@
       }
       if (recuperacaoCheffPendente) { await recuperarCheffenia(w); return; }
     }
-
     let ap;
     try { ap = e.getAutopilotSnapshot(); } catch { return; }
     if (!ap) return;
@@ -1041,8 +1215,37 @@
         euDesliguei = 0;
         try { e.setAutopilotRunning(true); log('autopilot parou apos o passo; religado'); } catch {}
       }
+      if (!apParadoDesde) {
+        apParadoDesde = agora;
+        log('autopilot do jogo PAROU (estado ' + ap.runtimeState + ', mapa ' + (posicao(e)?.mapa || '?') + ')' + retrato(w));
+      }
+      const mapaP = String(posicao(e)?.mapa || '');
+      if (agora - apParadoDesde >= RELIGAR_AP_MS && agora - apReligadoEm >= RELIGAR_AP_INTERVALO_MS && mapaP && !CIDADES_RE.test(mapaP) && !temJanelaAberta(w)) {
+        apReligadoEm = agora;
+        try { e.setAutopilotRunning(true); log('autopilot parado ha ' + Math.round((agora - apParadoDesde) / 1000) + ' s em ' + mapaP + ' -> religado'); } catch (err) { log('religar autopilot falhou: ' + String(err).slice(0, 60)); }
+      } else if (agora - apParadoDesde >= RELIGAR_AP_MS) {
+        motivo(!mapaP ? 'mapa desconhecido' : CIDADES_RE.test(mapaP) ? 'na cidade (' + mapaP + ')' : temJanelaAberta(w) ? 'janela aberta (morte/Kafra/teleporte) em ' + mapaP : '');
+      }
       semAlvoDesde = 0; radarVazioDesde = 0;
       return;
+    }
+    if (apParadoDesde) { log('autopilot voltou (parado ' + Math.round((agora - apParadoDesde) / 1000) + ' s)'); apParadoDesde = 0; motivoParado = ''; }
+    // evento: Stefan J.E. Wolf no radar e sempre o alvo
+    {
+      let radarEv = [];
+      try { radarEv = e.getAutopilotRadarSnapshot()?.mobs || []; } catch {}
+      const ev = radarEv.filter((m) => normN(m?.name) === EVENTO_NOME).sort((a, b) => (a.distance || 0) - (b.distance || 0))[0];
+      if (ev) {
+        semAlvoDesde = 0; radarVazioDesde = 0; naoMvpDesde = 0;
+        if (ap.targetGid === ev.gid) return;
+        if (eventoFixado !== ev.gid || agora - eventoFixadoEm > 500) {
+          try { e.setAutopilotPinnedTarget(ev.gid); } catch {}
+          if (eventoFixado !== ev.gid) log('evento: alvo ' + ev.name + ' a ' + ev.distance);
+          eventoFixado = ev.gid; eventoFixadoEm = agora;
+        }
+        return;
+      }
+      if (eventoFixado) { eventoFixado = null; try { e.setAutopilotPinnedTarget(0); } catch {} log('evento: Stefan saiu do radar'); }
     }
     if (cfg.soMvp) {
       try { ganchoCatalogo(w); } catch {}
@@ -1192,21 +1395,21 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const cartao = fznCartaoYgg('Auto-hunt', 'v1.55', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
+      const cartao = fznCartaoYgg('Auto-hunt', 'v1.62', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
         cfg.ligado = !cfg.ligado;
-        if (!cfg.ligado) { recuperacaoCheffPendente = false; window.top.__FZN_CHEFF_RECOVERY__ = { active: false }; }
         gravarJson(CHAVE_CFG, cfg);
         log(cfg.ligado ? 'ligado' : 'desligado');
       });
-      cartao.corpo.appendChild(painel);
+      const gv = fznGavetaYgg(cartao.corpo, 'fzn-autohunt-ygg-gaveta');
+      painel.classList.add('fzn-ygg__liga');
+      gv.barra.append(painel, gv.ajustes);
       const botaoNoks = document.createElement("button");
       botaoNoks.title = "NOKS: nao ataca MVP que outro jogador ja esta atacando (sem voce ou seu grupo ter batido primeiro); usa a asa e procura outro.";
-      const pintarNoks = () => { botaoNoks.textContent = "NOKS: " + (cfg.noks !== false ? "ON" : "OFF"); botaoNoks.className = cfg.noks !== false ? "fzn-ygg--on" : "fzn-ygg--off"; };
+      const pintarNoks = () => { botaoNoks.textContent = "NOKS"; botaoNoks.className = cfg.noks !== false ? "fzn-ygg--on" : "fzn-ygg--off"; };
       botaoNoks.addEventListener("click", () => { cfg.noks = cfg.noks === false; gravarJson(CHAVE_CFG, cfg); log("NOKS " + (cfg.noks ? "ligado" : "desligado")); pintarNoks(); });
       pintarNoks();
-      cartao.corpo.appendChild(botaoNoks);
       const NOMES_ASA = { auto: 'Asa: Auto', gigante: 'Asa: Gigante', infinita: 'Asa: Infinita', comum: 'Asa: Comum', off: 'Asa: OFF' };
       const SEGUINTE = { auto: 'gigante', gigante: 'infinita', infinita: 'comum', comum: 'off', off: 'auto' };
       botaoAsa = document.createElement('button');
@@ -1220,29 +1423,31 @@
       });
       botaoAsa.textContent = NOMES_ASA[cfg.asa] || NOMES_ASA.auto;
       if (cfg.asa === 'off') botaoAsa.className = 'fzn-ygg--off';
-      cartao.corpo.appendChild(botaoAsa);
       const botaoMvp = document.createElement('button');
-      botaoMvp.title = 'Cheffenia: prioriza os chefes da lista. O teleporte e configurado separadamente.';
-      const pintarMvp = () => { botaoMvp.textContent = 'Chefenia: ' + (cfg.soMvp ? 'ON' : 'OFF'); botaoMvp.className = cfg.soMvp ? 'fzn-ygg--on' : 'fzn-ygg--off'; };
+      botaoMvp.title = 'Chefenia: prioriza os chefes da lista. O teleporte e configurado separadamente.';
+      const pintarMvp = () => { botaoMvp.textContent = 'Chefenia'; botaoMvp.className = cfg.soMvp ? 'fzn-ygg--on' : 'fzn-ygg--off'; };
       botaoMvp.addEventListener('click', () => { cfg.soMvp = !cfg.soMvp; gravarJson(CHAVE_CFG, cfg); log('so MVP ' + (cfg.soMvp ? 'ligado' : 'desligado')); pintarMvp(); });
       pintarMvp();
-      cartao.corpo.appendChild(botaoMvp);
       const botaoTeleporte = document.createElement('button');
       botaoTeleporte.title = 'Asa no modo Cheffenia: ON procura outro chefe com teleporte; OFF continua no mapa sem usar asa pelo Auto-hunt.';
-      const pintarTeleporte = () => { botaoTeleporte.textContent = 'Asa Cheffenia: ' + (cfg.cheffeniaTeleporte ? 'ON' : 'OFF'); botaoTeleporte.className = cfg.cheffeniaTeleporte ? 'fzn-ygg--on' : 'fzn-ygg--off'; };
+      const pintarTeleporte = () => { botaoTeleporte.textContent = 'Asa Cheffenia'; botaoTeleporte.className = cfg.cheffeniaTeleporte ? 'fzn-ygg--on' : 'fzn-ygg--off'; };
       botaoTeleporte.addEventListener('click', () => { cfg.cheffeniaTeleporte = !cfg.cheffeniaTeleporte; gravarJson(CHAVE_CFG, cfg); log('asa Cheffenia ' + (cfg.cheffeniaTeleporte ? 'ligada' : 'desligada')); pintarTeleporte(); });
-      pintarTeleporte(); cartao.corpo.appendChild(botaoTeleporte);
+      pintarTeleporte();
       const botaoRecuperar = document.createElement('button');
-      botaoRecuperar.title = 'Quando morrer com Poder Infernal na Cheffenia, volta ao ponto de salvamento, entra pelo Arauto em Prontera e religa o Autopilot. Sem o debuff, o jogo ressuscita normalmente.';
-      const pintarRecuperar = () => { botaoRecuperar.textContent = 'Poder Infernal: ' + (cfg.cheffeniaRecuperar !== false ? 'ON' : 'OFF'); botaoRecuperar.className = cfg.cheffeniaRecuperar !== false ? 'fzn-ygg--on' : 'fzn-ygg--off'; };
+      botaoRecuperar.title = 'Quando morrer com Poder Infernal na Cheffenia, volta ao ponto de salvamento, entra pelo Arauto em Prontera e religa o Autopilot.';
+      const pintarRecuperar = () => { botaoRecuperar.textContent = 'Poder Infernal'; botaoRecuperar.className = cfg.cheffeniaRecuperar !== false ? 'fzn-ygg--on' : 'fzn-ygg--off'; };
       botaoRecuperar.addEventListener('click', () => { cfg.cheffeniaRecuperar = cfg.cheffeniaRecuperar === false; if (!cfg.cheffeniaRecuperar) { recuperacaoCheffPendente = false; window.top.__FZN_CHEFF_RECOVERY__ = { active: false }; } gravarJson(CHAVE_CFG, cfg); log('recuperacao Poder Infernal ' + (cfg.cheffeniaRecuperar ? 'ligada' : 'desligada')); pintarRecuperar(); });
-      pintarRecuperar(); cartao.corpo.appendChild(botaoRecuperar);
+      pintarRecuperar();
       const botaoBio4 = document.createElement('button');
       botaoBio4.title = 'Bio4: ao ver Cecil Damon ou Kathryne Keyron, Algoz com Furtividade F5 ligada usa a Furtividade (se nao estiver ligada). O alvo e escolhido pelo radar do autopilot: marque os outros mobs como Ignorar.';
-      const pintarBio4 = () => { botaoBio4.textContent = 'Bio4: ' + (cfg.bio4 ? 'ON' : 'OFF'); botaoBio4.className = cfg.bio4 ? 'fzn-ygg--on' : 'fzn-ygg--off'; };
+      const pintarBio4 = () => { botaoBio4.textContent = 'Bio4'; botaoBio4.className = cfg.bio4 ? 'fzn-ygg--on' : 'fzn-ygg--off'; };
       botaoBio4.addEventListener('click', () => { cfg.bio4 = !cfg.bio4; gravarJson(CHAVE_CFG, cfg); log('bio4 ' + (cfg.bio4 ? 'ligado' : 'desligado')); pintarBio4(); });
       pintarBio4();
-      cartao.corpo.appendChild(botaoBio4);
+      const botaoPneuma = document.createElement('button');
+      botaoPneuma.title = 'Pneuma: se o mob que estou atacando estiver dentro de uma Pneuma (imune a ataque a distancia), usa a Asa de Mosca na hora. Para Atirador de Elite e outras classes de longe.';
+      const pintarPneuma = () => { botaoPneuma.textContent = 'Pneuma'; botaoPneuma.className = cfg.pneuma ? 'fzn-ygg--on' : 'fzn-ygg--off'; };
+      botaoPneuma.addEventListener('click', () => { cfg.pneuma = !cfg.pneuma; gravarJson(CHAVE_CFG, cfg); log('pneuma ' + (cfg.pneuma ? 'ligado' : 'desligado')); pintarPneuma(); });
+      pintarPneuma();
       const CLASSES = [['', 'Classe: ?'], ['algoz', 'Algoz'], ['mercenario', 'Mercenario'], ['desordeiro', 'Desordeiro'], ['cavaleiro', 'Cavaleiro'], ['templario', 'Templario'], ['bruxo', 'Bruxo'], ['sabio', 'Sabio'], ['sacerdote', 'Sacerdote'], ['monge', 'Monge'], ['cacador', 'Cacador'], ['bardo', 'Bardo/Odalisca'], ['ferreiro', 'Ferreiro'], ['alquimista', 'Alquimista'], ['taekwon', 'Taekwon/Mestre'], ['justiceiro', 'Justiceiro'], ['ninja', 'Ninja'], ['outra', 'Outra']];
       const selClasse = document.createElement('select');
       selClasse.title = 'Classe que esta jogando nesta conta';
@@ -1253,17 +1458,23 @@
       const pintarFurt = () => {
         const valeAqui = cfg.classe === 'algoz';
         botaoFurt.style.display = valeAqui ? '' : 'none';
-        botaoFurt.textContent = 'Furtividade F5: ' + (cfg.furtividade ? 'ON' : 'OFF');
+        botaoFurt.textContent = 'Furtividade F5';
         botaoFurt.className = cfg.furtividade ? 'fzn-ygg--on' : 'fzn-ygg--off';
       };
       selClasse.addEventListener('change', () => { cfg.classe = selClasse.value; gravarJson(CHAVE_CFG, cfg); log('classe: ' + (cfg.classe || '?')); pintarFurt(); });
       botaoFurt.addEventListener('click', () => { cfg.furtividade = !cfg.furtividade; gravarJson(CHAVE_CFG, cfg); log('furtividade F5 ' + (cfg.furtividade ? 'ligada' : 'desligada')); pintarFurt(); });
       pintarFurt();
-      cartao.corpo.append(selClasse, botaoFurt);
-      cartao.caixa.style.maxWidth = 'min(460px, 95vw)';
-      montarContagem(cartao.corpo);
+      gv.grupo('Opcoes', botaoNoks, botaoMvp, botaoTeleporte, botaoRecuperar, botaoBio4, botaoPneuma, botaoAsa);
+      gv.grupo('Classe', selClasse, botaoFurt);
+      cartao.caixa.style.maxWidth = 'min(420px, 95vw)';
+      linhaStatus = gv.status;
+      linhaStatus.dataset.clica = '1';
+      linhaStatus.title = 'Clique para ver a contagem de MVPs e mortes';
+      montarContagem(cartao.corpo, gv);
+      setInterval(pintarStatus, 2000);
     }
-    painel.textContent = `Hunt: ${cfg.ligado ? 'ON' : 'OFF'}`;
+    painel.textContent = cfg.ligado ? '\u25CF ON' : '\u25CB OFF';
+    pintarStatus();
     painel.className = cfg.ligado ? 'fzn-ygg--on' : 'fzn-ygg--off';
     painel.title = lerJson(CHAVE_LOG, []).slice(-12).join('\n') || 'sem eventos ainda';
   }

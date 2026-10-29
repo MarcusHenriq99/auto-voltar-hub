@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — entrar sozinho com o personagem escolhido
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.24
+// @version      1.25
 // @description  Entra com o personagem escolhido, recupera avisos de conexao e aguarda 10 minutos se o servidor fechar.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -95,10 +95,10 @@
     painel.dataset.fznRedim = '1';
     const doc = painel.ownerDocument;
     const win = doc.defaultView;
-    const orig = { width: painel.style.width, height: painel.style.height, maxWidth: painel.style.maxWidth, maxHeight: painel.style.maxHeight, overflow: painel.style.overflow, boxSizing: painel.style.boxSizing };
+    const orig = { width: painel.style.width, height: painel.style.height, maxWidth: painel.style.maxWidth, maxHeight: painel.style.maxHeight, minHeight: painel.style.minHeight, overflow: painel.style.overflow, boxSizing: painel.style.boxSizing };
     let tam = null;
     try { tam = JSON.parse(localStorage.getItem(chave)); } catch {}
-    const aplicar = () => { if (!tam) { Object.assign(painel.style, orig); return; } Object.assign(painel.style, { width: tam.w + 'px', height: tam.h + 'px', maxWidth: '98vw', maxHeight: '98vh', overflow: 'auto', boxSizing: 'border-box' }); };
+    const aplicar = () => { if (!tam) { Object.assign(painel.style, orig); return; } Object.assign(painel.style, { width: tam.w + 'px', height: 'auto', minHeight: tam.h + 'px', maxWidth: '98vw', maxHeight: '98vh', overflow: 'auto', boxSizing: 'border-box' }); };
     aplicar();
     const alca = doc.createElement('div');
     alca.title = 'Arraste para redimensionar · dois cliques: tamanho automatico';
@@ -166,7 +166,48 @@
     win.setInterval(posicionar, 400);
   };
 
+
+  const fznTemaYggExtra = () => {
+    if (document.getElementById('fzn-ygg-tema-gaveta')) return;
+    const css = document.createElement('style');
+    css.id = 'fzn-ygg-tema-gaveta';
+    css.textContent = `
+      .fzn-ygg__barra { display:flex; gap:4px; align-items:center; width:100%; }
+      .fzn-ygg__barra .fzn-ygg__liga { min-width:64px; }
+      .fzn-ygg__barra [data-ajustes] { margin-left:auto; padding:4px 8px; }
+      .fzn-ygg__status { width:100%; font-size:11px; font-weight:600; color:#cfe3f0; font-variant-numeric:tabular-nums; }
+      .fzn-ygg__status[data-clica] { cursor:pointer; }
+      .fzn-ygg__gaveta { width:100%; display:flex; flex-direction:column; gap:5px; padding:6px 0 2px; border-top:1px solid rgba(120,200,255,.15); }
+      .fzn-ygg__grupo { display:flex; flex-wrap:wrap; gap:4px; align-items:center; }
+      .fzn-ygg__grupo > span { width:100%; font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:#8fa3b3; }
+      .fzn-ygg__gaveta button { font-weight:600; background:transparent; color:#aab8c4; border-color:rgba(143,163,179,.35); }
+      .fzn-ygg__gaveta button.fzn-ygg--on { background:rgba(111,227,138,.14); color:#6fe38a; border-color:rgba(111,227,138,.55); }
+      .fzn-ygg__gaveta button.fzn-ygg--off { background:transparent; color:#8f8aa3; border-color:rgba(143,138,163,.35); }
+    `;
+    (document.head || document.documentElement).appendChild(css);
+  };
+  // Barra principal + linha de status + gaveta de ajustes (aberta/fechada por conta).
+  const fznGavetaYgg = (corpo, chaveAberta) => {
+    fznTemaYggExtra();
+    const barra = document.createElement('div'); barra.className = 'fzn-ygg__barra';
+    const status = document.createElement('div'); status.className = 'fzn-ygg__status';
+    const gaveta = document.createElement('div'); gaveta.className = 'fzn-ygg__gaveta';
+    const ajustes = document.createElement('button'); ajustes.dataset.ajustes = '1'; ajustes.textContent = '\u2699'; ajustes.title = 'Ajustes';
+    let aberta = false;
+    try { aberta = localStorage.getItem(chaveAberta) === '1'; } catch {}
+    const pintar = () => { gaveta.style.display = aberta ? 'flex' : 'none'; ajustes.className = aberta ? 'fzn-ygg--on' : ''; };
+    ajustes.addEventListener('click', () => { aberta = !aberta; try { localStorage.setItem(chaveAberta, aberta ? '1' : '0'); } catch {} pintar(); });
+    pintar();
+    const grupo = (titulo, ...itens) => {
+      const g = document.createElement('div'); g.className = 'fzn-ygg__grupo';
+      const t = document.createElement('span'); t.textContent = titulo;
+      g.append(t, ...itens); gaveta.appendChild(g); return g;
+    };
+    corpo.append(barra, status, gaveta);
+    return { barra, status, gaveta, ajustes, grupo };
+  };
   const fznTemaYgg = () => {
+    fznTemaYggExtra();
     if (document.getElementById('fzn-ygg-tema')) return;
     const css = document.createElement('style'); css.id = 'fzn-ygg-tema';
     css.textContent = `
@@ -725,23 +766,29 @@
     document.body.appendChild(menu);
   }
 
+  let statusLogin = null;
   function pintar() {
     if (!document.body) return;
     if (!painel) {
-      cartaoLogin = fznCartaoYgg('Auto-login', 'v1.24', 'fzn-autologin-ygg-posicao-v4', { right: '12px', bottom: '156px' }, 'fzn-encolhido-autologin-ygg-v4').caixa;
+      cartaoLogin = fznCartaoYgg('Auto-login', 'v1.25', 'fzn-autologin-ygg-posicao-v4', { right: '12px', bottom: '156px' }, 'fzn-encolhido-autologin-ygg-v4').caixa;
       painel = document.createElement('button');
-      painel.addEventListener('click', abrirMenu);
-      cartaoLogin.lastChild.appendChild(painel);
+      painel.className = 'fzn-ygg__liga';
+      painel.addEventListener('click', () => { cfg.ligado = !cfg.ligado; salvar(); log('Auto-login ' + (cfg.ligado ? 'ligado' : 'desligado')); pintar(); });
+      const gv = fznGavetaYgg(cartaoLogin.lastChild, 'fzn-autologin-ygg-gaveta');
+      gv.ajustes.addEventListener('click', abrirMenu);
+      gv.gaveta.remove();
+      gv.barra.append(painel, gv.ajustes);
+      statusLogin = gv.status;
     }
     const estado = ultimoEstadoConhecido === 'selecao' ? ' • selecao'
       : ultimoEstadoConhecido === 'login' ? ' • login'
       : ultimoEstadoConhecido === 'jogo' ? ' • no jogo'
       : '';
-    painel.textContent = `Auto-login ${cfg.ligado ? 'ON' : 'OFF'} · ${identidade || '(conta?)'} · ${cfg.personagem || '(escolher)'}${cfg.ligado ? (pausadoPeloServidor() ? ` · servidor fechado (${tempoDePausa()})` : cfg.loginSalvo ? '' : ' · login OFF') : ''}${estado}`;
-    painel.className = cfg.ligado && cfg.personagem && cfg.loginSalvo && !pausadoPeloServidor() ? 'fzn-ygg--on' : 'fzn-ygg--alerta';
+    painel.textContent = cfg.ligado ? '\u25CF ON' : '\u25CB OFF';
+    painel.className = 'fzn-ygg__liga ' + (!cfg.ligado ? 'fzn-ygg--off' : cfg.personagem && cfg.loginSalvo && !pausadoPeloServidor() ? 'fzn-ygg--on' : 'fzn-ygg--alerta');
+    statusLogin.textContent = `${identidade || '(conta?)'} · ${cfg.personagem || '(escolher)'}${cfg.ligado ? (pausadoPeloServidor() ? ` · servidor fechado (${tempoDePausa()})` : cfg.loginSalvo ? '' : ' · login OFF') : ''}${estado}`;
     painel.title = (cfg.log || []).slice(-8).join('\n') || 'sem eventos ainda';
   }
 
   log('v1.24: recupera avisos de conexao e nova versao; pausa 10 min para servidor fechado');
 })();
-
