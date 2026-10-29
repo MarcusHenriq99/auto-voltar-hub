@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.60
+// @version      2.61
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -1679,6 +1679,7 @@
   const VENDA_INTERVALO_MS = 2 * 60 * 1000;
   let ultimaViagemVenda = 0;
   let pesoLidoEm = 0;
+  let conferindoLimite = false;
 
   const retomadaPlanejada = new WeakMap();
   const PESO_TEIMOSO_MS = 30 * 60 * 1000;
@@ -3717,7 +3718,30 @@
       const peso = lerPeso(w);
       const pesoCritico = Boolean(peso && peso.pct >= limiteSeguro());
       const intervalo = espacoCritico || pesoCritico ? 15000 : VENDA_INTERVALO_MS;
-      if (Date.now() - ultimaViagemVenda > intervalo && precisaVender(w)) viagemDeVenda(w);
+      if (Date.now() - ultimaViagemVenda > intervalo && !conferindoLimite) {
+        // A proteção por peso consulta os itens da mochila. Sem um snapshot
+        // recente, um inventário antigo pode parecer conter só protegidos e
+        // manter a venda em espera mesmo após novos drops vendáveis.
+        if (pesoCritico || espacoCritico) {
+          pesoLidoEm = Date.now() + 12000;
+          conferindoLimite = true;
+          void (async () => {
+            try {
+              const atualizou = await lerMochila(w);
+              if (!cfg.ligado || ocupado || cfg.rotinaLimites === false) return;
+              const pesoAtual = lerPeso(w);
+              if (!pesoAtual || (pesoAtual.pct < limiteSeguro() && !mochilaCheiaConfirmada(w))) return;
+              if (precisaVender(w)) {
+                log('Limite confirmado com mochila ' + (atualizou ? 'atualizada' : 'sem resposta') +
+                  ': peso ' + pesoAtual.pct.toFixed(1) + '%; iniciando rotina automatica');
+                await viagemDeVenda(w);
+              }
+            } catch (e) {
+              log('Conferencia automatica do peso falhou: ' + String(e?.message || e).slice(0, 120));
+            } finally { conferindoLimite = false; }
+          })();
+        } else if (precisaVender(w)) void viagemDeVenda(w);
+      }
     }
     if ((!cfg.lojaBolso || !lojaDeBolso()) && Date.now() - suprimentoLidoEm > 5000 && Date.now() - ultimaViagemVenda > VENDA_INTERVALO_MS) {
       suprimentoLidoEm = Date.now();
@@ -4441,7 +4465,7 @@
       conteudo.append(barra, status, gaveta, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.60</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.61</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
@@ -4463,7 +4487,18 @@
     atualizarStatus();
   }
 
-  const iniciarRotina = () => { atualizarPainel(); setInterval(verificar, 500); };
+  let ultimoErroVerificarEm = 0;
+  const verificarSeguro = () => {
+    try { verificar(); }
+    catch (e) {
+      if (Date.now() - ultimoErroVerificarEm > 30000) {
+        ultimoErroVerificarEm = Date.now();
+        console.error('[autovoltar-ygg] Rotina automatica falhou:', e);
+        log('Rotina automatica falhou: ' + String(e?.message || e).slice(0, 120));
+      }
+    }
+  };
+  const iniciarRotina = () => { atualizarPainel(); setInterval(verificarSeguro, 500); };
   const iniciar = async () => {
     const backup = await lerBackupDisco();
     if (backup && typeof backup === 'object' && !Array.isArray(backup)) {
@@ -4483,6 +4518,6 @@
   else {
   if (cfgLocal || cfgSessao) salvarCfg();
   atualizarPainel();
-  setInterval(verificar, 500);
+  setInterval(verificarSeguro, 500);
   }
 })();
