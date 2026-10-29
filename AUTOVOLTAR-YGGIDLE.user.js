@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.58
+// @version      2.59
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3301,6 +3301,10 @@
     const m = /Zeny\s+([\d.,]+)/i.exec(w.document.body.innerText || '');
     return m ? Number(m[1].replace(/[^\d]/g, '')) : NaN;
   };
+  const precoBotaoRifa = (botao) => {
+    const m = /comprar n[uú]mero\s*[—–-]\s*([\d.,]+)\s*z/i.exec(textoDe(botao) || '');
+    return m ? Number(m[1].replace(/[^\d]/g, '')) : NaN;
+  };
   const numerosCompradosRifa = (modal) => {
     const texto = modal?.innerText || '';
     const trecho = /Seus n[uú]meros nesta edi[cç][aã]o\s*([\s\S]*?)(?=Comprar n[uú]mero|$)/i.exec(texto)?.[1];
@@ -3372,7 +3376,7 @@
     fechar?.click();
   };
   const comprarRifa = async (w,edicao,premioAvisado) => {
-    let premio = premioAvisado, semBotaoDesde = 0, falhasSeguidas = 0, registro = null;
+    let premio = premioAvisado, semBotaoDesde = 0, registro = null;
     const parar = (etapa, detalhe) => {
       if (registro && !registro.confirmados && registro.resultado === 'Aguardando sorteio') {
         registro.resultado = 'Sem bilhete — ' + detalhe;
@@ -3418,13 +3422,19 @@
         registro.saldoInicial = saldo;
         gravarJson(CHAVE_CFG,cfg);
       }
+      const comprar = [...modal.querySelectorAll('button')].find(b => /comprar n[uú]mero/i.test(textoDe(b)));
+      const preco = comprar ? precoBotaoRifa(comprar) : NaN;
+      if (comprar && (!Number.isFinite(preco) || preco <= 0)) {
+        parar('Parada','preço do bilhete não identificado no botão'); return;
+      }
       const gastoEfetivo = Math.max(Number(registro.gasto) || 0,
         Math.max(0, Number(registro.saldoInicial) - saldo));
-      if (gastoEfetivo + 500000 > limite) {
+      if (Number.isFinite(preco) && gastoEfetivo + preco > limite) {
         rifaStatus('Limite atingido','máximo de '+limite.toLocaleString('pt-BR')+'z nesta edição'); return;
       }
-      if (saldo < 500000) { rifaStatus('Sem saldo','menos de 500.000z para outro bilhete'); return; }
-      const comprar = [...modal.querySelectorAll('button')].find(b => /comprar n[uú]mero/i.test(textoDe(b)));
+      if (Number.isFinite(preco) && saldo < preco) {
+        rifaStatus('Sem saldo','menos de '+preco.toLocaleString('pt-BR')+'z para outro bilhete'); return;
+      }
       if (!comprar || comprar.disabled) {
         if (!semBotaoDesde) semBotaoDesde = Date.now();
         if (Date.now()-semBotaoDesde > 30000) {
@@ -3438,44 +3448,48 @@
       registro.tentativas++;
       gravarJson(CHAVE_CFG,cfg);
       comprar.click();
-      const confirmar = await esperarAte(() => [...w.document.querySelectorAll('button')]
-        .filter(b => visivel(b) && !b.disabled &&
-          /^comprar\s*[—-]\s*500[.,]000z?$/i.test(textoDe(b)))
-        .find(b => /confirmar compra|voc[eê] vai gastar/i.test(b.parentElement?.parentElement?.innerText || '')),3500,75);
-      if (!confirmar) {
-        falhasSeguidas++;
-        if (falhasSeguidas >= 5) { parar('Parada','confirmação não apareceu em 5 tentativas'); return; }
-        rifaStatus('Tentando novamente','confirmação não apareceu; tentativa '+falhasSeguidas+'/5');
-        await esperar(300); continue;
-      }
-      confirmar.click();
-      const confirmado = await esperarAte(() => {
+      const comprovante = () => {
         const novoSaldo = zenyRifa(w);
         const novosNumeros = numerosCompradosRifa(janelaRifa(w));
         if (Number.isFinite(numerosAntes) && Number.isFinite(novosNumeros) &&
             novosNumeros > numerosAntes) return { saldo: novoSaldo, numeros: novosNumeros };
-        if (Number.isFinite(novoSaldo) && novoSaldo <= saldo - 500000)
+        if (Number.isFinite(novoSaldo) && novoSaldo <= saldo - preco)
           return { saldo: novoSaldo, numeros: novosNumeros };
         return null;
+      };
+      // Desde 29/10/2026 o botão compra diretamente. Ainda aceitamos a janela
+      // antiga caso alguma conta receba a interface anterior durante a troca.
+      let confirmado = await esperarAte(() => {
+        const compra = comprovante();
+        if (compra) return { compra };
+        const botao = [...w.document.querySelectorAll('button')]
+          .find(b => visivel(b) && !b.disabled &&
+            /^comprar\s*[—–-]\s*[\d.,]+\s*z?$/i.test(textoDe(b)) &&
+            /confirmar compra|voc[eê] vai gastar/i.test(b.parentElement?.parentElement?.innerText || ''));
+        return botao ? { botao } : null;
       },3500,75);
+      if (confirmado?.botao) {
+        const precoConfirmacao = Number((textoDe(confirmado.botao).match(/[\d.,]+/) || [''])[0].replace(/[^\d]/g, ''));
+        if (precoConfirmacao !== preco) { parar('Parada','preço da confirmação difere do botão'); return; }
+        confirmado.botao.click();
+        confirmado = await esperarAte(comprovante,3500,75);
+      } else confirmado = confirmado?.compra;
       if (!confirmado) {
         const atual = janelaRifa(w);
         if (atual && rifaEsgotada(atual.innerText || '')) {
           parar('Encerrada','todos os números vendidos'); return;
         }
-        falhasSeguidas++;
-        if (falhasSeguidas >= 5) { parar('Parada','compra sem confirmação após 5 tentativas'); return; }
-        rifaStatus('Tentando novamente','compra não confirmada; tentativa '+falhasSeguidas+'/5');
-        await esperar(350); continue;
+        // Sem retorno do servidor, outra tentativa poderia comprar um bilhete
+        // duplicado e ultrapassar o limite configurado pelo jogador.
+        parar('Parada','compra sem comprovante; confira saldo e números antes de tentar novamente'); return;
       }
-      falhasSeguidas = 0;
       const porNumeros = Number.isFinite(numerosAntes) && Number.isFinite(confirmado.numeros)
         ? confirmado.numeros - numerosAntes : 0;
       const porZeny = Number.isFinite(confirmado.saldo)
-        ? Math.floor((saldo - confirmado.saldo) / 500000) : 0;
+        ? Math.floor((saldo - confirmado.saldo) / preco) : 0;
       const comprados = Math.max(1, porNumeros, porZeny);
       registro.confirmados += comprados;
-      registro.gasto += 500000 * comprados;
+      registro.gasto += preco * comprados;
       if (registro.resultado.startsWith('Sem bilhete')) registro.resultado = 'Aguardando sorteio';
       if (registro.confirmados % 5 === 0) salvarCfg();
       else gravarJson(CHAVE_CFG,cfg);
@@ -4422,7 +4436,7 @@
       conteudo.append(barra, status, gaveta, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.57</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.59</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
