@@ -7,7 +7,7 @@ Script de automação do Yggidle usado no FZN Idle Hub. Esta pasta contém a ver
 - `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 2.57.
 - `AUTOLOGIN-YGGIDLE.user.js`: login automático e recuperação de conexão, versão 1.25.
 - `ABATES-YGGIDLE.user.js`: contador independente de abates por dia, monstro e hora.
-- `AUTOHUNT-YGGIDLE.user.js`: complemento do Autopilot, versão 1.63; asa da Cheffenia opcional, retorno pelo Arauto após morte com Poder Infernal e retomada da caça no Covil.
+- `AUTOHUNT-YGGIDLE.user.js`: complemento do Autopilot, versão 1.64; asa da Cheffenia opcional, proteção contra teleporte durante combate com MVP, retorno pelo Arauto após morte com Poder Infernal e retomada da caça no Covil.
 - `tests/`: verificações locais dos fluxos de aviso diário, Loja de Cash, evento, mochila e limites.
 
 ## Comportamento principal
@@ -41,6 +41,7 @@ node --check .\AUTOLOGIN-YGGIDLE.user.js
 node --check .\ABATES-YGGIDLE.user.js
 node .\tests\test-farm-watchdog.cjs
 node .\tests\test-autopilot-death.cjs
+node .\tests\test-mvp-combat.cjs
 ```
 
 ## Aplicação no Hub

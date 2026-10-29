@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.63
+// @version      1.64
 // @description  Complementa o autopilot do jogo: quando ele fica sem alvo, fixa o monstro visivel mais proximo ou anda explorando o mapa ate aparecer um. v1.54: clique completo no canvas e nos paineis.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -431,14 +431,19 @@
     ? (catIds.has(Number(m?.mobId)) || catNomes.has(normN(m?.name)))
     : (MVP_IDS.has(Number(m?.mobId)) || MVP_NOMES.has(normN(m?.name)));
   let mvpFixado = null, mvpFixadoEm = 0;
+  let mvpUltimoGid = 0, mvpVistoEm = 0;
   const EVENTO_NOME = normN('Stefan J.E. Wolf');
   let eventoFixado = null, eventoFixadoEm = 0;
-  const SO_MVP_TELEPORTE_MS = 300;
+  const SO_MVP_TELEPORTE_MS = 2500;
   let naoMvpDesde = 0;
   const golpesMvp = new Map();
   const MVP_TOMADO_MS = 2000;
   let mvpPularAgora = false;
   let meuGolpeEm = 0, meuAlvoGid = 0, golpesMeus = 0;
+  const snapshotAp = (e) => { try { return e?.getAutopilotSnapshot?.() || null; } catch { return null; } };
+  const mvpEmCombate = (ap, agora = Date.now()) => cfg.soMvp && mvpUltimoGid > 0 && (
+    (Number(meuAlvoGid) === mvpUltimoGid && agora - meuGolpeEm < 10000) ||
+    (Number(ap?.targetGid) === mvpUltimoGid && agora - mvpVistoEm < 10000));
   const golpeiEm = new Map();
   let grupoCache = { em: 0, aids: new Set() };
   const ehDoGrupo = (aid) => {
@@ -465,6 +470,7 @@
     const agora = Date.now();
     const r = golpesMvp.get(m.gid);
     if (!r || !r.outroUltimo || agora - r.outroUltimo > MVP_TOMADO_MS) return false;
+    if (Number(meuAlvoGid) === Number(m.gid) && agora - meuGolpeEm < 10000) return false;
     if (r.meuPrimeiro && r.meuPrimeiro <= r.outroPrimeiro) return false;
     if (r.grupoPrimeiro && r.grupoPrimeiro <= r.outroPrimeiro) return false;
     if (!mvpPularAgora) log('so MVP: ' + m.name + ' ja esta apanhando de outro (' + r.quem + ') -> asa');
@@ -601,6 +607,7 @@
     if (cfg.asa === 'off') return;
     const e = w.__elragEngine;
     if (mapaCheffenia(posicao(e)?.mapa) && cfg.cheffeniaTeleporte !== true) return;
+    if (mvpEmCombate(snapshotAp(e))) return;
     if (Date.now() - fugaEm < 1500) return;
     let melhor = null, tipoMelhor = null;
     for (const lista of Object.values(ultimoSnapMochila || {})) {
@@ -1060,6 +1067,7 @@
   };
   const usarAsa = (w, e, agora) => {
     if (cfg.asa === 'off' || (mapaCheffenia(posicao(e)?.mapa) && cfg.cheffeniaTeleporte !== true)) return false;
+    if (mvpEmCombate(snapshotAp(e), agora)) return false;
     ganchoMochila(w);
     if ((asa.index == null || agora - asa.lidaEm > 120000) && agora - asa.pedidaEm > 20000) {
       asa.pedidaEm = agora;
@@ -1258,8 +1266,12 @@
       try { ganchoCatalogo(w); } catch {}
       let radarMvp = [];
       try { radarMvp = e.getAutopilotRadarSnapshot()?.mobs || []; } catch {}
-      const mvp = radarMvp.filter((m) => ehMvp(m) && !mvpTomado(m)).sort((a, b) => (a.distance || 0) - (b.distance || 0))[0];
+      const candidatos = radarMvp.filter((m) => ehMvp(m) && !mvpTomado(m));
+      const mvp = candidatos.find((m) => Number(m.gid) === Number(ap.targetGid)) ||
+        candidatos.find((m) => Number(m.gid) === Number(meuAlvoGid) && agora - meuGolpeEm < 10000) ||
+        candidatos.sort((a, b) => (a.distance || 0) - (b.distance || 0))[0];
       if (mvp) {
+        mvpUltimoGid = Number(mvp.gid) || 0; mvpVistoEm = agora;
         semAlvoDesde = 0; radarVazioDesde = 0; naoMvpDesde = 0;
         if (ap.targetGid === mvp.gid) return;
         if (mvpFixado !== mvp.gid || agora - mvpFixadoEm > 500) {
@@ -1267,6 +1279,10 @@
           if (mvpFixado !== mvp.gid) log('so MVP: alvo ' + mvp.name + ' a ' + mvp.distance);
           mvpFixado = mvp.gid; mvpFixadoEm = agora;
         }
+        return;
+      }
+      if (mvpEmCombate(ap, agora) || (mvpUltimoGid && agora - mvpVistoEm < 1500)) {
+        naoMvpDesde = 0;
         return;
       }
       if (mvpFixado) { mvpFixado = null; try { e.setAutopilotPinnedTarget(0); } catch {} log('so MVP: MVP saiu do radar'); }
@@ -1402,7 +1418,7 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const cartao = fznCartaoYgg('Auto-hunt', 'v1.63', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
+      const cartao = fznCartaoYgg('Auto-hunt', 'v1.64', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
         cfg.ligado = !cfg.ligado;
@@ -1431,7 +1447,7 @@
       botaoAsa.textContent = NOMES_ASA[cfg.asa] || NOMES_ASA.auto;
       if (cfg.asa === 'off') botaoAsa.className = 'fzn-ygg--off';
       const botaoMvp = document.createElement('button');
-      botaoMvp.title = 'Chefenia: prioriza os chefes da lista. O teleporte e configurado separadamente.';
+      botaoMvp.title = 'Chefenia: prioriza o chefe em combate e nao usa asa enquanto o ataca. O teleporte sem chefe e configurado separadamente.';
       const pintarMvp = () => { botaoMvp.textContent = 'Chefenia'; botaoMvp.className = cfg.soMvp ? 'fzn-ygg--on' : 'fzn-ygg--off'; };
       botaoMvp.addEventListener('click', () => { cfg.soMvp = !cfg.soMvp; gravarJson(CHAVE_CFG, cfg); log('so MVP ' + (cfg.soMvp ? 'ligado' : 'desligado')); pintarMvp(); });
       pintarMvp();
