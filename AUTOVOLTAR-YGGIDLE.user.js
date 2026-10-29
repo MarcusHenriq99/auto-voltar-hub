@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.57
+// @version      2.58
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -2671,10 +2671,20 @@
     }
   };
   let ponteMorteJanela = null, ultimaPonteMorte = 0, ultimaAberturaMenuMorte = 0;
+  let morteSemDialogoJanela = null, morteSemDialogoDesde = 0, morteSemDialogoAviso = 0;
+  const hpMortal = (w) => {
+    const texto = w.document.body?.innerText || '';
+    const hp = /\bHP\s*([\d.]+)\s*\/\s*([\d.]+)\s*([\d.,]+)\s*%/i.exec(texto);
+    if (!hp) return false;
+    const atual = Number(hp[1].replace(/\./g, ''));
+    const maximo = Number(hp[2].replace(/\./g, ''));
+    const percentual = Number(hp[3].replace(',', '.'));
+    return maximo > 1 && atual <= 1 && percentual <= 0.1;
+  };
   const morteConfirmada = (w) => {
     try {
       const eu = w.__fznEu?.() || w.__fznAutoVoltarEu?.();
-      if (eu?.ACTION && eu.action === eu.ACTION.DIE) return true;
+      if ((eu?.ACTION && eu.action === eu.ACTION.DIE) || eu?.isDead?.()) return true;
     } catch {}
     if (w !== ponteMorteJanela || (!w.__fznAutoVoltarEu && Date.now() - ultimaPonteMorte > 5000)) {
       ponteMorteJanela = w;
@@ -2686,7 +2696,31 @@
       } catch {}
     }
     const texto = w.document.body?.innerText || '';
-    return /Renascer agora/i.test(texto) && Boolean(botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento'));
+    return hpMortal(w) || (/Renascer agora/i.test(texto) && Boolean(botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento')));
+  };
+  const recuperarMorteSemDialogo = (w) => {
+    if (morteSemDialogoJanela !== w) { morteSemDialogoJanela = w; morteSemDialogoDesde = 0; }
+    if (!morteSemDialogoDesde) morteSemDialogoDesde = Date.now();
+    if (Date.now() - morteSemDialogoDesde < 8000) { abrirMenuMorte(w); return; }
+    // O cliente pode deixar HP em 1/0,0% e exibir o menu comum. Nessa
+    // dessincronia nao existe botao de salvamento; recarregar apenas o jogo
+    // permite ao auto login retomar o personagem sem limpar cache/configuracao.
+    const chave = 'fzn-autovoltar-reload-morte';
+    let ultimo = 0;
+    try { ultimo = Number(w.sessionStorage.getItem(chave)) || 0; } catch {}
+    if (ultimo && Date.now() - ultimo < 120000) {
+      if (Date.now() - morteSemDialogoAviso > 30000) {
+        morteSemDialogoAviso = Date.now();
+        log('HP em 0%, mas o jogo nao abriu o menu de morte; aguardando nova tentativa de recarga');
+      }
+      return;
+    }
+    try {
+      w.sessionStorage.setItem(chave, String(Date.now()));
+      log('HP em 0% sem opcoes de renascimento; recarregando somente o jogo para recuperar a sessao');
+      w.location.reload();
+      morteSemDialogoDesde = Date.now();
+    } catch (e) { log('Morte: falha ao recarregar o jogo: ' + String(e).slice(0, 100)); }
   };
   const abrirMenuMorte = (w) => {
     if (Date.now() - ultimaAberturaMenuMorte < 3000) return;
@@ -3615,11 +3649,13 @@
     vigiarLucky();
     vigiarRifa(w);
     if (!cfg.ligado || ocupado) return;
-    if (window.top.__FZN_CHEFF_RECOVERY__?.active) return;
+    const cheffRecovery = window.top.__FZN_CHEFF_RECOVERY__;
+    const mapaCheff = posicao(w)?.mapa || '';
+    if (cheffRecovery?.active && Date.now() - (cheffRecovery.desde || 0) < 45000 && /^(?:moro_vol|prontera)|cheffenia|chefenia/i.test(mapaCheff)) return;
     const morreu = morteConfirmada(w);
     if (cfg.covil.ligado) {
       const salvarC = botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento');
-      if (morreu && !salvarC) { abrirMenuMorte(w); return; }
+      if (morreu && !salvarC) { recuperarMorteSemDialogo(w); return; }
       if (morreu && salvarC && (emInstancia(posicao(w)) || covil.dentro)) {
         contarCovil('morte'); covil.dentro = false;
         log('Covil: morri em ' + covilAlvo().nome + ' (' + cfg.covil.mortesHoje + ' hoje); volto pelo salvamento e tento de novo');
@@ -3644,8 +3680,9 @@
       if (armazemAberto(w)) { liberarArmazemInicial(w); return; }
     }
     const salvar = botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento');
-    if (morreu && !salvar) { abrirMenuMorte(w); return; }
+    if (morreu && !salvar) { recuperarMorteSemDialogo(w); return; }
     if (morreu && salvar) {
+      morteSemDialogoDesde = 0;
       if (mapaDeRenascer(posicao(w))) { renascerNoLugar(w); return; }
       aoMorrer(w, salvar); return;
     }

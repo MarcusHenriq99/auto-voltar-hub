@@ -28,13 +28,14 @@ assert.equal(janela({ document: { body: { innerText: 'Renascer agora' } } }, 'co
 
 const morteSource = trecho(voltar, '  let ponteMorteJanela =', '  const interromperTudo =');
 let menuClicado = false;
+let agora = 10000;
 const ctx = {
-  Date: { now: () => 10000 },
+  Date: { now: () => agora },
   botaoPorTexto: () => undefined,
   log: () => {},
 };
 vm.createContext(ctx);
-vm.runInContext(morteSource + '\nglobalThis.morteConfirmadaTeste = morteConfirmada; globalThis.abrirMenuMorteTeste = abrirMenuMorte;', ctx);
+vm.runInContext(morteSource + '\nglobalThis.morteConfirmadaTeste = morteConfirmada; globalThis.abrirMenuMorteTeste = abrirMenuMorte; globalThis.recuperarMorteSemDialogoTeste = recuperarMorteSemDialogo;', ctx);
 const w = {
   __fznEu: () => ({ action: 5, ACTION: { DIE: 5 } }),
   document: {
@@ -45,4 +46,30 @@ const w = {
 assert.equal(ctx.morteConfirmadaTeste(w), true, 'Detecta morte mesmo sem o menu aberto');
 ctx.abrirMenuMorteTeste(w);
 assert.equal(menuClicado, true, 'Abre o menu para permitir o retorno');
+let recargas = 0;
+const sessao = new Map();
+const wSemDialogo = {
+  document: {
+    body: { innerText: 'HP\n1 / 56.458\n0,0%\nMenu\nConfigurações' },
+    head: { appendChild: () => {} },
+    createElement: () => ({ type: '', textContent: '' }),
+    querySelector: () => ({ click: () => { menuClicado = true; } }),
+  },
+  sessionStorage: {
+    getItem: (k) => sessao.get(k) || null,
+    setItem: (k, v) => sessao.set(k, v),
+  },
+  location: { reload: () => { recargas++; } },
+};
+assert.equal(ctx.morteConfirmadaTeste(wSemDialogo), true, 'HP 1 e 0,0% detecta morte com menu comum');
+ctx.recuperarMorteSemDialogoTeste(wSemDialogo);
+assert.equal(recargas, 0, 'Primeiro tenta abrir o menu de morte');
+agora += 9000;
+ctx.recuperarMorteSemDialogoTeste(wSemDialogo);
+assert.equal(recargas, 1, 'Recarrega somente o jogo se o dialogo de morte nao aparecer');
+agora += 9000;
+ctx.recuperarMorteSemDialogoTeste(wSemDialogo);
+assert.equal(recargas, 1, 'Nao entra em ciclo de recargas durante dois minutos');
+wSemDialogo.document.body.innerText = 'HP\n1 / 100\n1,0%';
+assert.equal(ctx.morteConfirmadaTeste(wSemDialogo), false, 'Nao trata 1 HP vivo como morto');
 console.log('OK: estados parados, janela do Covil e morte sem menu detectados.');
