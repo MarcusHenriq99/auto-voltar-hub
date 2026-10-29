@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.59
+// @version      2.60
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -417,7 +417,10 @@
     if (!el || !el.isConnected) return false;
     const r = el.getBoundingClientRect();
     const base = { bubbles: true, cancelable: true, composed: true, view: w, button: 0, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
-    const alvo = w.document.elementFromPoint(base.clientX, base.clientY) || el;
+    const encontrado = w.document.elementFromPoint(base.clientX, base.clientY);
+    // Um aviso ou camada do mapa pode cobrir o centro do botão. Nesse caso,
+    // enviar o evento ao botão solicitado, nunca ao elemento sobreposto.
+    const alvo = encontrado && (encontrado === el || el.contains(encontrado)) ? encontrado : el;
     for (const tipo of ['pointerover', 'pointerenter', 'mouseover', 'pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
       const Ev = tipo.startsWith('pointer') && w.PointerEvent ? w.PointerEvent : w.MouseEvent;
       try { alvo.dispatchEvent(new Ev(tipo, { ...base, pointerId: 1, pointerType: 'mouse', isPrimary: true, buttons: /down/.test(tipo) ? 1 : 0 })); } catch {}
@@ -2493,10 +2496,12 @@
       if (entradaDoMapaPesquisado(w, codigo) !== entrar) { log('Mapa: resultado da busca mudou antes do clique'); return false; }
 
       const antes = new WeakSet();
-      w.document.querySelectorAll('button').forEach(b => antes.add(b));
+      w.document.querySelectorAll('button').forEach(b => { if (visivel(b)) antes.add(b); });
 
       log('Mapa de farm: pesquisa exata ' + codigo + '; clicando Entrar');
-      try { clicarBotao(w, entrar); } catch (e) { log('Mapa: erro ao clicar Entrar: ' + String(e).slice(0, 60)); }
+      try {
+        if (!clicarBotao(w, entrar)) { log('Mapa: botão Entrar sumiu antes do clique'); return false; }
+      } catch (e) { log('Mapa: erro ao clicar Entrar: ' + String(e).slice(0, 60)); return false; }
 
       const resultado = await esperarAte(() => {
         if (posicao(w)?.mapa === codigo) return 'chegou';
@@ -4436,7 +4441,7 @@
       conteudo.append(barra, status, gaveta, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.59</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.60</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
