@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.50
+// @version      2.51
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3519,6 +3519,7 @@
     vigiarLucky();
     vigiarRifa(w);
     if (!cfg.ligado || ocupado) return;
+    if (window.top.__FZN_CHEFF_RECOVERY__?.active) return;
     if (cfg.covil.ligado) {
       const salvarC = botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento');
       if (salvarC && /Renascer agora|Voltar ao ponto de salvamento/.test(w.document.body.innerText || '') && (emInstancia(posicao(w)) || covil.dentro)) {
@@ -4251,7 +4252,7 @@
       conteudo.append(liga, covilBtn, lucky, rifaLiga, rifaBtn, cartaoFarm, modoInventario, evento, limites, bolso, ferreiro, compras, venda, calibrar, executar, mapaFarm, usarMapa, detalhes, exportar, importar, status, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.50</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.51</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
@@ -4296,3 +4297,4 @@
   setInterval(verificar, 500);
   }
 })();
+
