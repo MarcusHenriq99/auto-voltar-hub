@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.51
+// @version      2.52
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -1474,7 +1474,10 @@
     if (v.comCarta && (item.cards || []).some(Boolean)) return 'tem carta encaixada';
     if (Number(v.raridadeMin) > 0 && Number(item.rarity?.tier) >= Number(v.raridadeMin)) return item.rarity.label || 'raridade';
     const n = normalizar(item.name);
-    const nome = (v.nomes || []).map(normalizar).find((x) => x && n.includes(x));
+    // Nomes curtos precisam ser palavras inteiras: "Aco" nao faz parte de
+    // "Sacola" nem de "Pedaco". Nomes maiores continuam aceitando trechos.
+    const nome = (v.nomes || []).map(normalizar).find((x) => x &&
+      (x.length <= 3 ? n.split(/[^a-z0-9]+/).includes(x) : n.includes(x)));
     if (nome) return `nome "${nome}"`;
     return null;
   };
@@ -1487,7 +1490,7 @@
     for (const tipo of Object.keys(mochila)) {
       for (const item of Array.isArray(mochila[tipo]) ? mochila[tipo] : []) {
         const b = nomeBase(item.name);
-        if (b !== alvo && !b.startsWith(`${alvo} `) && !b.includes(alvo)) continue;
+        if (b !== alvo && !b.startsWith(`${alvo} `)) continue;
         correspondentes.push({ item, tipo });
       }
     }
@@ -1602,7 +1605,7 @@
     const confirmar = botaoPorTexto(w.document, (t) => /^Confirmar venda$/i.test(t));
     if (!confirmar) { log('Venda: "Confirmar venda" desabilitado'); await fecharVenda(w); return false; }
     const quantidades = nome => itensMochila().filter(({item}) => {
-      const b=nomeBase(item.name), alvo=nomeBase(nome);return b===alvo || b.startsWith(alvo+' ') || b.includes(alvo);
+      const b=nomeBase(item.name), alvo=nomeBase(nome);return b===alvo || b.startsWith(alvo+' ');
     }).reduce((total,{item})=>total+Number(item.count||0),0);
     const esperado = new Map();
     for (const l of linhasDeVenda(w)) if (Number(l.campo.value)>0 && l.nome) {
