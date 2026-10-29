@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.56
+// @version      2.57
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -1823,7 +1823,7 @@
     return true;
   };
 
-  const autopilotLigado = (w) => { try { const ap = w.__elragEngine.getAutopilotSnapshot(); return Boolean(ap && ap.runtimeState !== 1); } catch { return false; } };
+  const autopilotLigado = (w) => { try { const ap = w.__elragEngine.getAutopilotSnapshot(); return Boolean(ap && ![0, 1].includes(Number(ap.runtimeState))); } catch { return false; } };
   const ligarAutopilot = (w, ligar) => { try { w.__elragEngine.setAutopilotRunning(ligar); return true; } catch { return false; } };
 
   const huntsPausados = new WeakSet();
@@ -2216,6 +2216,11 @@
     const p = posicao(w);
     if (!p?.mapa || normalizar(p.mapa) === 'prontera' || ocupado) return false;
     if (String(p.mapa).includes('@')) return false;
+    if (cfg.destinoPendente && p.mapa !== cfg.destinoPendente) return false;
+    if (cfg.destinoPendente === p.mapa) { delete cfg.destinoPendente; salvarCfg(); }
+    // Durante um retorno, um mapa intermediario nao e um novo destino de farm.
+    if (recuperacao || vigia || chegadaAtrasada || cfg.retornoPendente) return false;
+    if (/^(?:geffen|payon|morocc|alberta|izlude|aldebaran|yuno|lighthalzen|einbroch|einbech|hugel|rachel|veins|comodo|umbala|amatsu|gonryun|louyang|ayothaya|niflheim|jawaii|moscovia|brasilis|dewata|malangdo|malaya|mora|manuk|splendide|lasagna|eclage)$/.test(p.mapa)) return false;
     const bloqueado = andamento.etapa === 'Bloqueado' || Boolean(cfg.retornoPendente);
     if (cfg.mapaFarmManual !== p.mapa || cfg.destinoFarm?.mapa !== p.mapa || bloqueado) {
       const anterior = cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
@@ -2238,6 +2243,9 @@
     const retomar = Boolean(cfg.retornoPendente?.retomarAutopilot);
     relerCalibracao();
     cfg.ligado = true;
+    recuperacao = null; vigia = null; chegadaAtrasada = null;
+    delete cfg.retornoPendente;
+    delete cfg.destinoPendente;
     sincronizarMapaAtual(w);
     etapa('Aguardando', 'Retomado no mapa atual: ' + p.mapa);
     salvarCfg(); atualizarPainel();
@@ -2642,17 +2650,17 @@
       if (!await pausarCacada(w)) { segurarRetorno(w, 'nao consegui pausar a cacada antes de renascer'); return; }
       if (await sairDaEconomia(w)) botaoSalvamento = botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento') || botaoSalvamento;
       const antes = posicao(w);
-      registrarDestinoFarm(w);
+      if (!cfg.mapaFarmManual && !cfg.destinoFarm?.mapa) registrarDestinoFarm(w);
       log(`Morreu${antes ? ` em ${antes.nome}` : ''}. Voltando ao ponto de salvamento`);
       botaoSalvamento.click();
       contarQuadros(w, 2000).then((n) => log(`Quadros do jogo: ${n} em 2 s (${espelhados.has(w) ? 'espelhado' : 'NAO espelhado'})`));
       const chegou = await esperarAte(() => {
         const p = posicao(w);
         return p && antes && (p.mapa !== antes.mapa || p.x !== antes.x || p.y !== antes.y);
-      }, 90000, 1000);
+      }, 30000, 500);
       if (!chegou) {
         chegadaAtrasada = { mapaMorte: antes?.mapa || '', desde: Date.now(), retomarAutopilot: retomar };
-        log('Nao chegou na cidade em 90 s; sigo esperando a chegada');
+        log('Nao chegou na cidade em 30 s; sigo conferindo a chegada e a tela de morte');
         return;
       }
       await rotinaDaCidade(w, retomar);
@@ -2661,6 +2669,33 @@
     } finally {
       ocupado = false;
     }
+  };
+  let ponteMorteJanela = null, ultimaPonteMorte = 0, ultimaAberturaMenuMorte = 0;
+  const morteConfirmada = (w) => {
+    try {
+      const eu = w.__fznEu?.() || w.__fznAutoVoltarEu?.();
+      if (eu?.ACTION && eu.action === eu.ACTION.DIE) return true;
+    } catch {}
+    if (w !== ponteMorteJanela || (!w.__fznAutoVoltarEu && Date.now() - ultimaPonteMorte > 5000)) {
+      ponteMorteJanela = w;
+      ultimaPonteMorte = Date.now();
+      try {
+        const script = w.document.createElement('script'); script.type = 'module';
+        script.textContent = "import('Engine/SessionStorage.js').then(m=>{window.__fznAutoVoltarEu=()=>m.default.Entity;}).catch(()=>{});";
+        w.document.head.appendChild(script);
+      } catch {}
+    }
+    const texto = w.document.body?.innerText || '';
+    return /Renascer agora/i.test(texto) && Boolean(botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento'));
+  };
+  const abrirMenuMorte = (w) => {
+    if (Date.now() - ultimaAberturaMenuMorte < 3000) return;
+    if (/Voltar ao ponto de salvamento/.test(w.document.body?.innerText || '')) return;
+    const menu = w.document.querySelector('button[aria-label="Menu"]') || botaoPorTexto(w.document, (t) => /^Menu$/i.test(t));
+    if (!menu) { log('Morte detectada, mas o botao Menu nao apareceu; tentarei novamente'); return; }
+    ultimaAberturaMenuMorte = Date.now();
+    menu.click();
+    log('Morte detectada: abrindo Menu para voltar ao ponto de salvamento');
   };
 
   const interromperTudo = () => {
@@ -2743,7 +2778,7 @@
   };
 
   let chegadaAtrasada = null;
-  const CHEGADA_MAX_MS = 10 * 60 * 1000;
+  const CHEGADA_MAX_MS = 90 * 1000;
 
   const rondaDaRecuperacao = async (w) => {
     const r = recuperacao;
@@ -2813,7 +2848,7 @@
   const conferirChegadaAtrasada = async (w) => {
     const p = posicao(w);
     if (Date.now() - chegadaAtrasada.desde > CHEGADA_MAX_MS) {
-      log('Chegada atrasada: 10 min sem mudar de mapa; desisto desta volta');
+      log('Chegada atrasada: 90 s sem mudar de mapa; vou conferir novamente o destino');
       chegadaAtrasada = null;
       return;
     }
@@ -3084,6 +3119,30 @@
     etapa('Recuperando', 'Em Prontera com Auto-voltar ON; retomando Kafra, venda e retorno a ' + destino);
     recuperacao = { motivo: 'parado na cidade', desde: Date.now(), ultimaEm: Date.now() - 60000, tentativas: 0, retomarAutopilot: true };
     return true;
+  };
+  let foraFarmDesde = 0, ultimaConferenciaFarmEm = 0;
+  const conferirMapaFarm = (w) => {
+    const agora = Date.now();
+    if (agora - ultimaConferenciaFarmEm < 5000) return;
+    ultimaConferenciaFarmEm = agora;
+    const p = posicao(w), destino = cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
+    if (!p?.mapa || !destino || cfg.covil.ligado || rifaRodando) { foraFarmDesde = 0; return; }
+    if (p.mapa === destino) {
+      if (foraFarmDesde) log('Conferencia do farm: destino confirmado em ' + destino);
+      foraFarmDesde = 0;
+      return;
+    }
+    // Instancias e mapas com renascimento proprio seguem suas rotinas dedicadas.
+    if (mapaDeRenascer(p) && !cfg.destinoPendente) { foraFarmDesde = 0; return; }
+    if (!foraFarmDesde) {
+      foraFarmDesde = agora;
+      log('Conferencia do farm: em ' + p.mapa + ', destino ' + destino + '; verificarei o retorno');
+      return;
+    }
+    if (agora - foraFarmDesde < 15000 || recuperacao || vigia || chegadaAtrasada || ocupado) return;
+    etapa('Recuperando', 'Fora do mapa de farm: ' + p.mapa + '; retorno a ' + destino);
+    log('Conferencia do farm: fora de ' + destino + ' por ' + Math.round((agora - foraFarmDesde) / 1000) + ' s; iniciando retorno');
+    recuperacao = { motivo: 'fora do mapa de farm', desde: agora, ultimaEm: agora - 20000, tentativas: 0, retomarAutopilot: true };
   };
 
   const dispensarAvisoDiario = (w) => {
@@ -3557,9 +3616,11 @@
     vigiarRifa(w);
     if (!cfg.ligado || ocupado) return;
     if (window.top.__FZN_CHEFF_RECOVERY__?.active) return;
+    const morreu = morteConfirmada(w);
     if (cfg.covil.ligado) {
       const salvarC = botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento');
-      if (salvarC && /Renascer agora|Voltar ao ponto de salvamento/.test(w.document.body.innerText || '') && (emInstancia(posicao(w)) || covil.dentro)) {
+      if (morreu && !salvarC) { abrirMenuMorte(w); return; }
+      if (morreu && salvarC && (emInstancia(posicao(w)) || covil.dentro)) {
         contarCovil('morte'); covil.dentro = false;
         log('Covil: morri em ' + covilAlvo().nome + ' (' + cfg.covil.mortesHoje + ' hoje); volto pelo salvamento e tento de novo');
         salvarC.click(); return;
@@ -3583,10 +3644,12 @@
       if (armazemAberto(w)) { liberarArmazemInicial(w); return; }
     }
     const salvar = botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento');
-    if (salvar && /Renascer agora/.test(w.document.body.innerText || '')) {
+    if (morreu && !salvar) { abrirMenuMorte(w); return; }
+    if (morreu && salvar) {
       if (mapaDeRenascer(posicao(w))) { renascerNoLugar(w); return; }
       aoMorrer(w, salvar); return;
     }
+    conferirMapaFarm(w);
     vigiarCidadeSemRotina(w);
     if ((chegadaAtrasada || vigia) && /Economia de energia/.test(w.document.body.innerText || '')) { sairDaEconomia(w); return; }
     if (chegadaAtrasada) { conferirChegadaAtrasada(w); return; }
@@ -3689,10 +3752,12 @@
     if (abrir) { abrir.textContent = (rifaRodando ? 'Auto-voltar PAUSADO • Rifa' : 'Auto-voltar ' + (cfg.ligado ? 'ON' : 'OFF')) + ' • ' + andamento.etapa + (controlesAbertos ? ' ▾' : ' ▸'); abrir.title = rifaRodando ? 'Farm pausado até a rifa terminar e o retorno ao mapa concluir' : andamento.detalhe; }
     const controles = painel.querySelector('[data-controles]');
     if (controles) controles.style.display = controlesAbertos ? 'flex' : 'none';
-    const w = jogo(), peso = w && lerPeso(w);
+    const w = jogo(), peso = w && lerPeso(w), mapaAtual = w && posicao(w)?.mapa;
+    const destinoAtual = cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
     const texto = painel.querySelector('[data-status]');
     if (texto) texto.textContent = andamento.etapa + ' · Peso ' + (peso ? peso.pct.toFixed(0) + '%' : '?') +
-      (cfg.destinoFarm?.mapa ? ' · ' + cfg.destinoFarm.mapa : '') +
+      (destinoAtual ? ' · Farm: ' + destinoAtual : '') +
+      (mapaAtual && destinoAtual && mapaAtual !== destinoAtual ? ' · Fora: ' + mapaAtual : '') +
       (cfg.rifa?.ligado && rifaEstado.etapa && rifaEstado.etapa !== 'Aguardando' ? ' · Rifa: ' + rifaEstado.etapa : '') +
       (ocupado ? ' · ' + Math.floor((Date.now() - andamento.desde) / 1000) + 's' : '') +
       (detalhesProcesso ? ' ▾' : ' ▸');
@@ -3836,7 +3901,9 @@
     const salvar=document.createElement('button');salvar.textContent='Salvar mapa';salvar.onclick=()=>{
       if(ocupado)return;const codigo=input.value.trim().toLowerCase();
       if(codigo && !/^[a-z0-9_]+$/.test(codigo)){dica.textContent='Use somente letras, numeros e sublinhado no codigo do mapa.';return;}
-      cfg.mapaFarmManual=codigo;
+       cfg.mapaFarmManual=codigo;
+       if (codigo && posicao(jogo())?.mapa !== codigo) cfg.destinoPendente = codigo;
+       else delete cfg.destinoPendente;
       if(codigo)cfg.destinoFarm={mapa:codigo,nome:codigo};else{const w=jogo();if(w)registrarDestinoFarm(w);}
       salvarCfg();log('Mapa de farm desta conta: '+(codigo||'acompanhar mapa atual'));abrirMapaFarm();atualizarPainel();
     };p.append(salvar);const usarAtual=document.createElement('button');usarAtual.textContent='Usar mapa atual';usarAtual.title='Limpa o bloqueio antigo e retoma a automacao neste mapa';usarAtual.onclick=async()=>{if(ocupado)return;const pos=posicao(jogo());if(pos?.mapa && pos.mapa!=='prontera'){cfg.mapaFarmManual=pos.mapa;salvarCfg();}abrirMapaFarm();await retomarNoMapaAtual();};p.append(usarAtual);const fechar=document.createElement('button');fechar.textContent='Fechar mapa de farm';fechar.onclick=abrirMapaFarm;p.append(fechar);document.body.append(p);
@@ -4318,7 +4385,7 @@
       conteudo.append(barra, status, gaveta, detalhe, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.56</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.57</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);

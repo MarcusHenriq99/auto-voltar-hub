@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.62
+// @version      1.63
 // @description  Complementa o autopilot do jogo: quando ele fica sem alvo, fixa o monstro visivel mais proximo ou anda explorando o mapa ate aparecer um. v1.54: clique completo no canvas e nos paineis.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -1090,6 +1090,13 @@
     return /^lhz_dun04(\.|$)/.test(m) || /chef/.test(m) || /^moro_vol(\.|$)/.test(m) || m.includes('@') || /inv$/.test(m);
   };
   const foraDaCidade = (mapa) => Boolean(mapa) && !CIDADES_RE.test(mapa);
+  const janelaBloqueiaReligar = (w, mapa) => {
+    if (!String(mapa).includes('@')) return temJanelaAberta(w);
+    // Em instancias, o convite "Voltar para ..." do mapa pode ficar visivel
+    // mesmo depois da entrada; ele nao deve manter o Autopilot desligado.
+    return /Renascer agora|Voltar ao ponto de salvamento|Bem-vindo aos servicos Kafra/
+      .test(w.document.body?.innerText || '');
+  };
   // v1.60: sempre ativo fora da cidade, renascer nos mapas especiais e destravar "ocupado"
   let ocupadoDesde = 0, renascerEm = 0, motivoParado = '';
   const motivo = (txt) => { if (txt !== motivoParado) { motivoParado = txt; if (txt) log('parado: ' + txt); } };
@@ -1220,11 +1227,11 @@
         log('autopilot do jogo PAROU (estado ' + ap.runtimeState + ', mapa ' + (posicao(e)?.mapa || '?') + ')' + retrato(w));
       }
       const mapaP = String(posicao(e)?.mapa || '');
-      if (agora - apParadoDesde >= RELIGAR_AP_MS && agora - apReligadoEm >= RELIGAR_AP_INTERVALO_MS && mapaP && !CIDADES_RE.test(mapaP) && !temJanelaAberta(w)) {
+      if (agora - apParadoDesde >= RELIGAR_AP_MS && agora - apReligadoEm >= RELIGAR_AP_INTERVALO_MS && mapaP && !CIDADES_RE.test(mapaP) && !janelaBloqueiaReligar(w, mapaP)) {
         apReligadoEm = agora;
         try { e.setAutopilotRunning(true); log('autopilot parado ha ' + Math.round((agora - apParadoDesde) / 1000) + ' s em ' + mapaP + ' -> religado'); } catch (err) { log('religar autopilot falhou: ' + String(err).slice(0, 60)); }
       } else if (agora - apParadoDesde >= RELIGAR_AP_MS) {
-        motivo(!mapaP ? 'mapa desconhecido' : CIDADES_RE.test(mapaP) ? 'na cidade (' + mapaP + ')' : temJanelaAberta(w) ? 'janela aberta (morte/Kafra/teleporte) em ' + mapaP : '');
+        motivo(!mapaP ? 'mapa desconhecido' : CIDADES_RE.test(mapaP) ? 'na cidade (' + mapaP + ')' : janelaBloqueiaReligar(w, mapaP) ? 'janela aberta (morte/Kafra/teleporte) em ' + mapaP : '');
       }
       semAlvoDesde = 0; radarVazioDesde = 0;
       return;
@@ -1395,7 +1402,7 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const cartao = fznCartaoYgg('Auto-hunt', 'v1.62', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
+      const cartao = fznCartaoYgg('Auto-hunt', 'v1.63', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
         cfg.ligado = !cfg.ligado;

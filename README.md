@@ -4,15 +4,19 @@ Script de automação do Yggidle usado no FZN Idle Hub. Esta pasta contém a ver
 
 ## Arquivos
 
-- `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 2.56.
+- `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 2.57.
 - `AUTOLOGIN-YGGIDLE.user.js`: login automático e recuperação de conexão, versão 1.25.
 - `ABATES-YGGIDLE.user.js`: contador independente de abates por dia, monstro e hora.
-- `AUTOHUNT-YGGIDLE.user.js`: complemento do Autopilot, versão 1.62; asa da Cheffenia opcional e retorno pelo Arauto após morte com Poder Infernal.
+- `AUTOHUNT-YGGIDLE.user.js`: complemento do Autopilot, versão 1.63; asa da Cheffenia opcional, retorno pelo Arauto após morte com Poder Infernal e retomada da caça no Covil.
 - `tests/`: verificações locais dos fluxos de aviso diário, Loja de Cash, evento, mochila e limites.
 
 ## Comportamento principal
 
 O Auto-voltar acompanha peso, espaços da mochila, morte e mapa de farm. Conforme as opções de cada conta, usa Cartão Kafra/Loja de Bolso no mapa ou volta à cidade para guardar, desmantelar, vender e retornar. Itens travados não são destravados pelo script. A opção **Rotina por limite** permite continuar farmando mesmo acima dos limites quando desligada.
+
+A conferência periódica mostra o mapa atual quando ele difere do destino de farm. Se o personagem permanecer fora do destino por 15 segundos sem outra rotina de retorno, o Auto-voltar inicia a recuperação. Um mapa digitado manualmente fica pendente até a chegada; mapas intermediários não substituem esse destino. Durante a rifa e nas instâncias com rotina própria, a conferência não inicia outra viagem.
+
+Se o jogo deixar o personagem morto sem abrir a tela de retorno, o Auto-voltar tenta abrir o Menu e voltar ao ponto de salvamento. No Covil, tanto o Auto-voltar quanto o Auto Hunt conferem se o Autopilot está realmente ligado após a entrada.
 
 Na versão 2.21, a Loja de Cash é fechada automaticamente **somente** quando o Auto-voltar está ligado. O aviso diário continua sendo dispensado ao marcar “Não mostrar novamente hoje” e fechar.
 
@@ -35,6 +39,8 @@ node --check .\AUTOVOLTAR-YGGIDLE.user.js
 node --check .\AUTOHUNT-YGGIDLE.user.js
 node --check .\AUTOLOGIN-YGGIDLE.user.js
 node --check .\ABATES-YGGIDLE.user.js
+node .\tests\test-farm-watchdog.cjs
+node .\tests\test-autopilot-death.cjs
 ```
 
 ## Aplicação no Hub
