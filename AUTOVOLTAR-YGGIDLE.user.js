@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.70
+// @version      2.71
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -2875,7 +2875,7 @@
       let vivo = await esperarAte(() => !/Renascer agora/.test(w.document.body.innerText || ''), 1000, 200);
       for (let i = 0; !vivo && i < 10; i++) { const b = achar(); if (b) b.click(); vivo = await esperarAte(() => !/Renascer agora/.test(w.document.body.innerText || ''), 1000, 200); }
       if (!vivo) { log('Renascer: a tela de morte continuou; tento de novo no proximo ciclo'); return; }
-      if (retomar) {
+      if (retomar || (cfg.covil.ligado && emInstancia(posicao(w))) || mapaCovil(posicao(w))) {
         if (huntsPausados.has(w)) { botaoHunt(w, false)?.click(); huntsPausados.delete(w); }
         else if (botaoHunt(w, false)) botaoHunt(w, false).click();
         const ok = await esperarAte(() => { if (autopilotLigado(w)) return true; ligarAutopilot(w, true); return false; }, 6000, 300);
@@ -3173,7 +3173,7 @@
   const covilAlvo = () => COVIS.find((c) => c.mobId === Number(cfg.covil.mobId)) || COVIS.find((c) => c.mobId === 1312);
   const pedraDoCovil = (c) => 'Pedra de Convocação (Grau ' + GRAU[c.tier] + ')';
   const covil = { dentro: false, entrouEm: 0, viuEm: 0, viu: false, falhas: 0, lutaEm: 0 };
-  const COVIL_SEM_MVP_MS = 25000, COVIL_MORTO_MS = 1000, COVIL_LOOT_MS = 0, COVIL_TETO_MS = 28 * 60000;
+  const COVIL_SEM_MVP_MS = 25000, COVIL_LOOT_MS = 1500, COVIL_TETO_MS = 28 * 60000;
   const contarCovil = (campo) => {
     const dia = new Date().toLocaleDateString('pt-BR');
     if (cfg.covil.dia !== dia) { cfg.covil.dia = dia; cfg.covil.hoje = 0; cfg.covil.mortesHoje = 0; }
@@ -3181,11 +3181,37 @@
     salvarCfg();
   };
   const emInstancia = (p) => String(p?.mapa || '').includes('@');
+  const mapaCovil = (p) => /@tower$/i.test(String(p?.mapa || ''));
   const gidDoMvp = (w, c) => {
     try { const m = (w.__elragEngine.getAutopilotRadarSnapshot()?.mobs || []).find((x) => x && Number(x.mobId) === c.mobId); return m ? m.gid : null; } catch { return null; }
   };
   const mvpNoRadar = (w, c) => {
     try { return (w.__elragEngine.getAutopilotRadarSnapshot()?.mobs || []).some((m) => m && Number(m.mobId) === c.mobId); } catch { return false; }
+  };
+  // O radar deixa de listar monstros fora da tela. Só removeLife confirma a
+  // morte; a ausência temporária do alvo nunca autoriza sair da instância.
+  const ganchosMorteCovil = new WeakSet();
+  const observarMorteCovil = async (w) => {
+    const manager = await carregarEntidadesNpc(w);
+    if (!manager || typeof manager.removeLife !== 'function') return false;
+    if (ganchosMorteCovil.has(manager)) return true;
+    const original = manager.removeLife;
+    manager.removeLife = function (gid) {
+      try {
+        const mob = manager.get?.(gid);
+        const mobId = Number(mob?._job || mob?.job || mob?.mobId || 0);
+        const alvo = covilAlvo();
+        if (cfg.covil.ligado && emInstancia(posicao(w)) &&
+            (mobId === alvo.mobId || (covil.viu && Number(gid) === Number(covil.gid)))) {
+          covil.morteConfirmadaEm = Date.now();
+          covil.gidMorto = Number(gid);
+          log('Covil: morte de ' + alvo.nome + ' confirmada pelo jogo (GID ' + gid + ')');
+        }
+      } catch (e) { log('Covil: erro ao conferir morte: ' + String(e).slice(0, 80)); }
+      return original.apply(this, arguments);
+    };
+    ganchosMorteCovil.add(manager);
+    return true;
   };
   const clicarCompleto = (w, el) => {
     const r = el.getBoundingClientRect();
@@ -3319,16 +3345,26 @@
     if (!p?.mapa) return;
     ocupado = true;
     try {
+      if (!covil.ganchoAtivo && Date.now() - (covil.ganchoTentouEm || 0) > 10000) {
+        covil.ganchoTentouEm = Date.now();
+        covil.ganchoAtivo = await observarMorteCovil(w);
+        if (!covil.ganchoAtivo && !covil.ganchoAvisado) {
+          covil.ganchoAvisado = true;
+          log('Covil: sinal de morte indisponível; não sairei sem confirmação');
+        }
+      }
       if (emInstancia(p) && covil.dentro) {
         if (!autopilotLigado(w)) ligarAutopilot(w, true);
         const agora = Date.now();
-        if (mvpNoRadar(w, c)) { covil.viu = true; covil.viuEm = agora; covil.gid = gidDoMvp(w, c); etapa('Covil', 'Lutando com ' + c.nome + ' (' + cfg.covil.hoje + ' hoje)'); return; }
-        if (covil.viu && agora - covil.viuEm > COVIL_MORTO_MS) {
+        if (!covil.morteConfirmadaEm && mvpNoRadar(w, c)) {
+          covil.viu = true; covil.viuEm = agora; covil.gid = gidDoMvp(w, c);
+          etapa('Covil', 'Lutando com ' + c.nome + ' (' + cfg.covil.hoje + ' hoje)'); return;
+        }
+        if (covil.morteConfirmadaEm && agora - covil.morteConfirmadaEm >= COVIL_LOOT_MS) {
           if (!covil.morto) {
             covil.morto = true;
             contarCovil('kill');
-            log('Covil: ' + c.nome + ' derrotado em ' + Math.round((covil.viuEm - covil.entrouEm) / 1000) + ' s (' + cfg.covil.hoje + ' hoje, ' + cfg.covil.total + ' no total, +' + c.tier * 100 + ' pontos)');
-            if (COVIL_LOOT_MS > 0) { etapa('Covil', 'Pegando o drop'); await esperar(COVIL_LOOT_MS); }
+            log('Covil: ' + c.nome + ' derrotado em ' + Math.round((agora - covil.entrouEm) / 1000) + ' s (' + cfg.covil.hoje + ' hoje, ' + cfg.covil.total + ' no total, +' + c.tier * 100 + ' pontos)');
           }
           if (covil.reinvocar !== false && !covil.tentouAqui) {
             covil.tentouAqui = true;
@@ -3338,7 +3374,7 @@
               etapa('Covil', 'Invocando de novo sem sair (' + pedras + ' pedras)');
               if (await entrarNoCovil(w, c, true)) {
                 if (!covil.reinvocouLog) { covil.reinvocouLog = true; log('Covil: reinvocacao de dentro funcionou; sigo sem passar por Prontera'); }
-                covil.entrouEm = Date.now(); covil.viu = false; covil.morto = false; covil.reinvocarFalhas = 0; covil.tentouAqui = false;
+                covil.entrouEm = Date.now(); covil.viu = false; covil.morto = false; covil.morteConfirmadaEm = 0; covil.reinvocarFalhas = 0; covil.tentouAqui = false;
                 ligarAutopilot(w, true);
                 return;
               }
@@ -3353,14 +3389,20 @@
           covil.dentro = false;
           return;
         }
-        if (!covil.viu && agora - covil.entrouEm > COVIL_SEM_MVP_MS) { log('Covil: ' + c.nome + ' nao apareceu em 25 s; saindo'); covil.dentro = false; await sairDoCovil(w); return; }
-        if (agora - covil.entrouEm > COVIL_TETO_MS) { log('Covil: 28 min sem terminar; saindo antes do limite de 30 min'); covil.dentro = false; await sairDoCovil(w); }
+        if (!covil.viu && agora - covil.entrouEm > COVIL_SEM_MVP_MS && !covil.semMvpAvisado) {
+          covil.semMvpAvisado = true; log('Covil: MVP ainda não apareceu no radar; aguardando dentro da instância');
+        }
+        if (agora - covil.entrouEm > COVIL_TETO_MS && !covil.tetoAvisado) {
+          covil.tetoAvisado = true; log('Covil: 28 min sem morte confirmada; aguardando o limite do jogo, sem sair antes do MVP');
+        }
+        if (covil.morteConfirmadaEm) etapa('Covil', 'MVP derrotado; aguardando drop');
+        else if (covil.viu) etapa('Covil', 'MVP fora do radar; continuo na instância aguardando confirmação');
         return;
       }
       if (emInstancia(p)) {
         const jaMorto = covil.morto;
-        covil.dentro = true; covil.entrouEm = Date.now(); covil.viu = jaMorto; covil.viuEm = Date.now() - COVIL_MORTO_MS - 1; covil.morto = jaMorto;
-        log('Covil: ja estou em ' + p.mapa + (jaMorto ? '; MVP ja derrotado, saindo' : '; acompanho a luta'));
+        covil.dentro = true; covil.entrouEm = Date.now(); covil.viu = false; covil.viuEm = 0; covil.morteConfirmadaEm = 0; covil.morto = jaMorto;
+        log('Covil: ja estou em ' + p.mapa + '; aguardo morte confirmada do MVP');
         return;
       }
       await lerMochila(w);
@@ -3370,7 +3412,7 @@
       if (precisaVender(w)) { voltarAoFarmDoCovil('mochila/peso no limite (a venda roda no farm; religue o Covil depois)'); return; }
       etapa('Covil', 'Entrando: ' + c.nome + ' (' + pedras + ' pedras)');
       if (await entrarNoCovil(w, c)) {
-        covil.dentro = true; covil.entrouEm = Date.now(); covil.viu = false; covil.morto = false; covil.tentouAqui = false; covil.falhas = 0;
+        covil.dentro = true; covil.entrouEm = Date.now(); covil.viu = false; covil.morto = false; covil.morteConfirmadaEm = 0; covil.semMvpAvisado = false; covil.tetoAvisado = false; covil.tentouAqui = false; covil.falhas = 0;
         ligarAutopilot(w, true);
         return;
       }
@@ -3912,6 +3954,18 @@
     vigiarRifa(w);
     // A tela de tres mortes oferece Renascer agora. Trate-a antes de uma
     // rotina ocupada deixar o personagem esperando no menu.
+    if (cfg.ligado && (cfg.covil.ligado && emInstancia(posicao(w)) || mapaCovil(posicao(w))) && morteConfirmada(w)) {
+      if (!covil.morteRegistrada && cfg.covil.ligado) {
+        covil.morteRegistrada = true; contarCovil('morte');
+        log('Covil: morte na instância; usando Renascer agora sem voltar a Prontera');
+      }
+      if (!ocupado) {
+        if (!botaoPorTexto(w.document, (t) => /^Renascer agora/i.test(t))) abrirMenuMorte(w);
+        void renascerNoLugar(w);
+      }
+      return;
+    }
+    if (!morteConfirmada(w)) covil.morteRegistrada = false;
     if (cfg.ligado && mapaDeRenascer(posicao(w)) && !window.top.__FZN_CHEFF_RECOVERY__?.active) {
       const renascer = botaoPorTexto(w.document, (t) => /^Renascer agora/i.test(t));
       if (renascer && morteConfirmada(w) && Date.now() - ultimoCliqueRenascer > 1500) {
@@ -3935,12 +3989,12 @@
     if (cfg.covil.ligado) {
       const salvarC = botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento');
       if (morreu && !salvarC) { recuperarMorteSemDialogo(w); return; }
-      if (morreu && salvarC && (emInstancia(posicao(w)) || covil.dentro)) {
-        contarCovil('morte'); covil.dentro = false;
-        log('Covil: morri em ' + covilAlvo().nome + ' (' + cfg.covil.mortesHoje + ' hoje); volto pelo salvamento e tento de novo');
-        salvarC.click(); return;
-      }
+      if (morreu && salvarC) { void aoMorrer(w, salvarC); return; }
       rodadaCovil(w); return;
+    }
+    if (mapaCovil(posicao(w))) {
+      etapa('Covil', 'Ainda na instância; não volto ao farm antes de sair dela');
+      return;
     }
     sincronizarMapaAtual(w);
     if (!posicaoInicialVista) {
@@ -4231,7 +4285,7 @@
       info.textContent = c.nome + ' · Tier ' + c.tier + ' · ' + pedraDoCovil(c) + ' na mochila: ' + quantosNaMochila(pedraDoCovil(c)) + ' · Hoje: ' + cfg.covil.hoje + ' MVPs (' + cfg.covil.hoje * c.tier * 100 + ' pts deste tier), ' + cfg.covil.mortesHoje + ' mortes · Total: ' + cfg.covil.total;
       p.append(info);
       const dica = document.createElement('p'); dica.style.color = '#8fa3b3';
-      dica.textContent = 'Entra pelo Mundo de Midgard, invoca, deixa o autopilot lutar, espera o drop e sai — repete enquanto houver pedra. Sem pedra, mochila cheia ou 3 falhas: desliga o Covil e volta ao mapa de farm. Morte: volta pelo salvamento e tenta de novo.';
+      dica.textContent = 'Entra pelo Mundo de Midgard, invoca, deixa o autopilot lutar e só sai após confirmar a morte do MVP. Sem pedra, mochila cheia ou 3 falhas: desliga o Covil e volta ao mapa de farm. Morte dentro do Covil: Renascer agora no mesmo mapa.';
       p.append(dica);
       const liga = document.createElement('button');
       liga.textContent = 'Covil: ' + (cfg.covil.ligado ? 'ON' : 'OFF'); liga.className = cfg.covil.ligado ? 'fzn-av--on' : 'fzn-av--off';
@@ -4816,7 +4870,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.70</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.71</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
