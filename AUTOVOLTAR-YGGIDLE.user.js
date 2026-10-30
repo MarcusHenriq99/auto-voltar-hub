@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.69
+// @version      2.70
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -2683,6 +2683,11 @@
       etapa('Aguardando', 'Tempo do conteudo esgotado; escolha outro modo ou entre manualmente');
       return false;
     }
+    if (cfg.conteudo.modo !== 'normal' && posicao(w)?.mapa !== 'prontera') {
+      etapa('8/8 Indo a Prontera', 'Saindo do mapa atual para entrar pelo NPC do conteúdo');
+      if (!await sairParaRifa(w))
+        return segurarRetorno(w, 'não consegui chegar a Prontera para falar com o NPC do conteúdo');
+    }
     if (cfg.conteudo.modo === 'bio4' && posicao(w)?.mapa === 'prontera') return entrarBio4(w);
     if (cfg.conteudo.modo === 'cheffenia' && posicao(w)?.mapa === 'prontera') return entrarCheffenia(w);
     if (cfg.conteudo.modo === 'expedicao' && posicao(w)?.mapa === 'prontera') return entrarExpedicao(w);
@@ -4811,7 +4816,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.69</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.70</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
