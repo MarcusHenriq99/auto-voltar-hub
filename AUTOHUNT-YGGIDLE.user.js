@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.64
+// @version      1.65
 // @description  Complementa o autopilot do jogo: quando ele fica sem alvo, fixa o monstro visivel mais proximo ou anda explorando o mapa ate aparecer um. v1.54: clique completo no canvas e nos paineis.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -391,7 +391,7 @@
   const ASA_IDS = [ASA_GIGANTE_INFINITA, ASA_INFINITA, 601];
   const ASAS_INFINITAS = new Set([ASA_GIGANTE_INFINITA, ASA_INFINITA]);
   const MVP_IDS = new Set([1038, 1039, 1046, 1059, 1086, 1087, 1112, 1115, 1147, 1150, 1157, 1159, 1190, 1251, 1252, 1272, 1312, 1373, 1389, 1418, 1492, 1511, 1583, 1623, 1630, 1658, 1685, 1688, 1708, 1719, 1734, 1768, 1779, 1785, 1832, 1871, 1874, 1885, 1917, 2022, 2068, 2087, 2109, 2202, 3810, 20419, 20601]);
-  const MVP_NOMES = new Set(["Osiris", "Baphomet", "Doppelganger", "Mistress", "Golden Thief Bug", "Orc Hero", "Drake", "Eddga", "Maya", "Moonlight Flower", "Pharaoh", "Phreeoni", "Orc Lord", "Knight of Windstorm", "Garm", "Dark Lord", "Turtle General", "Lord of Death", "Dracula", "Evil Snake Lord", "Incantation Samurai", "Amon Ra", "Tao Gunka", "RSX 0806", "Bacsojin", "Ygnizem", "Vesper", "Lady Tanee", "Thanatos", "Detale", "Kiel D-01", "Gloom Under Night", "Ktullanux", "Atroce", "Ifrit", "Fallen Bishop", "Beelzebub", "Gopinich", "Wounded Morocc", "Nidhoggr's Shadow", "Boitata", "Queen Scaraba", "Valkyrie Randgris", "Kraken", "King Poring", "Rigid Muspellskoll", "Jewel Ungoliant"].map((n) => n.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')));
+  const MVP_NOMES = new Set(["Osiris", "Baphomet", "Doppelganger", "Mistress", "Golden Thief Bug", "Orc Hero", "Drake", "Eddga", "Maya", "Moonlight Flower", "Pharaoh", "Phreeoni", "Orc Lord", "Knight of Windstorm", "Garm", "Dark Lord", "Turtle General", "Lord of Death", "Dracula", "Evil Snake Lord", "Incantation Samurai", "Amon Ra", "Tao Gunka", "RSX 0806", "Bacsojin", "Ygnizem", "Vesper", "Lady Tanee", "Thanatos", "Detale", "Kiel D-01", "Gloom Under Night", "Ktullanux", "Atroce", "Ifrit", "Fallen Bishop", "Beelzebub", "Gopinich", "Wounded Morocc", "Nidhoggr's Shadow", "Boitata", "Queen Scaraba", "Valkyrie Randgris", "Kraken", "King Poring", "Rigid Muspellskoll", "Jewel Ungoliant", "Cabra da Peste", "Cabra Safado", "Cabra Macho"].map((n) => n.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')));
   const CHAVE_CATALOGO = 'fzn-autohunt-ygg-chefenia';
   let catalogo = null;
   try { catalogo = JSON.parse(localStorage.getItem(CHAVE_CATALOGO) || 'null'); } catch {}
@@ -427,9 +427,10 @@
       try { e?.requestAutopilotChefeniaCatalog?.(); } catch {}
     }
   };
-  const ehMvp = (m) => catIds.size
-    ? (catIds.has(Number(m?.mobId)) || catNomes.has(normN(m?.name)))
-    : (MVP_IDS.has(Number(m?.mobId)) || MVP_NOMES.has(normN(m?.name)));
+  // O catalogo pode ficar em cache enquanto a Chefenia recebe MVPs novos.
+  // As fontes se complementam; catalogo antigo nao invalida os nomes conhecidos.
+  const ehMvp = (m) => catIds.has(Number(m?.mobId)) || catNomes.has(normN(m?.name)) ||
+    MVP_IDS.has(Number(m?.mobId)) || MVP_NOMES.has(normN(m?.name));
   let mvpFixado = null, mvpFixadoEm = 0;
   let mvpUltimoGid = 0, mvpVistoEm = 0;
   const EVENTO_NOME = normN('Stefan J.E. Wolf');
@@ -441,9 +442,10 @@
   let mvpPularAgora = false;
   let meuGolpeEm = 0, meuAlvoGid = 0, golpesMeus = 0;
   const snapshotAp = (e) => { try { return e?.getAutopilotSnapshot?.() || null; } catch { return null; } };
-  const mvpEmCombate = (ap, agora = Date.now()) => cfg.soMvp && mvpUltimoGid > 0 && (
-    (Number(meuAlvoGid) === mvpUltimoGid && agora - meuGolpeEm < 10000) ||
-    (Number(ap?.targetGid) === mvpUltimoGid && agora - mvpVistoEm < 10000));
+  const mvpEmCombate = (ap, agora = Date.now()) => cfg.soMvp && (
+    (mvpUltimoGid > 0 && ((Number(meuAlvoGid) === mvpUltimoGid && agora - meuGolpeEm < 10000) ||
+      (Number(ap?.targetGid) === mvpUltimoGid && agora - mvpVistoEm < 10000))) ||
+    (Number(meuAlvoGid) > 0 && Number(ap?.targetGid) === Number(meuAlvoGid) && agora - meuGolpeEm < 10000));
   const golpeiEm = new Map();
   let grupoCache = { em: 0, aids: new Set() };
   const ehDoGrupo = (aid) => {
@@ -606,7 +608,7 @@
   const fugirComAsa = (w) => {
     if (cfg.asa === 'off') return;
     const e = w.__elragEngine;
-    if (mapaCheffenia(posicao(e)?.mapa) && cfg.cheffeniaTeleporte !== true) return;
+    if (sessaoCheffenia(w, e) && cfg.cheffeniaTeleporte !== true) return;
     if (mvpEmCombate(snapshotAp(e))) return;
     if (Date.now() - fugaEm < 1500) return;
     let melhor = null, tipoMelhor = null;
@@ -1066,7 +1068,7 @@
     try { w.__elragEngine.requestInventorySnapshot(); } catch {}
   };
   const usarAsa = (w, e, agora) => {
-    if (cfg.asa === 'off' || (mapaCheffenia(posicao(e)?.mapa) && cfg.cheffeniaTeleporte !== true)) return false;
+    if (cfg.asa === 'off' || (sessaoCheffenia(w, e) && cfg.cheffeniaTeleporte !== true)) return false;
     if (mvpEmCombate(snapshotAp(e), agora)) return false;
     ganchoMochila(w);
     if ((asa.index == null || agora - asa.lidaEm > 120000) && agora - asa.pedidaEm > 20000) {
@@ -1099,9 +1101,9 @@
   };
   const foraDaCidade = (mapa) => Boolean(mapa) && !CIDADES_RE.test(mapa);
   const janelaBloqueiaReligar = (w, mapa) => {
-    if (!String(mapa).includes('@')) return temJanelaAberta(w);
-    // Em instancias, o convite "Voltar para ..." do mapa pode ficar visivel
-    // mesmo depois da entrada; ele nao deve manter o Autopilot desligado.
+    if (!mapaDeRenascer(mapa) && !sessaoCheffenia(w, w.__elragEngine)) return temJanelaAberta(w);
+    // Em mapas especiais, o convite "Voltar para ..." pode permanecer
+    // no HUD depois da entrada e nao deve bloquear o Autopilot.
     return /Renascer agora|Voltar ao ponto de salvamento|Bem-vindo aos servicos Kafra/
       .test(w.document.body?.innerText || '');
   };
@@ -1135,7 +1137,19 @@
       }
     } catch {}
   }, 1000);
-  const mapaCheffenia = (mapa) => /^moro_vol(?:$|[._@])|cheffenia|chefenia/i.test(String(mapa || ''));
+  const mapaCheffenia = (mapa) => /^moro_vol|cheffenia|chefenia/i.test(String(mapa || ''));
+  let hudCheffeniaEm = 0, hudCheffeniaAtivo = false;
+  const sessaoCheffenia = (w, e) => {
+    const mapa = String(posicao(e)?.mapa || '');
+    if (mapaCheffenia(mapa)) return true;
+    if (!mapa || CIDADES_RE.test(mapa)) return false;
+    if (Date.now() - hudCheffeniaEm > 750) {
+      hudCheffeniaEm = Date.now();
+      // Exemplo do visor do jogo: "Chefenia Solo: 53min".
+      hudCheffeniaAtivo = /cheff?enia\s+(?:solo|guild|grupo)\s*:\s*\d+\s*(?:h|min)/i.test(w.document.body?.innerText || '');
+    }
+    return hudCheffeniaAtivo;
+  };
   const visivelCheff = (el) => { const r = el?.getBoundingClientRect?.(); return !!r && r.width > 0 && r.height > 0 && el.ownerDocument.defaultView.getComputedStyle(el).visibility !== 'hidden'; };
   const botaoCheff = (w, re) => [...w.document.querySelectorAll('button,[role="button"]')].find((b) => visivelCheff(b) && !b.disabled && re.test((b.innerText || b.textContent || '').trim().replace(/\s+/g, ' ')) && !b.closest('.fzn-ygg,[data-fzn-auto-voltar]'));
   const esperarCheff = async (fn, tempo = 12000) => { const fim = Date.now() + tempo; do { const v = fn(); if (v) return v; await esperar(250); } while (Date.now() < fim); return null; };
@@ -1203,7 +1217,16 @@
     } catch (err) { log('Cheffenia: recuperacao falhou: ' + String(err).slice(0, 100)); }
     finally { recuperacaoCheffOcupada = false; window.top.__FZN_CHEFF_RECOVERY__ = { active: recuperacaoCheffPendente, desde: Date.now() }; }
   };
-  let apParadoDesde = 0, apReligadoEm = 0;
+  let apParadoDesde = 0, apReligadoEm = 0, entradaCheffeniaVista = false;
+  const ligarAutopilotAoEntrarCheffenia = (w, e, ap, agora, mapa) => {
+    if (!sessaoCheffenia(w, e)) { entradaCheffeniaVista = false; return false; }
+    if (!AUTOPILOT_PARADO.has(Number(ap.runtimeState))) { entradaCheffeniaVista = true; return false; }
+    if (entradaCheffeniaVista || janelaBloqueiaReligar(w, mapa)) return false;
+    entradaCheffeniaVista = true; apParadoDesde = agora; apReligadoEm = agora;
+    try { e.setAutopilotRunning(true); log('Cheffenia: entrada detectada; ligando Autopilot imediatamente'); }
+    catch (err) { log('Cheffenia: nao consegui ligar Autopilot: ' + String(err).slice(0, 80)); }
+    return true;
+  };
   const ciclo = async () => {
     if (!cfg.ligado || (ocupado && !cfg.soMvp)) return;
     const w = jogo();
@@ -1225,7 +1248,9 @@
     try { ap = e.getAutopilotSnapshot(); } catch { return; }
     if (!ap) return;
     const agora = Date.now();
-    if (AUTOPILOT_PARADO.has(ap.runtimeState)) {
+    const mapaAgora = String(posicao(e)?.mapa || '');
+    if (ligarAutopilotAoEntrarCheffenia(w, e, ap, agora, mapaAgora)) return;
+    if (AUTOPILOT_PARADO.has(Number(ap.runtimeState))) {
       if (euDesliguei && agora - euDesliguei < 8000) {
         euDesliguei = 0;
         try { e.setAutopilotRunning(true); log('autopilot parou apos o passo; religado'); } catch {}
@@ -1292,16 +1317,16 @@
         if (mudou || agora - asa.usadaEm > ASA_CHEGADA_MAX_MS) { asa.aguardando = false; naoMvpDesde = 0; }
         else return;
       }
-      if ((!mapaCheffenia(posicao(e)?.mapa) || cfg.cheffeniaTeleporte) && mvpPularAgora && !temJanelaAberta(w)) {
+      if ((!sessaoCheffenia(w, e) || cfg.cheffeniaTeleporte) && mvpPularAgora && !temJanelaAberta(w)) {
         mvpPularAgora = false;
         if (usarAsa(w, e, agora)) { naoMvpDesde = 0; return; }
       }
       mvpPularAgora = false;
       if (!naoMvpDesde) naoMvpDesde = agora;
-      if ((!mapaCheffenia(posicao(e)?.mapa) || cfg.cheffeniaTeleporte) && agora - naoMvpDesde >= SO_MVP_TELEPORTE_MS && !temJanelaAberta(w)) {
+      if ((!sessaoCheffenia(w, e) || cfg.cheffeniaTeleporte) && agora - naoMvpDesde >= SO_MVP_TELEPORTE_MS && !temJanelaAberta(w)) {
         if (usarAsa(w, e, agora)) { log('so MVP: nenhum chefe da ' + (catIds.size ? 'Chefenia' : 'lista fixa') + ' no radar em 0,3 s (' + radarMvp.length + ' mobs) -> asa'); naoMvpDesde = 0; }
       }
-      if (!mapaCheffenia(posicao(e)?.mapa) || cfg.cheffeniaTeleporte) return;
+      if (!sessaoCheffenia(w, e) || cfg.cheffeniaTeleporte) return;
     } else naoMvpDesde = 0;
 
     const posF = posicao(e);
@@ -1418,7 +1443,7 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const cartao = fznCartaoYgg('Auto-hunt', 'v1.64', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
+      const cartao = fznCartaoYgg('Auto-hunt', 'v1.65', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
         cfg.ligado = !cfg.ligado;
