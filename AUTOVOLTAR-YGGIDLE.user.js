@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.68
+// @version      2.69
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -2493,9 +2493,13 @@
           const camera = w.__elragEngine.renderer?.camera || w.__elragEngine.camera;
           const xy = camera?.worldToScreen?.(npc.entidade.position[0], npc.entidade.position[1], 0);
           const r = canvas.getBoundingClientRect();
-          if (!xy || xy.length < 2 || xy[0] < 0 || xy[1] < 0 || xy[0] > r.width || xy[1] > r.height)
-            return segurarRetorno(w, 'Arauto fora da tela; aproxime o personagem para calibrar a entrada');
-          await clicarNoCanvas(w, canvas, r.left + xy[0], r.top + xy[1]);
+          if (!xy || xy.length < 2 || xy[0] < 0 || xy[1] < 0 || xy[0] > r.width || xy[1] > r.height) {
+            if (typeof npc.entidade.onMouseDown !== 'function')
+              return segurarRetorno(w, 'Arauto fora da tela e sem interacao disponivel');
+            npc.entidade.onMouseDown();
+          } else {
+            await clicarNoCanvas(w, canvas, r.left + xy[0], r.top + xy[1]);
+          }
         } catch (e) { log('Cheffenia: clique no Arauto falhou: ' + String(e).slice(0, 80)); }
         entrar = await esperarAte(dialogo, 3000, 200);
       }
@@ -4807,7 +4811,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.68</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.69</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
