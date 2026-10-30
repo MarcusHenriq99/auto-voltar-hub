@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.65
+// @version      2.66
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -2252,7 +2252,7 @@
     if (!p?.mapa || normalizar(p.mapa) === 'prontera' || ocupado) return false;
     // Saidas temporarias de Bio 4/Cheffenia nao mudam o destino da sessao paga.
     if (cfg.conteudo?.modo && cfg.conteudo.modo !== 'normal') return false;
-    if (String(p.mapa).includes('@')) return false;
+    if (String(p.mapa).includes('@') || /^mid_vol/i.test(String(p.mapa))) return false;
     if (cfg.destinoPendente && p.mapa !== cfg.destinoPendente) return false;
     if (cfg.destinoPendente === p.mapa) { delete cfg.destinoPendente; salvarCfg(); }
     // Durante um retorno, um mapa intermediario nao e um novo destino de farm.
@@ -2326,11 +2326,13 @@
     return unique.length===1 ? unique[0] : null;
   };
 
+  const mapaCheffenia = (mapa) => /^(?:moro_vol|mid_vol)/i.test(String(mapa || ''));
   const mapaDoConteudo = () => cfg.conteudo.modo === 'bio4' ? 'lhz_dun04'
     : cfg.conteudo.modo === 'cheffenia' ? 'moro_vol' : null;
   const mapaConfereConteudo = (mapa) => {
     const alvo = mapaDoConteudo();
-    return Boolean(alvo && String(mapa || '').startsWith(alvo));
+    return Boolean(alvo && (cfg.conteudo.modo === 'cheffenia'
+      ? mapaCheffenia(mapa) : String(mapa || '').startsWith(alvo)));
   };
   let ultimoTimerConteudo = 0, timerVencidoLogado = false;
   const vigiarTempoConteudo = (w) => {
@@ -2461,7 +2463,7 @@
   };
 
   const entrarCheffenia = async (w) => {
-    etapa('8/8 Voltando ao mapa', 'Arauto da Cheffenia (moro_vol)');
+    etapa('8/8 Voltando ao mapa', 'Arauto da Cheffenia');
     const dialogo = () => /Arauto da Cheffenia/i.test(w.document.body?.innerText || '') &&
       botaoPorTexto(w.document, (t) => /^Entrar$/i.test(t));
     let entrar = dialogo();
@@ -2495,7 +2497,7 @@
     }
     if (!entrar) return segurarRetorno(w, 'conversa com Arauto da Cheffenia nao abriu');
     entrar.click();
-    const chegou = await esperarAte(() => /^moro_vol/.test(String(posicao(w)?.mapa || '')), 20000, 250);
+    const chegou = await esperarAte(() => mapaCheffenia(posicao(w)?.mapa), 20000, 250);
     if (!chegou) return segurarRetorno(w, 'entrada na Cheffenia sem confirmacao');
     if (!validarChegadaFarm(w)) return false;
     delete cfg.retornoPendente; salvarCfg();
@@ -2747,7 +2749,7 @@
 
   const mapaDeRenascer = (p) => {
     const mapa = normalizar(p?.mapa || ''), nome = normalizar(p?.nome || '');
-    return /^lhz_dun04(\.|$)/.test(mapa) || /chef/.test(mapa) || /^moro_vol(\.|$)/.test(mapa) || mapa.includes('@') || /inv$/.test(mapa) || /chefenia|instancia|covil|invas|maldicao/.test(nome);
+    return /^lhz_dun04(\.|$)/.test(mapa) || /chef/.test(mapa) || mapaCheffenia(mapa) || mapa.includes('@') || /inv$/.test(mapa) || /chefenia|instancia|covil|invas|maldicao/.test(nome);
   };
   const renascerNoLugar = async (w) => {
     ocupado = true;
@@ -3841,7 +3843,7 @@
     if (!cfg.ligado || ocupado) return;
     const cheffRecovery = window.top.__FZN_CHEFF_RECOVERY__;
     const mapaCheff = posicao(w)?.mapa || '';
-    if (cheffRecovery?.active && Date.now() - (cheffRecovery.desde || 0) < 45000 && /^(?:moro_vol|prontera)|cheffenia|chefenia/i.test(mapaCheff)) return;
+    if (cheffRecovery?.active && Date.now() - (cheffRecovery.desde || 0) < 45000 && (mapaCheffenia(mapaCheff) || /^prontera$/i.test(mapaCheff) || /cheffenia|chefenia/i.test(mapaCheff))) return;
     const morreu = morteConfirmada(w);
     if (cfg.covil.ligado) {
       const salvarC = botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento');
@@ -4701,7 +4703,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.65</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.66</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
