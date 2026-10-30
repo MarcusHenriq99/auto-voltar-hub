@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.66
+// @version      2.67
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -249,7 +249,9 @@
     ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
   if (!cfg.backupId) cfg.backupId = novoIdBackup();
   cfg.conteudo = { modo: 'normal', expiraEm: 0, ...(cfg.conteudo || {}) };
-  if (!['normal', 'bio4', 'cheffenia'].includes(cfg.conteudo.modo)) cfg.conteudo.modo = 'normal';
+  if (!['normal', 'bio4', 'cheffenia', 'expedicao'].includes(cfg.conteudo.modo)) cfg.conteudo.modo = 'normal';
+  cfg.expedicaoFase = ['Calabouço I', 'Calabouço II', 'Portal do Abismo'].includes(cfg.expedicaoFase)
+    ? cfg.expedicaoFase : 'Portal do Abismo';
   cfg.lucky = Array.isArray(cfg.lucky) ? cfg.lucky.filter((s) => typeof s === 'string' && s.trim()) : ['Ovo da La Voisin'];
   cfg.rifa = { ligado: false, premios: [], limiteGasto: 0, personagem: '', historico: [], ...(cfg.rifa || {}) };
   delete cfg.rifa.reserva;
@@ -2328,16 +2330,19 @@
 
   const mapaCheffenia = (mapa) => /^(?:moro_vol|mid_vol)/i.test(String(mapa || ''));
   const mapaDoConteudo = () => cfg.conteudo.modo === 'bio4' ? 'lhz_dun04'
-    : cfg.conteudo.modo === 'cheffenia' ? 'moro_vol' : null;
+    : cfg.conteudo.modo === 'cheffenia' ? 'moro_vol'
+    : cfg.conteudo.modo === 'expedicao' ? (cfg.conteudo.mapa || 'expedicao') : null;
   const mapaConfereConteudo = (mapa) => {
     const alvo = mapaDoConteudo();
     return Boolean(alvo && (cfg.conteudo.modo === 'cheffenia'
-      ? mapaCheffenia(mapa) : String(mapa || '').startsWith(alvo)));
+      ? mapaCheffenia(mapa) : cfg.conteudo.modo === 'expedicao'
+        ? Boolean(cfg.conteudo.mapa && mapa === cfg.conteudo.mapa)
+        : String(mapa || '').startsWith(alvo)));
   };
   let ultimoTimerConteudo = 0, timerVencidoLogado = false;
   const vigiarTempoConteudo = (w) => {
     const alvo = mapaDoConteudo();
-    if (!alvo || Date.now() - ultimoTimerConteudo < 3000) return;
+    if (!alvo || cfg.conteudo.modo === 'expedicao' || Date.now() - ultimoTimerConteudo < 3000) return;
     ultimoTimerConteudo = Date.now();
     if (!mapaConfereConteudo(posicao(w)?.mapa)) return;
     const pista = cfg.conteudo.modo === 'bio4' ? /bio\s*4/i : /cheffenia|chefenia/i;
@@ -2506,6 +2511,70 @@
     return true;
   };
 
+  const faseExpedicaoNoTexto = (texto, fase) => {
+    const t = normalizar(texto);
+    return fase === 'Portal do Abismo' ? /portal do abismo/.test(t)
+      : fase === 'Calabouço II' ? /calabouco ii\b/.test(t)
+      : /calabouco i\b/.test(t);
+  };
+  const entradaDaExpedicao = (w) => {
+    const fases = ['Calabouço I', 'Calabouço II', 'Portal do Abismo'];
+    const encontrados = [];
+    for (const b of w.document.querySelectorAll('button')) {
+      if (!visivel(b) || b.disabled || !/^Entrar$/i.test(textoDe(b))) continue;
+      for (let card = b.parentElement, i = 0; card && i < 7; card = card.parentElement, i++) {
+        const texto = textoDe(card);
+        if (!faseExpedicaoNoTexto(texto, cfg.expedicaoFase)) continue;
+        if (fases.filter(f => faseExpedicaoNoTexto(texto, f)).length === 1) encontrados.push(b);
+        break;
+      }
+    }
+    return encontrados.length === 1 ? encontrados[0] : null;
+  };
+  const entrarExpedicao = async (w) => {
+    etapa('8/8 Voltando a Expedição', 'NPC Expedições de Yggdrasil · ' + cfg.expedicaoFase);
+    if (posicao(w)?.mapa !== 'prontera') return segurarRetorno(w, 'Expedição exige entrada pelo NPC em Prontera');
+    let entrar = entradaDaExpedicao(w);
+    if (!entrar) {
+      const manager = await carregarEntidadesNpc(w), canvas = canvasDoJogo(w);
+      if (!manager || !canvas) return segurarRetorno(w, 'NPC da Expedição ou canvas indisponível');
+      let npc = null;
+      manager.forEach((e) => {
+        const c = e?.constructor;
+        const tipoNpc = c && ((Number.isFinite(c.TYPE_NPC) && e.objecttype === c.TYPE_NPC) ||
+          (Number.isFinite(c.TYPE_NPC2) && e.objecttype === c.TYPE_NPC2));
+        if (!tipoNpc || !(e.GID > 0) || e.remove_tick || !e.position) return;
+        if (![e.display?.name, e.name, e._name, e.entityName].some(n => /expedi(?:ç|c)(?:ões|oes) de yggdrasil/i.test(String(n || '')))) return;
+        npc = e;
+      });
+      if (!npc) return segurarRetorno(w, 'NPC Expedições de Yggdrasil não encontrado em Prontera');
+      for (let i = 0; i < 7 && !entrar; i++) {
+        const camera = w.__elragEngine.renderer?.camera || w.__elragEngine.camera;
+        const xy = camera?.worldToScreen?.(npc.position[0], npc.position[1], 0);
+        if (!xy || xy.length < 2) return segurarRetorno(w, 'posição do NPC da Expedição indisponível');
+        const r = canvas.getBoundingClientRect();
+        const x = Math.max(24, Math.min(r.width - 24, xy[0]));
+        const y = Math.max(24, Math.min(r.height - 24, xy[1]));
+        await clicarNoCanvas(w, canvas, r.left + x, r.top + y);
+        entrar = await esperarAte(() => entradaDaExpedicao(w), 2500, 200);
+      }
+    }
+    if (!entrar) return segurarRetorno(w, 'janela da Expedição ou entrada de ' + cfg.expedicaoFase + ' indisponível');
+    entrar.click();
+    const chegou = await esperarAte(() => {
+      const p = posicao(w);
+      return p?.mapa && p.mapa !== 'prontera' ? p : null;
+    }, 20000, 250);
+    if (!chegou) return segurarRetorno(w, 'entrada da Expedição sem confirmação; não tentarei pelo mapa comum');
+    cfg.conteudo.mapa = chegou.mapa;
+    cfg.mapaFarmManual = chegou.mapa;
+    cfg.destinoFarm = { mapa: chegou.mapa, nome: chegou.nome || cfg.expedicaoFase };
+    delete cfg.retornoPendente; salvarCfg();
+    log('Expedição: ' + cfg.expedicaoFase + ' confirmada em ' + chegou.mapa + ' pelo NPC');
+    await religarEconomia(w);
+    return validarChegadaFarm(w);
+  };
+
   const nomeGerenteEventos = (nome) => /gerente (?:de )?(?:eventos?|premios?)|event manager/.test(normalizar(nome));
   const npcGerenteEventos = (manager) => {
     const encontrados = [];
@@ -2606,6 +2675,9 @@
     }
     if (cfg.conteudo.modo === 'bio4' && posicao(w)?.mapa === 'prontera') return entrarBio4(w);
     if (cfg.conteudo.modo === 'cheffenia' && posicao(w)?.mapa === 'prontera') return entrarCheffenia(w);
+    if (cfg.conteudo.modo === 'expedicao' && posicao(w)?.mapa === 'prontera') return entrarExpedicao(w);
+    if (cfg.conteudo.modo !== 'normal')
+      return segurarRetorno(w, 'modo ' + cfg.conteudo.modo + ': entrada somente pelo NPC em Prontera; mapa comum não será usado');
     if(cfg.retornoEvento && posicao(w)?.mapa==='prontera') return entrarNoEvento(w);
     if(codigo==='lhz_dun04' && posicao(w)?.mapa==='prontera') return entrarBio4(w);
 
@@ -4031,17 +4103,19 @@
     if (modo) { modo.textContent = guardarTudo() ? 'Guardar tudo' : 'Vender permitidos'; modo.disabled = ocupado; modo.className = ''; }
     const evento = painel.querySelector('[data-evento]');
     if (evento) { evento.textContent = 'Evento'; evento.disabled = ocupado; evento.className = cfg.retornoEvento ? 'fzn-av--on' : 'fzn-av--off'; evento.setAttribute('aria-pressed', String(Boolean(cfg.retornoEvento))); }
-    for (const modo of ['bio4', 'cheffenia']) {
+    for (const modo of ['bio4', 'cheffenia', 'expedicao']) {
       const botao = painel.querySelector('[data-conteudo="' + modo + '"]');
       if (!botao) continue;
       const ligado = cfg.conteudo.modo === modo;
       const minutos = ligado && cfg.conteudo.expiraEm > Date.now()
         ? ' · ' + Math.ceil((cfg.conteudo.expiraEm - Date.now()) / 60000) + 'min' : '';
-      botao.textContent = (modo === 'bio4' ? 'Bio 4' : 'Cheffenia') + minutos;
+      botao.textContent = (modo === 'bio4' ? 'Bio 4' : modo === 'cheffenia' ? 'Cheffenia' : 'Expedição') + minutos;
       botao.className = ligado ? 'fzn-av--on' : 'fzn-av--off';
       botao.disabled = ocupado;
       botao.setAttribute('aria-pressed', String(ligado));
     }
+    const faseExpedicao = painel.querySelector('[data-expedicao-fase]');
+    if (faseExpedicao) faseExpedicao.value = cfg.expedicaoFase;
     const limites = painel.querySelector('[data-rotina-limites]');
     if (limites) { limites.textContent = 'Rotina por limite'; limites.disabled = ocupado; limites.className = cfg.rotinaLimites === false ? 'fzn-av--off' : 'fzn-av--on'; limites.setAttribute('aria-pressed', String(cfg.rotinaLimites !== false)); }
     const lucky = painel.querySelector('[data-lucky]');
@@ -4058,7 +4132,7 @@
     if (historico) { historico.style.display = detalhesProcesso ? 'block' : 'none'; historico.textContent =
       (cfg.rotinaLimites === false ? 'Rotina por limite OFF: peso e espacos nao iniciam viagens automaticas. Executar agora continua disponivel; morte e falta de suprimentos seguem suas rotinas.\n' : 'Rotina por limite ON: peso inicia em 70%; espacos em 95/100 ou 190/200. Com Ferreiro ON, vai a Prontera para desmantelar antes de guardar e vender.\n') +
       (cfg.retornoEvento ? 'Evento ON: depois da rotina na cidade, fala com o Gerente de Premios e escolhe Ir para o evento. Se falhar, aguarda em Prontera sem usar o mapa-mundi.\n' : '') +
-      (mapaDoConteudo() ? (cfg.conteudo.modo === 'bio4' ? 'Bio 4 ON: tempo acompanhado; retorno pelo Porteiro do Biolaboratorio em Prontera.\n' : 'Cheffenia ON: tempo acompanhado; retorno pelo Arauto em Prontera.\n') : '') +
+      (mapaDoConteudo() ? (cfg.conteudo.modo === 'bio4' ? 'Bio 4 ON: tempo acompanhado; retorno pelo Porteiro do Biolaboratorio em Prontera.\n' : cfg.conteudo.modo === 'cheffenia' ? 'Cheffenia ON: tempo acompanhado; retorno pelo Arauto em Prontera.\n' : 'Expedição ON: ' + cfg.expedicaoFase + '; retorno somente pelo NPC Expedições de Yggdrasil em Prontera.\n') : '') +
       (guardarNoMapa() ? 'Passos: pausar cacada → cartao → guardar tudo no maximo → fechar armazem → conferir peso → cacar no mesmo mapa.\n\n' : venderNoMapa() ? 'Passos: pausar cacada → cartao/guardar protegidos → fechar armazem → Loja de Bolso/vender permitidos → conferir peso → cacar no mesmo mapa.\n\n' : guardarTudo() ? 'Passos: pausar cacada → Prontera/Kafra → guardar tudo no maximo → conferir peso → voltar e cacar.\n\n' : 'Passos: pausar cacada → guardar protegidos → Prontera/Kafra → vender permitidos → comprar → conferir peso → voltar e cacar.\n\n') + historicoLog().slice(-18).join('\n'); }
   };
 
@@ -4655,7 +4729,7 @@
             cfg.destinoFarm = anterior.destinoFarm || null;
             cfg.retornoEvento = Boolean(anterior.retornoEvento);
           } else { cfg.mapaFarmManual = ''; cfg.destinoFarm = null; }
-          if (['lhz_dun04', 'moro_vol'].includes(cfg.mapaFarmManual) && !cfg.retornoEvento) {
+          if (['lhz_dun04', 'moro_vol', 'expedicao'].includes(cfg.mapaFarmManual) && !cfg.retornoEvento) {
             cfg.mapaFarmManual = ''; cfg.destinoFarm = null;
           }
           log('Modo especial desligado; destino anterior restaurado');
@@ -4664,13 +4738,16 @@
             mapaFarmManual: cfg.mapaFarmManual, destinoFarm: cfg.destinoFarm,
             retornoEvento: cfg.retornoEvento
           };
-          cfg.conteudo = { modo, expiraEm: 0, anterior };
-          cfg.mapaFarmManual = modo === 'bio4' ? 'lhz_dun04' : 'moro_vol';
-          cfg.destinoFarm = { mapa: cfg.mapaFarmManual, nome: modo === 'bio4' ? 'Bio 4' : 'Cheffenia' };
+          const p = posicao(jogo());
+          const mapaExpedicao = modo === 'expedicao' && p?.mapa !== 'prontera' &&
+            faseExpedicaoNoTexto(p?.nome || '', cfg.expedicaoFase) ? p.mapa : '';
+          cfg.conteudo = { modo, expiraEm: 0, anterior, ...(modo === 'expedicao' ? { mapa: mapaExpedicao } : {}) };
+          cfg.mapaFarmManual = modo === 'bio4' ? 'lhz_dun04' : modo === 'cheffenia' ? 'moro_vol' : (mapaExpedicao || 'expedicao');
+          cfg.destinoFarm = { mapa: cfg.mapaFarmManual, nome: modo === 'bio4' ? 'Bio 4' : modo === 'cheffenia' ? 'Cheffenia' : cfg.expedicaoFase };
           cfg.retornoEvento = false;
           cfg.ligado = true;
           recuperacao = null; vigia = null; chegadaAtrasada = null;
-          log('Modo ' + (modo === 'bio4' ? 'Bio 4' : 'Cheffenia') + ' ligado: retorno pelo NPC de Prontera');
+          log('Modo ' + (modo === 'bio4' ? 'Bio 4' : modo === 'cheffenia' ? 'Cheffenia' : 'Expedição · ' + cfg.expedicaoFase) + ' ligado: retorno pelo NPC de Prontera');
         }
         salvarCfg(); atualizarPainel();
       };
@@ -4680,6 +4757,27 @@
       const cheffenia = document.createElement('button'); estilo(cheffenia); cheffenia.dataset.conteudo = 'cheffenia';
       cheffenia.title = 'Retorna pelo Arauto da Cheffenia enquanto o tempo estiver ativo.';
       cheffenia.addEventListener('click', () => alternarConteudo('cheffenia'));
+      const expedicao = document.createElement('button'); estilo(expedicao); expedicao.dataset.conteudo = 'expedicao';
+      expedicao.title = 'Retorna pelo NPC Expedições de Yggdrasil em Prontera, nunca pelo mapa comum.';
+      expedicao.addEventListener('click', () => alternarConteudo('expedicao'));
+      const faseExpedicao = document.createElement('select'); faseExpedicao.dataset.expedicaoFase = '1';
+      faseExpedicao.title = 'Mapa da Expedição para voltar pelo NPC';
+      Object.assign(faseExpedicao.style, { background: '#172a3b', color: '#f2eedc', border: '1px solid #66829a', borderRadius: '8px', padding: '5px' });
+      for (const nome of ['Calabouço I', 'Calabouço II', 'Portal do Abismo']) {
+        const option = document.createElement('option'); option.value = nome; option.textContent = nome; faseExpedicao.appendChild(option);
+      }
+      faseExpedicao.value = cfg.expedicaoFase;
+      faseExpedicao.addEventListener('change', () => {
+        if (ocupado) { faseExpedicao.value = cfg.expedicaoFase; return; }
+        cfg.expedicaoFase = faseExpedicao.value;
+        if (cfg.conteudo.modo === 'expedicao') {
+          const p = posicao(jogo());
+          cfg.conteudo.mapa = p?.mapa !== 'prontera' && faseExpedicaoNoTexto(p?.nome || '', cfg.expedicaoFase) ? p.mapa : '';
+          cfg.mapaFarmManual = cfg.conteudo.mapa || 'expedicao';
+          cfg.destinoFarm = { mapa: cfg.mapaFarmManual, nome: cfg.expedicaoFase };
+        }
+        salvarCfg(); atualizarPainel();
+      });
       const limites = document.createElement('button'); estilo(limites); limites.dataset.rotinaLimites = '1';
       limites.title = 'ON: aos 70% de peso ou 95% dos espacos, processa no mapa se Cartao Kafra e Loja de Bolso estiverem ativos, ou faz a rotina da cidade. OFF: continua a cacada mesmo acima desses limites; Executar agora ainda funciona. Salvo por conta.';
       limites.addEventListener('click', () => { if (ocupado) return; cfg.rotinaLimites = cfg.rotinaLimites === false; salvarCfg(); log('Rotina automatica por peso e espacos ' + (cfg.rotinaLimites ? 'ligada' : 'desligada') + ' nesta conta'); atualizarStatus(); });
@@ -4698,12 +4796,12 @@
       const gaveta = document.createElement('div'); gaveta.className = 'fzn-av__gaveta'; gaveta.dataset.gaveta = '1';
       gaveta.append(
         grupo('Rotina', limites, modoInventario, cartaoFarm, bolso, ferreiro, evento),
-        grupo('Extras', bio4, cheffenia, covilBtn, rifaLiga, lucky),
+        grupo('Extras', bio4, cheffenia, expedicao, faseExpedicao, covilBtn, rifaLiga, lucky),
         grupo('Configurar', mapaFarm, compras, venda, rifaBtn, calibrar, importar));
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.66</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.67</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
