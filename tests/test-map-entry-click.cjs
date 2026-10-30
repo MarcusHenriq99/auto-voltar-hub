@@ -43,7 +43,7 @@ const document = {
   body: { innerText: '' },
 };
 const w = { document, HTMLInputElement: Input, Event: class { constructor(type) { this.type = type; } }, MouseEvent: class { constructor(type) { this.type = type; } } };
-const cfg = { ligado: true, mapaFarmManual: 'mag_dun02', destinoFarm: { mapa: 'mag_dun02' }, retornoEvento: false };
+const cfg = { ligado: true, mapaFarmManual: 'mag_dun02', destinoFarm: { mapa: 'mag_dun02' }, retornoEvento: false, conteudo: { modo: 'normal', expiraEm: 0 } };
 const context = {
   cfg, visivel: el => el.visible, textoDe: el => el.label || el.innerText || '',
   posicao: () => ({ mapa: map }), mapaDeRenascer: () => false,
@@ -64,4 +64,3 @@ context.returnToMap(w).then(ok => {
   assert.equal(map, 'mag_dun02');
   console.log('OK: mapa exato, botao encoberto e confirmacao antes oculta.');
 }).catch(error => { console.error(error); process.exitCode = 1; });
-
