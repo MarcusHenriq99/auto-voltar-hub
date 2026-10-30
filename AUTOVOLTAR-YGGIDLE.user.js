@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.63
+// @version      2.65
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -248,6 +248,8 @@
   const novoIdBackup = () => (typeof globalThis.crypto?.randomUUID === 'function'
     ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
   if (!cfg.backupId) cfg.backupId = novoIdBackup();
+  cfg.conteudo = { modo: 'normal', expiraEm: 0, ...(cfg.conteudo || {}) };
+  if (!['normal', 'bio4', 'cheffenia'].includes(cfg.conteudo.modo)) cfg.conteudo.modo = 'normal';
   cfg.lucky = Array.isArray(cfg.lucky) ? cfg.lucky.filter((s) => typeof s === 'string' && s.trim()) : ['Ovo da La Voisin'];
   cfg.rifa = { ligado: false, premios: [], limiteGasto: 0, personagem: '', historico: [], ...(cfg.rifa || {}) };
   delete cfg.rifa.reserva;
@@ -2248,6 +2250,8 @@
   const sincronizarMapaAtual = (w) => {
     const p = posicao(w);
     if (!p?.mapa || normalizar(p.mapa) === 'prontera' || ocupado) return false;
+    // Saidas temporarias de Bio 4/Cheffenia nao mudam o destino da sessao paga.
+    if (cfg.conteudo?.modo && cfg.conteudo.modo !== 'normal') return false;
     if (String(p.mapa).includes('@')) return false;
     if (cfg.destinoPendente && p.mapa !== cfg.destinoPendente) return false;
     if (cfg.destinoPendente === p.mapa) { delete cfg.destinoPendente; salvarCfg(); }
@@ -2298,7 +2302,8 @@
   };
   const validarChegadaFarm = (w) => {
     const destino = cfg.destinoFarm, atual = posicao(w);
-    if (!destino?.mapa || !atual?.mapa || atual.mapa !== destino.mapa)
+    if (!destino?.mapa || !atual?.mapa ||
+        (atual.mapa !== destino.mapa && !mapaConfereConteudo(atual.mapa)))
       return segurarRetorno(w, 'mapa de chegada ' + (atual?.mapa || '?') + '; esperado ' + (destino?.mapa || '?'));
     return true;
   };
@@ -2321,6 +2326,43 @@
     return unique.length===1 ? unique[0] : null;
   };
 
+  const mapaDoConteudo = () => cfg.conteudo.modo === 'bio4' ? 'lhz_dun04'
+    : cfg.conteudo.modo === 'cheffenia' ? 'moro_vol' : null;
+  const mapaConfereConteudo = (mapa) => {
+    const alvo = mapaDoConteudo();
+    return Boolean(alvo && String(mapa || '').startsWith(alvo));
+  };
+  let ultimoTimerConteudo = 0, timerVencidoLogado = false;
+  const vigiarTempoConteudo = (w) => {
+    const alvo = mapaDoConteudo();
+    if (!alvo || Date.now() - ultimoTimerConteudo < 3000) return;
+    ultimoTimerConteudo = Date.now();
+    if (!mapaConfereConteudo(posicao(w)?.mapa)) return;
+    const pista = cfg.conteudo.modo === 'bio4' ? /bio\s*4/i : /cheffenia|chefenia/i;
+    for (const el of w.document.querySelectorAll('div, span')) {
+      if (!visivel(el) || el.closest?.('[data-fzn-auto-voltar]')) continue;
+      const s = (el.innerText || el.textContent || '').trim();
+      if (s.length > 90 || !pista.test(s) || !/\d+\s*(?:h|min|s)\b/i.test(s)) continue;
+      const h = Number(/(\d+)\s*h\b/i.exec(s)?.[1] || 0);
+      const m = Number(/(\d+)\s*min\b/i.exec(s)?.[1] || 0);
+      const seg = Number(/(\d+)\s*s\b/i.exec(s)?.[1] || 0);
+      const resto = h * 3600 + m * 60 + seg;
+      if (resto <= 0 || resto > 86400) continue;
+      // O visor arredonda para minutos; a margem evita encerrar a sessao
+      // quase um minuto antes de o jogo liberar a ultima entrada.
+      const expira = Date.now() + resto * 1000 + (seg ? 0 : 60000);
+      if (Math.abs(expira - Number(cfg.conteudo.expiraEm || 0)) > 60000) {
+        cfg.conteudo.expiraEm = expira; salvarCfg();
+        log((cfg.conteudo.modo === 'bio4' ? 'Bio 4' : 'Cheffenia') + ': tempo restante ' + Math.ceil(resto / 60) + ' min');
+      }
+      timerVencidoLogado = false;
+      return;
+    }
+  };
+  const tempoConteudoEsgotado = () => {
+    const expira = Number(cfg.conteudo.expiraEm || 0);
+    return Boolean(mapaDoConteudo() && expira && Date.now() >= expira);
+  };
   const PORTEIRO_BIO4 = [170, 184];
   cfg.caminhoBio4 = cfg.caminhoBio4 && typeof cfg.caminhoBio4 === 'object' ? cfg.caminhoBio4 : {};
   if (cfg.caminhoBio4Alvo !== "170,184") {
@@ -2366,22 +2408,43 @@
     return false;
   };
 
+  const aproximarPorteiro = async (w) => {
+    const canvas = canvasDoJogo(w), p = posicao(w);
+    if (!canvas || !p || p.mapa !== 'prontera') return false;
+    const camera = w.__elragEngine.renderer?.camera || w.__elragEngine.camera;
+    const destino = camera?.worldToScreen?.(...PORTEIRO_BIO4, 0);
+    if (!destino || destino.length < 2) return false;
+    const r = canvas.getBoundingClientRect();
+    const x = Math.min(r.width - 25, Math.max(25, destino[0]));
+    const y = Math.min(r.height - 25, Math.max(25, destino[1]));
+    log('Bio 4: aproximando do Porteiro em Prontera (170,184)');
+    await clicarNoCanvas(w, canvas, r.left + x, r.top + y);
+    return Boolean(await esperarAte(() => {
+      const atual = posicao(w);
+      return atual && (atual.x !== p.x || atual.y !== p.y);
+    }, 4500, 250));
+  };
+
   const entrarBio4 = async (w) => {
     etapa('8/8 Voltando ao mapa', 'Porteiro do Biolaboratorio (lhz_dun04)');
     let abriu = await falarComPorteiro(w);
     if (!abriu) {
       const partida = posicao(w);
       const ponto = partida && cfg.caminhoBio4[chaveCelula(partida)];
-      if (!ponto) return segurarRetorno(w, 'Porteiro fora de alcance: calibre o "Caminho Bio4" (Calibrar) estando em ' + (partida ? chaveCelula(partida) : '?'));
       const canvas = canvasDoJogo(w);
       if (!canvas) return segurarRetorno(w, 'canvas do jogo nao encontrado para andar ate o Porteiro');
-      const r = canvas.getBoundingClientRect();
-      log('Bio4: andando pelo clique calibrado (' + ponto.dx + ',' + ponto.dy + ') a partir de ' + chaveCelula(partida));
-      await clicarNoCanvas(w, canvas, r.left + r.width / 2 + ponto.dx, r.top + r.height / 2 + ponto.dy);
-      await esperarAte(() => { const q = posicao(w); return q && chaveCelula(q) !== chaveCelula(partida); }, 4000, 200);
-      for (let i = 0; i < 6 && !abriu; i++) { await esperar(1500); abriu = await falarComPorteiro(w); }
+      if (ponto) {
+        const r = canvas.getBoundingClientRect();
+        log('Bio4: andando pelo clique calibrado (' + ponto.dx + ',' + ponto.dy + ') a partir de ' + chaveCelula(partida));
+        await clicarNoCanvas(w, canvas, r.left + r.width / 2 + ponto.dx, r.top + r.height / 2 + ponto.dy);
+        await esperarAte(() => { const q = posicao(w); return q && chaveCelula(q) !== chaveCelula(partida); }, 4000, 200);
+      }
+      for (let i = 0; i < 6 && !abriu; i++) {
+        abriu = await falarComPorteiro(w);
+        if (!abriu) await aproximarPorteiro(w);
+      }
     }
-    if (!abriu) return segurarRetorno(w, 'conversa com o Porteiro do Biolaboratorio nao abriu');
+    if (!abriu) return segurarRetorno(w, 'conversa com o Porteiro do Biolaboratorio nao abriu; calibre o Caminho Bio4 se o acesso mudou');
     const entrar4 = await esperarAte(() => botaoPorTexto(w.document, (t) => /^Entrar no 4.? andar agora/i.test(t)), 3000);
     if (!entrar4) {
       try { w.__elragEngine.cancelNpcDialog?.(); } catch {}
@@ -2395,6 +2458,50 @@
     if (!chegou) return segurarRetorno(w, 'entrada na lhz_dun04 sem confirmacao');
     if (!validarChegadaFarm(w)) return false;
     delete cfg.retornoPendente; salvarCfg(); log('Retorno confirmado: lhz_dun04 pelo Porteiro'); await religarEconomia(w); return true;
+  };
+
+  const entrarCheffenia = async (w) => {
+    etapa('8/8 Voltando ao mapa', 'Arauto da Cheffenia (moro_vol)');
+    const dialogo = () => /Arauto da Cheffenia/i.test(w.document.body?.innerText || '') &&
+      botaoPorTexto(w.document, (t) => /^Entrar$/i.test(t));
+    let entrar = dialogo();
+    if (!entrar) {
+      const manager = await carregarEntidadesNpc(w);
+      const canvas = canvasDoJogo(w);
+      if (!manager || !canvas) return segurarRetorno(w, 'Arauto da Cheffenia ou canvas indisponivel');
+      let npc = null;
+      const personagem = posicao(w);
+      manager.forEach((e) => {
+        const c = e?.constructor;
+        const tipoNpc = c && ((Number.isFinite(c.TYPE_NPC) && e.objecttype === c.TYPE_NPC) ||
+          (Number.isFinite(c.TYPE_NPC2) && e.objecttype === c.TYPE_NPC2));
+        if (!tipoNpc || !(e.GID > 0) || e.remove_tick || !e.position) return;
+        if (![e.display?.name, e.name, e._name, e.entityName].some((s) => /Arauto da Cheffenia/i.test(String(s || '')))) return;
+        const distancia = personagem ? Math.hypot(e.position[0] - personagem.x, e.position[1] - personagem.y) : 0;
+        if (!npc || distancia < npc.distancia) npc = { entidade: e, distancia };
+      });
+      if (!npc) return segurarRetorno(w, 'Arauto da Cheffenia nao encontrado em Prontera');
+      for (let i = 0; i < 3 && !entrar; i++) {
+        try {
+          const camera = w.__elragEngine.renderer?.camera || w.__elragEngine.camera;
+          const xy = camera?.worldToScreen?.(npc.entidade.position[0], npc.entidade.position[1], 0);
+          const r = canvas.getBoundingClientRect();
+          if (!xy || xy.length < 2 || xy[0] < 0 || xy[1] < 0 || xy[0] > r.width || xy[1] > r.height)
+            return segurarRetorno(w, 'Arauto fora da tela; aproxime o personagem para calibrar a entrada');
+          await clicarNoCanvas(w, canvas, r.left + xy[0], r.top + xy[1]);
+        } catch (e) { log('Cheffenia: clique no Arauto falhou: ' + String(e).slice(0, 80)); }
+        entrar = await esperarAte(dialogo, 3000, 200);
+      }
+    }
+    if (!entrar) return segurarRetorno(w, 'conversa com Arauto da Cheffenia nao abriu');
+    entrar.click();
+    const chegou = await esperarAte(() => /^moro_vol/.test(String(posicao(w)?.mapa || '')), 20000, 250);
+    if (!chegou) return segurarRetorno(w, 'entrada na Cheffenia sem confirmacao');
+    if (!validarChegadaFarm(w)) return false;
+    delete cfg.retornoPendente; salvarCfg();
+    log('Retorno confirmado: Cheffenia pelo Arauto');
+    await religarEconomia(w);
+    return true;
   };
 
   const nomeGerenteEventos = (nome) => /gerente (?:de )?(?:eventos?|premios?)|event manager/.test(normalizar(nome));
@@ -2482,14 +2589,21 @@
       const antigo = historicoLog().map((l) => /pesquisa exata ([a-z0-9_]+)/.exec(l)?.[1]).filter(Boolean).pop();
       if (antigo) { cfg.destinoFarm = { mapa: antigo, nome: antigo }; salvarCfg(); log('Mapa de farm recuperado do historico: ' + antigo + ' (o covil tinha gravado ' + '1@tower)'); }
     }
-    const codigo=cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
+    const codigo=mapaDoConteudo() || cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
     if((!cfg.retornoEvento || posicao(w)?.mapa !== 'prontera') && (!codigo || !/^[a-z0-9_]+$/.test(codigo))) return segurarRetorno(w,'configure o codigo em Mapa de farm');
     if(codigo && /^[a-z0-9_]+$/.test(codigo)) { cfg.destinoFarm={...cfg.destinoFarm,mapa:codigo};salvarCfg(); }
     etapa('7/8 Conferindo retorno','Peso precisa estar abaixo de '+limiteSeguro()+'%');
     if(!await fecharArmazem(w)) return segurarRetorno(w,'armazem nao fechou antes do retorno');
     if(!cfg.ligado || !await pesoSeguroParaVoltar(w)) return false;
-    if(posicao(w)?.mapa===codigo) return true;
+    if(posicao(w)?.mapa===codigo || mapaConfereConteudo(posicao(w)?.mapa)) return true;
     await sairDaEconomia(w);
+    if (tempoConteudoEsgotado()) {
+      if (!timerVencidoLogado) { log('Tempo de ' + cfg.conteudo.modo + ' esgotado; nao tentarei uma nova entrada paga'); timerVencidoLogado = true; }
+      etapa('Aguardando', 'Tempo do conteudo esgotado; escolha outro modo ou entre manualmente');
+      return false;
+    }
+    if (cfg.conteudo.modo === 'bio4' && posicao(w)?.mapa === 'prontera') return entrarBio4(w);
+    if (cfg.conteudo.modo === 'cheffenia' && posicao(w)?.mapa === 'prontera') return entrarCheffenia(w);
     if(cfg.retornoEvento && posicao(w)?.mapa==='prontera') return entrarNoEvento(w);
     if(codigo==='lhz_dun04' && posicao(w)?.mapa==='prontera') return entrarBio4(w);
 
@@ -2642,7 +2756,15 @@
       const retomar = autopilotLigado(w) || !!botaoHunt(w, true) || huntsPausados.has(w);
       await sairDaEconomia(w);
       const achar = () => botaoPorTexto(w.document, (t) => /^Renascer agora/i.test(t));
-      let renascer = await esperarAte(achar, 10000, 250);
+      let renascer = await esperarAte(achar, mapaConfereConteudo(p?.mapa) ? 3000 : 10000, 250);
+      if (!renascer && mapaConfereConteudo(p?.mapa)) {
+        const salvar = botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento');
+        if (salvar) {
+          log('Renascer agora indisponivel; voltando ao salvamento para retornar pelo NPC');
+          await aoMorrer(w, salvar);
+          return;
+        }
+      }
       if (!renascer) log('Renascer: nao apareceu em 10 s; retentando a cada 1 s');
       for (let i = 0; !renascer && i < 110; i++) {
         if (!/Renascer agora|Voltar ao ponto de salvamento/.test(w.document.body.innerText || '')) { log('Renascer: a tela de morte fechou sozinha'); return; }
@@ -2860,7 +2982,7 @@
     try {
       r.tentativas++;
       const destino = cfg.destinoFarm?.mapa;
-      if (destino && p.mapa === destino) {
+      if (destino && (p.mapa === destino || mapaConfereConteudo(p.mapa))) {
         log('Recuperando (' + r.tentativas + '): ja estou no mapa de farm; religando a cacada');
         recuperacao = null;
         if (await fecharArmazem(w)) {
@@ -3176,13 +3298,13 @@
   const vigiarCidadeSemRotina = (w) => {
     const p = posicao(w);
     const naCidade = normalizar(p?.mapa || '') === 'prontera';
-    const destino = cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
+    const destino = mapaDoConteudo() || cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
     if (!naCidade || !destino || recuperacao || vigia || chegadaAtrasada || cfg.retornoPendente) {
       cidadeSemRotinaDesde = 0;
       return false;
     }
     if (!cidadeSemRotinaDesde) { cidadeSemRotinaDesde = Date.now(); return false; }
-    if (Date.now() - cidadeSemRotinaDesde < 5000) return false;
+    if (Date.now() - cidadeSemRotinaDesde < (mapaDoConteudo() ? 1000 : 5000)) return false;
     cidadeSemRotinaDesde = 0;
     log('Prontera sem rotina ativa por 5 s; retomando o retorno a ' + destino);
     etapa('Recuperando', 'Em Prontera com Auto-voltar ON; retomando Kafra, venda e retorno a ' + destino);
@@ -3194,9 +3316,9 @@
     const agora = Date.now();
     if (agora - ultimaConferenciaFarmEm < 5000) return;
     ultimaConferenciaFarmEm = agora;
-    const p = posicao(w), destino = cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
+    const p = posicao(w), destino = mapaDoConteudo() || cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
     if (!p?.mapa || !destino || cfg.covil.ligado || rifaRodando) { foraFarmDesde = 0; return; }
-    if (p.mapa === destino) {
+    if (p.mapa === destino || mapaConfereConteudo(p.mapa)) {
       if (foraFarmDesde) log('Conferencia do farm: destino confirmado em ' + destino);
       foraFarmDesde = 0;
       return;
@@ -3208,7 +3330,7 @@
       log('Conferencia do farm: em ' + p.mapa + ', destino ' + destino + '; verificarei o retorno');
       return;
     }
-    if (agora - foraFarmDesde < 15000 || recuperacao || vigia || chegadaAtrasada || ocupado) return;
+    if (agora - foraFarmDesde < (mapaDoConteudo() ? 1500 : 15000) || recuperacao || vigia || chegadaAtrasada || ocupado) return;
     etapa('Recuperando', 'Fora do mapa de farm: ' + p.mapa + '; retorno a ' + destino);
     log('Conferencia do farm: fora de ' + destino + ' por ' + Math.round((agora - foraFarmDesde) / 1000) + ' s; iniciando retorno');
     recuperacao = { motivo: 'fora do mapa de farm', desde: agora, ultimaEm: agora - 20000, tentativas: 0, retomarAutopilot: true };
@@ -3679,6 +3801,7 @@
     document.body.appendChild(menu);rifaMenu=menu;
     fznArrastavel(menu,topo,'fzn-rifa-ygg-pos-v1');
   };
+  let renascimentoImediatoPendente = false, ultimoCliqueRenascer = 0;
   const verificar = () => {
     atualizarPainel();
     const w = jogo();
@@ -3696,7 +3819,25 @@
     ligarCalibracao(w);
     instalarGanchos(w);
     vigiarLucky();
+    vigiarTempoConteudo(w);
     vigiarRifa(w);
+    // A tela de tres mortes oferece Renascer agora. Trate-a antes de uma
+    // rotina ocupada deixar o personagem esperando no menu.
+    if (cfg.ligado && mapaDeRenascer(posicao(w)) && !window.top.__FZN_CHEFF_RECOVERY__?.active) {
+      const renascer = botaoPorTexto(w.document, (t) => /^Renascer agora/i.test(t));
+      if (renascer && morteConfirmada(w) && Date.now() - ultimoCliqueRenascer > 1500) {
+        ultimoCliqueRenascer = Date.now(); renascimentoImediatoPendente = true;
+        log('Morte em mapa especial: clicando Renascer agora imediatamente');
+        renascer.click();
+        return;
+      }
+      if (renascimentoImediatoPendente && !morteConfirmada(w) && !ocupado) {
+        renascimentoImediatoPendente = false;
+        void retomarCacada(w);
+        return;
+      }
+      if (renascimentoImediatoPendente && Date.now() - ultimoCliqueRenascer < 2500) return;
+    } else if (!mapaDeRenascer(posicao(w))) renascimentoImediatoPendente = false;
     if (!cfg.ligado || ocupado) return;
     const cheffRecovery = window.top.__FZN_CHEFF_RECOVERY__;
     const mapaCheff = posicao(w)?.mapa || '';
@@ -3717,7 +3858,7 @@
       const p0 = posicao(w);
       if (p0?.mapa) {
         posicaoInicialVista = true;
-        const destino = cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
+        const destino = mapaDoConteudo() || cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
         if (normalizar(p0.mapa) === 'prontera' && (destino || cfg.retornoEvento) && !recuperacao) {
           log('Carreguei em Prontera; retorno ' + (cfg.retornoEvento ? 'pelo Gerente de Eventos' : 'ao mapa de farm ' + destino) + ': iniciando em instantes');
           recuperacao = { motivo: 'carregou na cidade', desde: Date.now(), ultimaEm: Date.now() - 15000, tentativas: 0, retomarAutopilot: true };
@@ -3862,7 +4003,7 @@
     const controles = painel.querySelector('[data-controles]');
     if (controles) controles.style.display = controlesAbertos ? 'flex' : 'none';
     const w = jogo(), peso = w && lerPeso(w), mapaAtual = w && posicao(w)?.mapa;
-    const destinoAtual = cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
+    const destinoAtual = mapaDoConteudo() || cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
     const texto = painel.querySelector('[data-status]');
     if (texto) texto.textContent = andamento.etapa + ' · Peso ' + (peso ? peso.pct.toFixed(0) + '%' : '?') +
       (destinoAtual ? ' · Farm: ' + destinoAtual : '') +
@@ -3888,6 +4029,17 @@
     if (modo) { modo.textContent = guardarTudo() ? 'Guardar tudo' : 'Vender permitidos'; modo.disabled = ocupado; modo.className = ''; }
     const evento = painel.querySelector('[data-evento]');
     if (evento) { evento.textContent = 'Evento'; evento.disabled = ocupado; evento.className = cfg.retornoEvento ? 'fzn-av--on' : 'fzn-av--off'; evento.setAttribute('aria-pressed', String(Boolean(cfg.retornoEvento))); }
+    for (const modo of ['bio4', 'cheffenia']) {
+      const botao = painel.querySelector('[data-conteudo="' + modo + '"]');
+      if (!botao) continue;
+      const ligado = cfg.conteudo.modo === modo;
+      const minutos = ligado && cfg.conteudo.expiraEm > Date.now()
+        ? ' · ' + Math.ceil((cfg.conteudo.expiraEm - Date.now()) / 60000) + 'min' : '';
+      botao.textContent = (modo === 'bio4' ? 'Bio 4' : 'Cheffenia') + minutos;
+      botao.className = ligado ? 'fzn-av--on' : 'fzn-av--off';
+      botao.disabled = ocupado;
+      botao.setAttribute('aria-pressed', String(ligado));
+    }
     const limites = painel.querySelector('[data-rotina-limites]');
     if (limites) { limites.textContent = 'Rotina por limite'; limites.disabled = ocupado; limites.className = cfg.rotinaLimites === false ? 'fzn-av--off' : 'fzn-av--on'; limites.setAttribute('aria-pressed', String(cfg.rotinaLimites !== false)); }
     const lucky = painel.querySelector('[data-lucky]');
@@ -3904,6 +4056,7 @@
     if (historico) { historico.style.display = detalhesProcesso ? 'block' : 'none'; historico.textContent =
       (cfg.rotinaLimites === false ? 'Rotina por limite OFF: peso e espacos nao iniciam viagens automaticas. Executar agora continua disponivel; morte e falta de suprimentos seguem suas rotinas.\n' : 'Rotina por limite ON: peso inicia em 70%; espacos em 95/100 ou 190/200. Com Ferreiro ON, vai a Prontera para desmantelar antes de guardar e vender.\n') +
       (cfg.retornoEvento ? 'Evento ON: depois da rotina na cidade, fala com o Gerente de Premios e escolhe Ir para o evento. Se falhar, aguarda em Prontera sem usar o mapa-mundi.\n' : '') +
+      (mapaDoConteudo() ? (cfg.conteudo.modo === 'bio4' ? 'Bio 4 ON: tempo acompanhado; retorno pelo Porteiro do Biolaboratorio em Prontera.\n' : 'Cheffenia ON: tempo acompanhado; retorno pelo Arauto em Prontera.\n') : '') +
       (guardarNoMapa() ? 'Passos: pausar cacada → cartao → guardar tudo no maximo → fechar armazem → conferir peso → cacar no mesmo mapa.\n\n' : venderNoMapa() ? 'Passos: pausar cacada → cartao/guardar protegidos → fechar armazem → Loja de Bolso/vender permitidos → conferir peso → cacar no mesmo mapa.\n\n' : guardarTudo() ? 'Passos: pausar cacada → Prontera/Kafra → guardar tudo no maximo → conferir peso → voltar e cacar.\n\n' : 'Passos: pausar cacada → guardar protegidos → Prontera/Kafra → vender permitidos → comprar → conferir peso → voltar e cacar.\n\n') + historicoLog().slice(-18).join('\n'); }
   };
 
@@ -4490,6 +4643,41 @@
       const evento = document.createElement('button'); estilo(evento); evento.dataset.evento = '1';
       evento.title = 'ON: apos curar, guardar e vender em Prontera, fala com o Gerente de Premios e escolhe Ir para o evento. OFF: retorna pelo mapa de farm configurado. Salvo por conta.';
       evento.addEventListener('click', () => { if (ocupado) return; cfg.retornoEvento = !cfg.retornoEvento; salvarCfg(); log('Retorno pelo Gerente de Eventos ' + (cfg.retornoEvento ? 'ligado' : 'desligado')); atualizarStatus(); });
+      const alternarConteudo = (modo) => {
+        if (ocupado) return;
+        if (cfg.conteudo.modo === modo) {
+          const anterior = cfg.conteudo.anterior;
+          cfg.conteudo = { modo: 'normal', expiraEm: 0 };
+          if (anterior) {
+            cfg.mapaFarmManual = anterior.mapaFarmManual || '';
+            cfg.destinoFarm = anterior.destinoFarm || null;
+            cfg.retornoEvento = Boolean(anterior.retornoEvento);
+          } else { cfg.mapaFarmManual = ''; cfg.destinoFarm = null; }
+          if (['lhz_dun04', 'moro_vol'].includes(cfg.mapaFarmManual) && !cfg.retornoEvento) {
+            cfg.mapaFarmManual = ''; cfg.destinoFarm = null;
+          }
+          log('Modo especial desligado; destino anterior restaurado');
+        } else {
+          const anterior = cfg.conteudo.anterior || {
+            mapaFarmManual: cfg.mapaFarmManual, destinoFarm: cfg.destinoFarm,
+            retornoEvento: cfg.retornoEvento
+          };
+          cfg.conteudo = { modo, expiraEm: 0, anterior };
+          cfg.mapaFarmManual = modo === 'bio4' ? 'lhz_dun04' : 'moro_vol';
+          cfg.destinoFarm = { mapa: cfg.mapaFarmManual, nome: modo === 'bio4' ? 'Bio 4' : 'Cheffenia' };
+          cfg.retornoEvento = false;
+          cfg.ligado = true;
+          recuperacao = null; vigia = null; chegadaAtrasada = null;
+          log('Modo ' + (modo === 'bio4' ? 'Bio 4' : 'Cheffenia') + ' ligado: retorno pelo NPC de Prontera');
+        }
+        salvarCfg(); atualizarPainel();
+      };
+      const bio4 = document.createElement('button'); estilo(bio4); bio4.dataset.conteudo = 'bio4';
+      bio4.title = 'Retorna pelo Porteiro do Biolaboratorio enquanto o tempo da Bio 4 estiver ativo. Caminho pode ser calibrado em Calibrar.';
+      bio4.addEventListener('click', () => alternarConteudo('bio4'));
+      const cheffenia = document.createElement('button'); estilo(cheffenia); cheffenia.dataset.conteudo = 'cheffenia';
+      cheffenia.title = 'Retorna pelo Arauto da Cheffenia enquanto o tempo estiver ativo.';
+      cheffenia.addEventListener('click', () => alternarConteudo('cheffenia'));
       const limites = document.createElement('button'); estilo(limites); limites.dataset.rotinaLimites = '1';
       limites.title = 'ON: aos 70% de peso ou 95% dos espacos, processa no mapa se Cartao Kafra e Loja de Bolso estiverem ativos, ou faz a rotina da cidade. OFF: continua a cacada mesmo acima desses limites; Executar agora ainda funciona. Salvo por conta.';
       limites.addEventListener('click', () => { if (ocupado) return; cfg.rotinaLimites = cfg.rotinaLimites === false; salvarCfg(); log('Rotina automatica por peso e espacos ' + (cfg.rotinaLimites ? 'ligada' : 'desligada') + ' nesta conta'); atualizarStatus(); });
@@ -4508,12 +4696,12 @@
       const gaveta = document.createElement('div'); gaveta.className = 'fzn-av__gaveta'; gaveta.dataset.gaveta = '1';
       gaveta.append(
         grupo('Rotina', limites, modoInventario, cartaoFarm, bolso, ferreiro, evento),
-        grupo('Extras', covilBtn, rifaLiga, lucky),
+        grupo('Extras', bio4, cheffenia, covilBtn, rifaLiga, lucky),
         grupo('Configurar', mapaFarm, compras, venda, rifaBtn, calibrar, importar));
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.63</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.65</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
