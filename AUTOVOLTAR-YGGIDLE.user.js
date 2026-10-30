@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.67
+// @version      2.68
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -2551,7 +2551,13 @@
       for (let i = 0; i < 7 && !entrar; i++) {
         const camera = w.__elragEngine.renderer?.camera || w.__elragEngine.camera;
         const xy = camera?.worldToScreen?.(npc.position[0], npc.position[1], 0);
-        if (!xy || xy.length < 2) return segurarRetorno(w, 'posição do NPC da Expedição indisponível');
+        if (!xy || xy.length < 2) {
+          try { npc.onMouseDown?.(); } catch (e) { log('Expedição: clique no NPC falhou: ' + String(e).slice(0, 80)); }
+          entrar = await esperarAte(() => entradaDaExpedicao(w), 2500, 200);
+          if (!entrar && typeof npc.onMouseDown !== 'function')
+            return segurarRetorno(w, 'posição e clique do NPC da Expedição indisponíveis');
+          continue;
+        }
         const r = canvas.getBoundingClientRect();
         const x = Math.max(24, Math.min(r.width - 24, xy[0]));
         const y = Math.max(24, Math.min(r.height - 24, xy[1]));
@@ -4801,7 +4807,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.67</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.68</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
