@@ -19,6 +19,8 @@ assert.equal(ctx.emCombate({ targetGid: 123 }, 2000), true, 'MVP visivel e ataca
 assert.equal(ctx.emCombate({ targetGid: 0 }, 5000), true, 'Radar sem alvo por instantes, mas golpe recente');
 assert.equal(ctx.emCombate({ targetGid: 123 }, 9000), true, 'Alvo ainda fixado durante a luta');
 assert.equal(ctx.emCombate({ targetGid: 0 }, 12000), false, 'Liberar teleporte apos terminar o combate');
+ctx.mvpUltimoGid = 0;
+assert.equal(ctx.emCombate({ targetGid: 123 }, 5000), true, 'Golpe recente protege MVP novo ainda ausente do catalogo');
 ctx.cfg.soMvp = false;
 assert.equal(ctx.emCombate({ targetGid: 123 }, 2000), false, 'Nao interferir no farm comum');
 console.log('OK: teleporte bloqueado durante combate com MVP e liberado apos a luta.');
