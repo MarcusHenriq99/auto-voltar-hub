@@ -36,13 +36,13 @@ assert.ok(fluxo.indexOf("cfg.conteudo.modo === 'expedicao'") < fluxo.indexOf('co
 assert.ok(fluxo.includes('entrada somente pelo NPC em Prontera'), 'Modo especial não cai no mapa comum');
 console.log('OK: seleção exata dos três mapas e retorno da Expedição somente pelo NPC.');
 
-let mapa = 'prontera', abriu = false, cliquesNpc = 0, salvamentos = 0;
+let mapa = 'prontera', abriu = false, cliquesNpc = 0, salvamentos = 0, screenAvailable = true;
 cfg.conteudo = { modo: 'expedicao', mapa: '' };
 cards[2].button.disabled = false;
 cards[2].button.click = () => { mapa = 'gld_dun03'; };
 const npc = { GID: 55, objecttype: 7, constructor: { TYPE_NPC: 7 }, position: [160, 183], display: { name: 'Expedições de Yggdrasil' } };
 const game = {
-  __elragEngine: { camera: { worldToScreen: () => [300, 200] } },
+  __elragEngine: { camera: { worldToScreen: () => screenAvailable ? [300, 200] : null } },
   document: { querySelectorAll: () => abriu ? cards.map(c => c.button) : [] },
 };
 Object.assign(context, {
@@ -56,10 +56,14 @@ Object.assign(context, {
 });
 vm.runInContext(section('  const entrarExpedicao =', '  const nomeGerenteEventos =') +
   '\nglobalThis.entrarExpedicao = entrarExpedicao;', context);
-context.entrarExpedicao(game).then(ok => {
+context.entrarExpedicao(game).then(async ok => {
   assert.equal(ok, true);
   assert.equal(cliquesNpc, 1, 'Abre a janela pelo NPC correto');
   assert.equal(cfg.conteudo.mapa, 'gld_dun03', 'Salva o código real do mapa após entrar');
   assert.equal(salvamentos, 1);
+  mapa = 'prontera'; abriu = false; screenAvailable = false;
+  npc.onMouseDown = () => { abriu = true; };
+  assert.equal(await context.entrarExpedicao(game), true, 'Entra mesmo sem worldToScreen pelo clique do NPC');
+  assert.equal(mapa, 'gld_dun03');
   console.log('OK: entrada pelo NPC e confirmação do mapa de destino.');
 }).catch(error => { console.error(error); process.exitCode = 1; });
