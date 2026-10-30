@@ -19,7 +19,7 @@ const context = {
   visivel: () => true, salvarCfg: () => { saved++; }, log: () => {},
 };
 vm.createContext(context);
-vm.runInContext(section('  const mapaDoConteudo =', '  const PORTEIRO_BIO4 =') +
+vm.runInContext(section('  const mapaCheffenia =', '  const PORTEIRO_BIO4 =') +
   '\nglobalThis.api = { mapaDoConteudo, mapaConfereConteudo, vigiarTempoConteudo, tempoConteudoEsgotado };', context);
 context.api.vigiarTempoConteudo(game);
 assert.equal(saved, 1, 'Tempo deve ficar salvo para conferir mesmo depois de sair do mapa');
@@ -33,6 +33,7 @@ let conversa = false, entrada = 0, cliqueNpc = 0;
 map = 'prontera';
 cfg.conteudo = { modo: 'cheffenia', expiraEm: now + 600000 };
 cfg.destinoFarm = { mapa: 'moro_vol' };
+assert.equal(context.api.mapaConfereConteudo('mid_volinf'), true, 'A instancia real da Cheffenia confirma a chegada');
 const npc = { GID: 42, objecttype: 7, constructor: { TYPE_NPC: 7 }, position: [160, 184], display: { name: 'Arauto da Cheffenia' } };
 const canvas = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 600, height: 400 }) };
 const w = {
@@ -44,7 +45,7 @@ Object.assign(context, {
   canvasDoJogo: () => canvas,
   clicarNoCanvas: async () => { cliqueNpc++; conversa = true; },
   esperarAte: async fn => fn(),
-  botaoPorTexto: (_doc, fn) => conversa && fn('Entrar') ? { click() { entrada++; map = 'moro_vol'; } } : null,
+  botaoPorTexto: (_doc, fn) => conversa && fn('Entrar') ? { click() { entrada++; map = 'mid_volinf'; } } : null,
   segurarRetorno: () => false, validarChegadaFarm: () => true, religarEconomia: async () => {},
 });
 vm.runInContext(section('  const entrarCheffenia =', '  const nomeGerenteEventos =') +
@@ -53,6 +54,6 @@ context.entrarCheffenia(w).then(ok => {
   assert.equal(ok, true);
   assert.equal(cliqueNpc, 1, 'Clica no Arauto pelo canvas');
   assert.equal(entrada, 1, 'Escolhe Entrar uma vez');
-  assert.equal(map, 'moro_vol', 'Confirma chegada ao mapa especial');
+  assert.equal(map, 'mid_volinf', 'Confirma chegada ao mapa real da Cheffenia');
   console.log('OK: timer da Bio 4 e entrada pelo Arauto da Cheffenia.');
 }).catch(error => { console.error(error); process.exitCode = 1; });
