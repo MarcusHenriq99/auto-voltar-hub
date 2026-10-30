@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.62
+// @version      2.63
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -1752,15 +1752,45 @@
   const OCUPACAO_MAXIMA_MOCHILA = 0.95;
   const RE_ESPACOS = /(\d+)\s*\/\s*(\d+)\s*·\s*(?:(\d+)\s*espa|Mochila cheia)/i;
   const CHAVE_CAPACIDADE = 'fzn-autovoltar-capacidade-mochila';
-  let capacidadeMochila = Number(lerJson(CHAVE_CAPACIDADE, 200)) || 200;
+  const capacidadeValida = (valor) => Number.isInteger(Number(valor)) && Number(valor) >= 50 && Number(valor) <= 400;
+  // A mochila comum tem 100 vagas; a caixa de expansao aumenta para 200.
+  // A capacidade aprendida fica tambem no backup da conta para sobreviver
+  // a limpeza do cache do jogo.
+  let capacidadeMochila = capacidadeValida(cfg.capacidadeMochila) ? Number(cfg.capacidadeMochila)
+    : capacidadeValida(lerJson(CHAVE_CAPACIDADE, null)) ? Number(lerJson(CHAVE_CAPACIDADE, null)) : 100;
   let snapshotEspacosEm = 0, espacoTeimosoAte = 0;
+  const definirCapacidadeMochila = (valor, fonte) => {
+    const lida = Number(valor);
+    if (!capacidadeValida(lida)) return false;
+    if (lida === capacidadeMochila && Number(cfg.capacidadeMochila) === lida) return true;
+    capacidadeMochila = lida;
+    cfg.capacidadeMochila = lida;
+    gravarJson(CHAVE_CAPACIDADE, lida);
+    salvarCfg();
+    log('Mochila: capacidade ' + lida + ' confirmada por ' + fonte);
+    return true;
+  };
+  const capacidadeNoSnapshot = () => {
+    const snap = estadoLoja.mochila;
+    for (const raiz of [snap, snap?.meta, snap?.metadata, snap?.inventory, snap?.bag]) {
+      if (!raiz || typeof raiz !== 'object' || Array.isArray(raiz)) continue;
+      for (const [chave, valor] of Object.entries(raiz)) {
+        if (/^(?:inventoryCapacity|inventoryMax|inventorySlots|bagCapacity|bagSlots|backpackCapacity|backpackSlots|maxSlots|slotLimit|capacity)$/i.test(chave) && capacidadeValida(valor)) return Number(valor);
+      }
+    }
+    return null;
+  };
 
   const pilhasReais = () => estadoLoja.mochila && Object.values(estadoLoja.mochila).reduce((n, itens) =>
     n + (Array.isArray(itens) ? itens.filter(item => item && Number(item.itemId) > 0).length : 0), 0);
 
   const lerEspacos = (w) => {
     const atual = Date.now();
+    if (capacidadeValida(cfg.capacidadeMochila) && Number(cfg.capacidadeMochila) !== capacidadeMochila)
+      capacidadeMochila = Number(cfg.capacidadeMochila);
     const pilhas = atual - estadoLoja.mochilaEm < 15_000 ? pilhasReais() : null;
+    const capacidadeSnap = capacidadeNoSnapshot();
+    if (capacidadeSnap && capacidadeSnap !== capacidadeMochila) definirCapacidadeMochila(capacidadeSnap, 'snapshot');
     try {
       for (const el of w.document.querySelectorAll('div, span')) {
         if (!visivel(el) || el.closest?.('[data-fzn-auto-voltar]')) continue;
@@ -1770,12 +1800,12 @@
         if (m) {
           const usados = Number(m[1]), lida = Number(m[2]), livres = m[3] ? Number(m[3]) : 0;
           if (lida < 50 || lida > 400 || usados > lida || (m[3] && usados + livres !== lida)) continue;
-          if (usados >= Math.ceil(lida * OCUPACAO_MAXIMA_MOCHILA) &&
-              (pilhas === null || Math.abs(usados - pilhas) > Math.max(20, Math.ceil(lida * 0.1)))) {
+          if (usados >= Math.ceil(lida * OCUPACAO_MAXIMA_MOCHILA) && pilhas !== null &&
+              Math.abs(usados - pilhas) > Math.max(20, Math.ceil(lida * 0.1))) {
             log('Mochila: contador visual ' + usados + '/' + lida + ' sem confirmacao no snapshot (' + (pilhas ?? '?') + ' pilhas); aguardando');
             continue;
           }
-          if (lida > 0 && lida !== capacidadeMochila) { capacidadeMochila = lida; gravarJson(CHAVE_CAPACIDADE, lida); log('Mochila: capacidade ' + lida + ' gravada'); }
+          if (lida !== capacidadeMochila) definirCapacidadeMochila(lida, 'contador do jogo');
           return { usados, max: capacidadeMochila, livres, fonte: 'jogo' }; }
       }
     } catch {}
@@ -1788,8 +1818,7 @@
     // O contador de vagas do jogo inclui equipamentos na mochila, mesmo quando equipados.
     const usados = pilhasReais();
     if (usados > capacidadeMochila) {
-      capacidadeMochila = Math.max(200, usados + 10);
-      gravarJson(CHAVE_CAPACIDADE, capacidadeMochila);
+      definirCapacidadeMochila(Math.ceil(usados / 100) * 100, 'itens na mochila');
     }
     return { usados, max: capacidadeMochila, livres: Math.max(0, capacidadeMochila - usados), fonte: 'snapshot' };
   };
@@ -4203,6 +4232,12 @@
       <label style="display:flex;gap:6px;align-items:center;margin:6px 0">Vender ao chegar em
         <input data-v="limite" type="number" min="10" max="100" value="${Number(v.limite) || 70}" style="${campo};width:52px">% do peso
         <span style="opacity:.7">(agora: ${p ? `${p.atual}/${p.max} = ${Math.round(p.pct)}%` : '?'})</span></label>
+      <label style="display:flex;gap:6px;align-items:center;margin:6px 0">Capacidade da mochila
+        <select data-capacidade style="${campo}">
+          <option value="100"${capacidadeMochila === 100 ? ' selected' : ''}>100 slots</option>
+          <option value="200"${capacidadeMochila === 200 ? ' selected' : ''}>200 slots</option>
+        </select></label>
+      <div style="opacity:.75;margin-bottom:6px">O script aprende a capacidade pelo jogo e continua conferindo os slots com a mochila fechada. Ajuste aqui se a conta tiver 200 slots e o limite ainda nao tiver sido reconhecido.</div>
       <div style="margin:8px 0">
         <label style="display:flex;gap:6px;align-items:center"><input data-ar="ligado" type="checkbox"${cfg.armazem.ligado ? ' checked' : ''}> Guardar no armazem os itens de Nunca vender</label>
         <label style="display:flex;gap:6px;align-items:center"><input data-ar="usarCartao" type="checkbox"${cfg.armazem.usarCartao ? ' checked' : ''}> Usar Cartao Kafra no mapa quando disponivel</label>
@@ -4225,6 +4260,7 @@
     menuVenda.addEventListener('input', (ev) => {
       const t = ev.target;
       if (t.dataset.ar) cfg.armazem[t.dataset.ar] = t.checked;
+      if (t.dataset.capacidade !== undefined) definirCapacidadeMochila(t.value, 'ajuste da conta');
       if (t.dataset.p) v.proteger[t.dataset.p] = t.checked;
       const k = t.dataset.v;
       if (k === 'ligado' || k === 'comCarta') v[k] = t.checked;
@@ -4477,7 +4513,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.62</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.63</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
