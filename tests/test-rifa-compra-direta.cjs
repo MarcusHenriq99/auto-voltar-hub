@@ -13,7 +13,7 @@ const priceSource = extract('  const precoBotaoRifa =', '  const numerosComprado
 const buySource = extract('  const comprarRifa =', '  const executarRifa =');
 
 async function scenario(mode) {
-  let balance = 2_000_000, numbers = 0, clicks = 0, confirms = 0, status = '';
+  let balance = 2_000_000, numbers = 0, clicks = 0, confirms = 0, status = '', waits = 0;
   const cfg = { ligado: true, rifa: { ligado: true, premios: ['Fúria do Berserker'], limiteGasto: 500_000 } };
   const record = { tentativas: 0, confirmados: 0, gasto: 0, resultado: 'Aguardando sorteio' };
   const confirmButton = {
@@ -42,7 +42,11 @@ async function scenario(mode) {
     premioMarcadoRifa: () => true, registroRifa: () => record,
     rifaEsgotada: () => false, rifaStatus: (x) => { status = x; },
     gravarJson: () => {}, salvarCfg: () => {}, esperar: async () => {},
-    esperarAte: async fn => fn(), Date, Math, Number,
+    esperarAte: async fn => {
+      waits++;
+      if (mode === 'delayed' && waits === 2) { balance -= 500_000; numbers++; }
+      return fn();
+    }, Date, Math, Number,
   };
   vm.createContext(context);
   vm.runInContext(priceSource + buySource + '\nglobalThis.buy = comprarRifa;', context);
@@ -68,6 +72,8 @@ async function scenario(mode) {
   assert.equal(uncertain.clicks, 1, 'Nao repete uma compra sem comprovante');
   assert.equal(uncertain.record.confirmados, 0);
   assert.equal(uncertain.status, 'Parada');
-  console.log('OK: compra direta, interface antiga, limite e falha sem repeticao.');
+  const delayed = await scenario('delayed');
+  assert.equal(delayed.clicks, 1, 'Compra lenta não gera segundo clique');
+  assert.equal(delayed.record.confirmados, 1, 'Compra lenta entra no histórico após atualização');
+  console.log('OK: compra direta, interface antiga, retorno lento, limite e falha sem repeticao.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
-
