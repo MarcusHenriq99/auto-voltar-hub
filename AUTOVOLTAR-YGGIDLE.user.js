@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.71
+// @version      2.72
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3173,7 +3173,7 @@
   const covilAlvo = () => COVIS.find((c) => c.mobId === Number(cfg.covil.mobId)) || COVIS.find((c) => c.mobId === 1312);
   const pedraDoCovil = (c) => 'Pedra de Convocação (Grau ' + GRAU[c.tier] + ')';
   const covil = { dentro: false, entrouEm: 0, viuEm: 0, viu: false, falhas: 0, lutaEm: 0 };
-  const COVIL_SEM_MVP_MS = 25000, COVIL_LOOT_MS = 1500, COVIL_TETO_MS = 28 * 60000;
+  const COVIL_SEM_MVP_MS = 25000, COVIL_LOOT_MS = 8000, COVIL_TETO_MS = 28 * 60000;
   const contarCovil = (campo) => {
     const dia = new Date().toLocaleDateString('pt-BR');
     if (cfg.covil.dia !== dia) { cfg.covil.dia = dia; cfg.covil.hoje = 0; cfg.covil.mortesHoje = 0; }
@@ -3201,8 +3201,11 @@
         const mob = manager.get?.(gid);
         const mobId = Number(mob?._job || mob?.job || mob?.mobId || 0);
         const alvo = covilAlvo();
-        if (cfg.covil.ligado && emInstancia(posicao(w)) &&
-            (mobId === alvo.mobId || (covil.viu && Number(gid) === Number(covil.gid)))) {
+        // A entidade pode ser removida ao trocar de mapa ou sincronizar a cena.
+        // Só aceitamos o GID que vimos vivo nesta entrada, depois de a luta começar.
+        if (cfg.covil.ligado && covil.dentro && covil.viu && covil.gid &&
+            emInstancia(posicao(w)) && mobId === alvo.mobId &&
+            Number(gid) === Number(covil.gid) && Date.now() - covil.entrouEm >= 3000) {
           covil.morteConfirmadaEm = Date.now();
           covil.gidMorto = Number(gid);
           log('Covil: morte de ' + alvo.nome + ' confirmada pelo jogo (GID ' + gid + ')');
@@ -3360,6 +3363,11 @@
           covil.viu = true; covil.viuEm = agora; covil.gid = gidDoMvp(w, c);
           etapa('Covil', 'Lutando com ' + c.nome + ' (' + cfg.covil.hoje + ' hoje)'); return;
         }
+        if (covil.morteConfirmadaEm && mvpNoRadar(w, c)) {
+          log('Covil: MVP voltou ao radar; descartei a remoção anterior como morte');
+          covil.morteConfirmadaEm = 0;
+          covil.gidMorto = 0;
+        }
         if (covil.morteConfirmadaEm && agora - covil.morteConfirmadaEm >= COVIL_LOOT_MS) {
           if (!covil.morto) {
             covil.morto = true;
@@ -3395,7 +3403,7 @@
         if (agora - covil.entrouEm > COVIL_TETO_MS && !covil.tetoAvisado) {
           covil.tetoAvisado = true; log('Covil: 28 min sem morte confirmada; aguardando o limite do jogo, sem sair antes do MVP');
         }
-        if (covil.morteConfirmadaEm) etapa('Covil', 'MVP derrotado; aguardando drop');
+        if (covil.morteConfirmadaEm) etapa('Covil', 'MVP saiu da cena; confirmando por 8 s antes de deixar a instância');
         else if (covil.viu) etapa('Covil', 'MVP fora do radar; continuo na instância aguardando confirmação');
         return;
       }
@@ -3520,7 +3528,8 @@
     'Bênção de Baldur','Esporo de Yggdrasil','Hidromel de Kvasir'
   ];
   const rifaEstado = { etapa: 'Aguardando', premio: '', edicao: '', compras: 0, detalhe: '' };
-  let rifaRodando = false, rifaFarmPausado = false, rifaMenu = null;
+  let rifaRodando = false, rifaFarmPausado = false, rifaMenu = null, rifaModalAtual = null;
+  let ultimaConferenciaResultadoRifa = 0;
   const registroRifa = (edicao,premio='') => {
     let registro = cfg.rifa.historico.find(x => x.id === edicao.id);
     if (!registro) {
@@ -3541,6 +3550,8 @@
         'Resultado: '+r.resultado+(r.vencedor?' · Vencedor: '+r.vencedor:'');
     }).join('\n\n') : 'Nenhuma participação registrada neste personagem.');
   const conferirResultadoRifa = (w) => {
+    if (Date.now() - ultimaConferenciaResultadoRifa < 1500) return;
+    ultimaConferenciaResultadoRifa = Date.now();
     const texto = w.document.body.innerText || '';
     const anuncios = [...texto.matchAll(/\[Rifa YggIdle\]\s*([^\n]+?)\s+tirou o n[uú]mero da sorte e levou\s+([^\n]+?)\s+x\d+[!.]?/gi)];
     if (!anuncios.length) return;
@@ -3564,6 +3575,7 @@
   };
   const rifaStatus = (etapa, detalhe = '') => {
     const mudou = rifaEstado.etapa !== etapa || rifaEstado.detalhe !== detalhe;
+    if (!mudou) return;
     rifaEstado.etapa = etapa; rifaEstado.detalhe = detalhe;
     const linha = rifaMenu?.querySelector('[data-rifa-status]');
     if (linha) linha.textContent = 'Estado: '+etapa+(detalhe?' · '+detalhe:'');
@@ -3573,6 +3585,8 @@
   const premioMarcadoRifa = (texto) => (cfg.rifa.premios || [])
     .some(nome => normalizar(texto).includes(normalizar(nome)));
   const janelaRifa = (w) => {
+    if (rifaModalAtual?.isConnected && rifaModalAtual.ownerDocument === w.document && visivel(rifaModalAtual)) return rifaModalAtual;
+    rifaModalAtual = null;
     const folhas = [...w.document.querySelectorAll('h1,h2,h3,div,span,strong')]
       .filter(el => visivel(el) && normalizar(textoDe(el)) === 'rifa yggidle' &&
         ![...el.children].some(c => normalizar(textoDe(c)) === 'rifa yggidle'));
@@ -3580,7 +3594,10 @@
       let p = folha;
       for (let i = 0; p && i < 7; i++, p = p.parentElement) {
         if (/seus n[uú]meros nesta edi[cç][aã]o/i.test(p.innerText || '') &&
-            /comprar n[uú]mero/i.test(p.innerText || '')) return p;
+            /comprar n[uú]mero/i.test(p.innerText || '')) {
+          rifaModalAtual = p;
+          return p;
+        }
       }
     }
     return null;
@@ -3664,7 +3681,7 @@
     fechar?.click();
   };
   const comprarRifa = async (w,edicao,premioAvisado) => {
-    let premio = premioAvisado, semBotaoDesde = 0, registro = null;
+    let premio = premioAvisado, semBotaoDesde = 0, semJanelaDesde = 0, registro = null;
     const parar = (etapa, detalhe) => {
       if (registro && !registro.confirmados && registro.resultado === 'Aguardando sorteio') {
         registro.resultado = 'Sem bilhete — ' + detalhe;
@@ -3677,12 +3694,21 @@
     while (cfg.rifa.ligado && cfg.ligado && posicao(w)?.mapa === 'prontera') {
       const modal = janelaRifa(w);
       if (!modal) {
-        if (!await abrirRifaNoNpc(w)) { parar('Parada','janela da rifa não abriu'); return; }
+        if (!semJanelaDesde) semJanelaDesde = Date.now();
+        if (!await abrirRifaNoNpc(w)) {
+          if (Date.now() - semJanelaDesde > 30000) { parar('Parada','janela da rifa não abriu em 30 s'); return; }
+          rifaStatus('Procurando NPC','tentando reabrir a rifa');
+          await esperar(1000);
+        }
         continue;
       }
+      semJanelaDesde = 0;
       const texto = modal.innerText || '';
-      if (/edi[cç][aã]o encerrada|n[aã]o est[aá] aberta para compras/i.test(texto) ||
-          rifaEsgotada(texto)) {
+      if (/n[aã]o est[aá] aberta para compras/i.test(texto) && Date.now() < edicao.inicio + 10000) {
+        rifaStatus('Aguardando abertura','servidor ainda não liberou as compras');
+        await esperar(500); continue;
+      }
+      if (/edi[cç][aã]o encerrada|n[aã]o est[aá] aberta para compras/i.test(texto) || rifaEsgotada(texto)) {
         parar('Encerrada',rifaEsgotada(texto) ? 'todos os números vendidos' : 'edição finalizada'); return;
       }
       if (/nenhuma edi[cç][aã]o aberta/i.test(texto)) {
@@ -3725,11 +3751,16 @@
       }
       if (!comprar || comprar.disabled) {
         if (!semBotaoDesde) semBotaoDesde = Date.now();
-        if (Date.now()-semBotaoDesde > 30000) {
-          parar('Encerrada','botão indisponível por 30 s'); return;
+        if (!comprar && Date.now() - semBotaoDesde > 10000) {
+          rifaStatus('Reabrindo rifa','botão de compra não apareceu');
+          fecharRifa(w);
+          rifaModalAtual = null;
+          semBotaoDesde = 0;
+          await esperar(500);
+          continue;
         }
-        rifaStatus('Aguardando botão','aguardando liberação da compra');
-        await esperar(350); continue;
+        rifaStatus('Aguardando botão','compra indisponível há '+(Math.floor((Date.now()-semBotaoDesde)/10000)*10)+' s');
+        await esperar(500); continue;
       }
       semBotaoDesde = 0;
       const numerosAntes = numerosCompradosRifa(modal);
@@ -3755,13 +3786,19 @@
             /^comprar\s*[—–-]\s*[\d.,]+\s*z?$/i.test(textoDe(b)) &&
             /confirmar compra|voc[eê] vai gastar/i.test(b.parentElement?.parentElement?.innerText || ''));
         return botao ? { botao } : null;
-      },3500,75);
+      },8000,100);
       if (confirmado?.botao) {
         const precoConfirmacao = Number((textoDe(confirmado.botao).match(/[\d.,]+/) || [''])[0].replace(/[^\d]/g, ''));
         if (precoConfirmacao !== preco) { parar('Parada','preço da confirmação difere do botão'); return; }
         confirmado.botao.click();
-        confirmado = await esperarAte(comprovante,3500,75);
+        confirmado = await esperarAte(comprovante,8000,100);
       } else confirmado = confirmado?.compra;
+      if (!confirmado) {
+        // Não repetir o clique enquanto o servidor pode ainda estar processando
+        // a compra: uma segunda chamada poderia gastar além do limite.
+        rifaStatus('Conferindo compra','aguardando saldo ou número atualizar');
+        confirmado = await esperarAte(comprovante,15000,250);
+      }
       if (!confirmado) {
         const atual = janelaRifa(w);
         if (atual && rifaEsgotada(atual.innerText || '')) {
@@ -3769,7 +3806,7 @@
         }
         // Sem retorno do servidor, outra tentativa poderia comprar um bilhete
         // duplicado e ultrapassar o limite configurado pelo jogador.
-        parar('Parada','compra sem comprovante; confira saldo e números antes de tentar novamente'); return;
+        parar('Parada','compra sem resposta após 23 s; confira saldo e números antes de tentar novamente'); return;
       }
       const porNumeros = Number.isFinite(numerosAntes) && Number.isFinite(confirmado.numeros)
         ? confirmado.numeros - numerosAntes : 0;
@@ -4870,7 +4907,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.71</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.72</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
