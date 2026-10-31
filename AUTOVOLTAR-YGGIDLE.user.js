@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.72
+// @version      2.74
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3530,6 +3530,7 @@
   const rifaEstado = { etapa: 'Aguardando', premio: '', edicao: '', compras: 0, detalhe: '' };
   let rifaRodando = false, rifaFarmPausado = false, rifaMenu = null, rifaModalAtual = null;
   let ultimaConferenciaResultadoRifa = 0;
+  let tentativaEntradaRifa = { id: '', quantidade: 0, depois: 0 };
   const registroRifa = (edicao,premio='') => {
     let registro = cfg.rifa.historico.find(x => x.id === edicao.id);
     if (!registro) {
@@ -3547,8 +3548,39 @@
       return quando+' · '+(r.premio||'Prêmio a confirmar')+'\n'+
         'Tentativas: '+r.tentativas+' · Comprados: '+r.confirmados+
         ' · Gasto: '+Number(r.gasto||0).toLocaleString('pt-BR')+'z\n'+
-        'Resultado: '+r.resultado+(r.vencedor?' · Vencedor: '+r.vencedor:'');
-    }).join('\n\n') : 'Nenhuma participação registrada neste personagem.');
+        'Resultado: '+r.resultado+(r.vencedor?' · Vencedor: '+r.vencedor:'')+
+        ((r.ocorrencias || []).length ? '\nMotivos e andamento:\n'+r.ocorrencias.map(o =>
+          new Date(o.em).toLocaleTimeString('pt-BR')+' · '+o.etapa+' — '+o.detalhe).join('\n') : '');
+    }).join('\n\n') : 'Nenhuma edição observada neste personagem. O histórico é registrado enquanto o jogo e o script estão abertos.');
+  const registrarMotivoRifa = (edicao, premio, etapa, detalhe) => {
+    const premioAnterior = cfg.rifa.historico.find(r => r.id === edicao.id)?.premio;
+    const registro = registroRifa(edicao, premio);
+    const ocorrencias = registro.ocorrencias || [];
+    const ultima = ocorrencias[ocorrencias.length - 1];
+    if (ultima?.etapa === etapa && ultima?.detalhe === detalhe && (!premio || premioAnterior)) return registro;
+    ocorrencias.push({ em: Date.now(), etapa, detalhe });
+    registro.ocorrencias = ocorrencias.slice(-12);
+    if (!registro.confirmados) registro.resultado = etapa+' — '+detalhe;
+    salvarCfg();
+    const h = rifaMenu?.querySelector('[data-rifa-historico]');
+    if (h) h.textContent = textoHistoricoRifa();
+    return registro;
+  };
+  const encerrarObservacoesRifa = () => {
+    let mudou = false;
+    for (const r of cfg.rifa.historico) {
+      if (!r.confirmados && r.ocorrencias?.length && Date.now() > r.inicio + 90*60000 &&
+          /^(Aguardando|Preparando|Entrada falhou)/.test(r.resultado)) {
+        r.resultado = 'Não participou — '+r.ocorrencias[r.ocorrencias.length - 1].detalhe;
+        mudou = true;
+      }
+    }
+    if (mudou) {
+      salvarCfg();
+      const h = rifaMenu?.querySelector('[data-rifa-historico]');
+      if (h) h.textContent = textoHistoricoRifa();
+    }
+  };
   const conferirResultadoRifa = (w) => {
     if (Date.now() - ultimaConferenciaResultadoRifa < 1500) return;
     ultimaConferenciaResultadoRifa = Date.now();
@@ -3610,9 +3642,17 @@
     const m = /comprar n[uú]mero\s*[—–-]\s*([\d.,]+)\s*z/i.exec(textoDe(botao) || '');
     return m ? Number(m[1].replace(/[^\d]/g, '')) : NaN;
   };
+  // O .click() global simula oito eventos e troca o alvo por elementFromPoint.
+  // Na rifa use apenas um click no controle exato, mesmo com outro painel por cima.
+  const clicarControleRifa = (botao) => {
+    if (!botao?.isConnected || botao.disabled || botao.getAttribute('aria-disabled') === 'true') return false;
+    const w = botao.ownerDocument.defaultView;
+    botao.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true, composed: true, view: w }));
+    return true;
+  };
   const numerosCompradosRifa = (modal) => {
     const texto = modal?.innerText || '';
-    const trecho = /Seus n[uú]meros nesta edi[cç][aã]o\s*([\s\S]*?)(?=Comprar n[uú]mero|$)/i.exec(texto)?.[1];
+    const trecho = /Seus n[uú]meros nesta edi[cç][aã]o\s*([\s\S]*?)(?=Comprar n[uú]mero|Comprando\b|Aguarde\b|$)/i.exec(texto)?.[1];
     if (trecho == null) return NaN;
     if (/ainda n[aã]o comprou nenhum n[uú]mero/i.test(trecho)) return 0;
     return (trecho.match(/\b\d{1,4}\b/g) || []).length;
@@ -3656,7 +3696,7 @@
       if (!npc) { await esperar(700); continue; }
       try { npc.onMouseDown?.(); } catch {}
       const opcao = await esperarAte(() => botaoPorTexto(w.document,t => /^Rifa Yggidle$/i.test(t)),2500);
-      if (opcao) opcao.click();
+      if (opcao) clicarControleRifa(opcao);
       if (await esperarAte(() => janelaRifa(w),3500)) return true;
     }
     return false;
@@ -3683,12 +3723,7 @@
   const comprarRifa = async (w,edicao,premioAvisado) => {
     let premio = premioAvisado, semBotaoDesde = 0, semJanelaDesde = 0, registro = null;
     const parar = (etapa, detalhe) => {
-      if (registro && !registro.confirmados && registro.resultado === 'Aguardando sorteio') {
-        registro.resultado = 'Sem bilhete — ' + detalhe;
-        salvarCfg();
-        const h = rifaMenu?.querySelector('[data-rifa-historico]');
-        if (h) h.textContent = textoHistoricoRifa();
-      }
+      registrarMotivoRifa(edicao, premio, etapa, detalhe);
       rifaStatus(etapa, detalhe);
     };
     while (cfg.rifa.ligado && cfg.ligado && posicao(w)?.mapa === 'prontera') {
@@ -3738,18 +3773,18 @@
       }
       const comprar = [...modal.querySelectorAll('button')].find(b => /comprar n[uú]mero/i.test(textoDe(b)));
       const preco = comprar ? precoBotaoRifa(comprar) : NaN;
-      if (comprar && (!Number.isFinite(preco) || preco <= 0)) {
+      if (comprar && !comprar.disabled && comprar.getAttribute('aria-disabled') !== 'true' && (!Number.isFinite(preco) || preco <= 0)) {
         parar('Parada','preço do bilhete não identificado no botão'); return;
       }
       const gastoEfetivo = Math.max(Number(registro.gasto) || 0,
         Math.max(0, Number(registro.saldoInicial) - saldo));
       if (Number.isFinite(preco) && gastoEfetivo + preco > limite) {
-        rifaStatus('Limite atingido','máximo de '+limite.toLocaleString('pt-BR')+'z nesta edição'); return;
+        parar('Limite atingido','máximo de '+limite.toLocaleString('pt-BR')+'z nesta edição'); return;
       }
       if (Number.isFinite(preco) && saldo < preco) {
-        rifaStatus('Sem saldo','menos de '+preco.toLocaleString('pt-BR')+'z para outro bilhete'); return;
+        parar('Sem saldo','menos de '+preco.toLocaleString('pt-BR')+'z para outro bilhete'); return;
       }
-      if (!comprar || comprar.disabled) {
+      if (!comprar || comprar.disabled || comprar.getAttribute('aria-disabled') === 'true') {
         if (!semBotaoDesde) semBotaoDesde = Date.now();
         if (!comprar && Date.now() - semBotaoDesde > 10000) {
           rifaStatus('Reabrindo rifa','botão de compra não apareceu');
@@ -3760,19 +3795,22 @@
           continue;
         }
         rifaStatus('Aguardando botão','compra indisponível há '+(Math.floor((Date.now()-semBotaoDesde)/10000)*10)+' s');
-        await esperar(500); continue;
+        await esperar(100); continue;
       }
       semBotaoDesde = 0;
       const numerosAntes = numerosCompradosRifa(modal);
+      // A lista de bilhetes pode atualizar antes da carteira. Não aceitar o
+      // débito atrasado da compra anterior como comprovante do próximo clique.
+      const saldoReferencia = Math.min(saldo, registro.saldoInicial - registro.gasto);
       registro.tentativas++;
       gravarJson(CHAVE_CFG,cfg);
-      comprar.click();
+      if (!clicarControleRifa(comprar)) { await esperar(100); continue; }
       const comprovante = () => {
         const novoSaldo = zenyRifa(w);
         const novosNumeros = numerosCompradosRifa(janelaRifa(w));
         if (Number.isFinite(numerosAntes) && Number.isFinite(novosNumeros) &&
             novosNumeros > numerosAntes) return { saldo: novoSaldo, numeros: novosNumeros };
-        if (Number.isFinite(novoSaldo) && novoSaldo <= saldo - preco)
+        if (Number.isFinite(novoSaldo) && novoSaldo <= saldoReferencia - preco)
           return { saldo: novoSaldo, numeros: novosNumeros };
         return null;
       };
@@ -3790,7 +3828,9 @@
       if (confirmado?.botao) {
         const precoConfirmacao = Number((textoDe(confirmado.botao).match(/[\d.,]+/) || [''])[0].replace(/[^\d]/g, ''));
         if (precoConfirmacao !== preco) { parar('Parada','preço da confirmação difere do botão'); return; }
-        confirmado.botao.click();
+        if (!clicarControleRifa(confirmado.botao)) {
+          parar('Parada','confirmação indisponível; confira a compra antes de tentar novamente'); return;
+        }
         confirmado = await esperarAte(comprovante,8000,100);
       } else confirmado = confirmado?.compra;
       if (!confirmado) {
@@ -3811,28 +3851,35 @@
       const porNumeros = Number.isFinite(numerosAntes) && Number.isFinite(confirmado.numeros)
         ? confirmado.numeros - numerosAntes : 0;
       const porZeny = Number.isFinite(confirmado.saldo)
-        ? Math.floor((saldo - confirmado.saldo) / preco) : 0;
+        ? Math.floor((saldoReferencia - confirmado.saldo) / preco) : 0;
       const comprados = Math.max(1, porNumeros, porZeny);
       registro.confirmados += comprados;
       registro.gasto += preco * comprados;
-      if (registro.resultado.startsWith('Sem bilhete')) registro.resultado = 'Aguardando sorteio';
+      if (!registro.vencedor) registro.resultado = 'Aguardando sorteio';
       if (registro.confirmados % 5 === 0) salvarCfg();
       else gravarJson(CHAVE_CFG,cfg);
       const h = rifaMenu?.querySelector('[data-rifa-historico]');
       if (h) h.textContent = textoHistoricoRifa();
       rifaEstado.compras += comprados;
       rifaStatus('Comprando',rifaEstado.compras+' número(s); '+premio);
-      await esperar(550);
+      // A confirmação libera a próxima leitura; o estado do botão dita a cadência.
+      await esperar(100);
     }
+    parar('Interrompida', !cfg.rifa.ligado ? 'Rifa desligada durante a participação' :
+      !cfg.ligado ? 'Auto-voltar desligado durante a participação' : 'personagem saiu de Prontera durante a participação');
   };
   const executarRifa = async (w,edicao) => {
     if (ocupado || rifaRodando || !cfg.rifa.ligado || !cfg.ligado ||
         !(cfg.rifa.premios||[]).length || !(Number(cfg.rifa.limiteGasto) >= 500000)) return;
     rifaRodando = true; ocupado = true;
+    if (tentativaEntradaRifa.id !== edicao.id) tentativaEntradaRifa = { id: edicao.id, quantidade: 0, depois: 0 };
+    tentativaEntradaRifa.quantidade++;
+    tentativaEntradaRifa.depois = Date.now() + 10000;
     const origem = posicao(w), cacava = autopilotLigado(w) || !!botaoHunt(w,true);
     const premioAvisado = rifaEstado.premio;
     rifaEstado.compras = 0;
     try {
+      registrarMotivoRifa(edicao, premioAvisado, 'Preparando participação', 'saindo do farm para conferir a rifa no NPC');
       if (origem?.mapa !== 'prontera') registrarDestinoFarm(w);
       rifaStatus('Saindo do farm',premioAvisado || 'conferindo o prêmio');
       await sairDaEconomia(w);
@@ -3842,8 +3889,16 @@
       if (!await sairParaRifa(w)) throw new Error('não consegui chegar a Prontera');
       rifaStatus('Falando com YggIdle Bet');
       if (!await abrirRifaNoNpc(w)) throw new Error('NPC YggIdle Bet não encontrado');
+      // Falha de viagem/NPC permite nova entrada limitada. Após abrir a rifa,
+      // nenhuma repetição automática pode reenviar uma compra sem comprovante.
+      cfg.rifa.ultimaEdicao = edicao.id; salvarCfg();
       await comprarRifa(w,edicao,premioAvisado);
-    } catch(e) { rifaStatus('Parada',String(e?.message||e).slice(0,160)); }
+    } catch(e) {
+      const motivo = String(e?.message||e).slice(0,160);
+      registrarMotivoRifa(edicao, premioAvisado,
+        cfg.rifa.ultimaEdicao === edicao.id ? 'Parada' : 'Entrada falhou', motivo);
+      rifaStatus('Parada',motivo);
+    }
     finally {
       try {
         fecharRifa(w);
@@ -3869,29 +3924,45 @@
         }
       } catch(e) { rifaStatus('Aguardando retorno',String(e?.message||e).slice(0,120)); }
       salvarCfg();
+      tentativaEntradaRifa.depois = Date.now() + 10000;
       rifaFarmPausado = false; rifaRodando = false; ocupado = false; atualizarPainel();
     }
   };
   const vigiarRifa = (w) => {
+    encerrarObservacoesRifa();
     const edicao = edicaoRifaAtual();
-    if (!edicao || !cfg.rifa.ligado || !(cfg.rifa.premios||[]).length) return;
-    if (!(Number(cfg.rifa.limiteGasto) >= 500000)) {
-      rifaStatus('Sem limite','defina quanto gastar por rifa; mínimo 500.000z'); return;
-    }
+    if (!edicao) return;
     if (rifaEstado.edicao !== edicao.id) { rifaEstado.edicao = edicao.id; rifaEstado.premio = ''; }
     const anunciado = anuncioRifa(w);
     if (anunciado) rifaEstado.premio = anunciado;
-    if (ocupado || rifaRodando || cfg.rifa.ultimaEdicao === edicao.id) return;
+    if (rifaRodando || cfg.rifa.ultimaEdicao === edicao.id) return;
+    const registrar = (etapa, detalhe) => {
+      registrarMotivoRifa(edicao, rifaEstado.premio, etapa, detalhe);
+      rifaStatus(etapa, detalhe);
+    };
+    if (!cfg.rifa.ligado) { registrar('Ignorada','Rifa desligada nesta conta'); return; }
+    if (!(cfg.rifa.premios||[]).length) { registrar('Ignorada','nenhum prêmio selecionado nesta conta'); return; }
+    if (!(Number(cfg.rifa.limiteGasto) >= 500000)) {
+      registrar('Ignorada','orçamento por edição inferior a 500.000z'); return;
+    }
+    if (ocupado) { registrar('Aguardando rotina','personagem ocupado com outra rotina; aguardando liberação'); return; }
+    if (tentativaEntradaRifa.id === edicao.id) {
+      if (tentativaEntradaRifa.quantidade >= 3) {
+        registrar('Parada','não cheguei ao NPC após 3 tentativas nesta edição'); return;
+      }
+      if (Date.now() < tentativaEntradaRifa.depois) return;
+    }
     if (rifaEstado.premio && !premioMarcadoRifa(rifaEstado.premio)) {
-      rifaStatus('Ignorada','prêmio não marcado: '+rifaEstado.premio+'; marque no painel para disputar esta edição'); return;
+      registrar('Ignorada','prêmio não marcado: '+rifaEstado.premio+'; marque no painel para disputar esta edição'); return;
     }
     if (!edicao.abriu && Date.now() < edicao.inicio - 60000) {
-      rifaStatus('Aguardando último minuto',rifaEstado.premio || 'prêmio ainda não identificado');
+      registrar('Aguardando último minuto',rifaEstado.premio || 'prêmio ainda não identificado');
       return;
     }
-    if (!rifaEstado.premio && !edicao.abriu) return;
+    if (!rifaEstado.premio && !edicao.abriu) {
+      registrar('Aguardando anúncio','prêmio ainda não identificado; aguardando abertura para conferir no NPC'); return;
+    }
     if (!cfg.ligado) { cfg.ligado = true; log('Rifa: Auto-voltar ligado automaticamente para disputar e retornar ao farm'); }
-    cfg.rifa.ultimaEdicao = edicao.id; salvarCfg();
     void executarRifa(w,edicao);
   };
   const abrirMenuRifa = () => {
@@ -3945,7 +4016,7 @@
     personagemLinha.appendChild(personagem);
     const historicoRifa=document.createElement('details');
     Object.assign(historicoRifa.style,{margin:'9px 0',border:'1px solid #445967',padding:'7px',borderRadius:'5px'});
-    const tituloHistorico=document.createElement('summary');tituloHistorico.textContent='Histórico de bilhetes e resultados';
+    const tituloHistorico=document.createElement('summary');tituloHistorico.textContent='Histórico de edições, bilhetes e motivos';
     tituloHistorico.style.cursor='pointer';
     const conteudoHistorico=document.createElement('pre');conteudoHistorico.dataset.rifaHistorico='1';
     conteudoHistorico.textContent=textoHistoricoRifa();
@@ -3962,7 +4033,7 @@
         if (!cfg.rifa.ligado) {rifaStatus('Desligada','ligue Rifa');return;}
         if (!(Number(cfg.rifa.limiteGasto)>=500000)) {rifaStatus('Sem limite','defina quanto gastar por rifa');return;}
         if (!cfg.ligado) {cfg.ligado=true;log('Rifa: Auto-voltar ligado para disputar e retornar ao farm');}
-        cfg.rifa.ultimaEdicao=edicao.id;salvarCfg();void executarRifa(w,edicao);}),
+        void executarRifa(w,edicao);}),
       botao('Fechar',()=>{menu.remove();rifaMenu=null;})
     );
     menu.append(topo,ajuda,status,lista,limiteLinha,personagemLinha,historicoRifa,acoes);
@@ -3976,10 +4047,8 @@
     if (!w) return;
     conferirResultadoRifa(w);
     if (rifaRodando) {
-      if (rifaFarmPausado) {
-        botaoHunt(w, true)?.click();
-        if (autopilotLigado(w)) ligarAutopilot(w, false);
-      }
+      // A caça já foi pausada e confirmada por executarRifa. Não gerar cliques
+      // paralelos enquanto o servidor processa bilhetes ou o retorno ao farm.
       return;
     }
     if (dispensarAvisoDiario(w)) return;
@@ -3989,6 +4058,7 @@
     vigiarLucky();
     vigiarTempoConteudo(w);
     vigiarRifa(w);
+    if (rifaRodando) return;
     // A tela de tres mortes oferece Renascer agora. Trate-a antes de uma
     // rotina ocupada deixar o personagem esperando no menu.
     if (cfg.ligado && (cfg.covil.ligado && emInstancia(posicao(w)) || mapaCovil(posicao(w))) && morteConfirmada(w)) {
@@ -4907,7 +4977,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.72</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.74</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
