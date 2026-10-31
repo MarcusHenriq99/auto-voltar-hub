@@ -22,7 +22,7 @@ const context = {
   covilAlvo: () => alvo, posicao: () => ({ mapa: '1@tower' }),
   carregarEntidadesNpc: async () => manager, autopilotLigado: () => true,
   ligarAutopilot: () => {}, etapa: () => {}, log: () => {},
-  COVIL_SEM_MVP_MS: 25000, COVIL_LOOT_MS: 1500, COVIL_TETO_MS: 28 * 60000,
+  COVIL_SEM_MVP_MS: 25000, COVIL_LOOT_MS: 8000, COVIL_TETO_MS: 28 * 60000,
   contarCovil: () => { kills++; }, sairDoCovil: async () => { exits++; return true; },
   pedraDoCovil: () => '', quantosNaMochila: () => 0, precisaVender: () => false,
 };
@@ -39,8 +39,21 @@ vm.runInContext(
   now += 30000;
   await context.rodadaCovil(w);
   assert.equal(exits, 0, 'Não sai após o aviso de 25 segundos sem radar');
+  manager.removeLife(99);
+  now += 8000;
+  await context.rodadaCovil(w);
+  assert.equal(exits, 0, 'Remoção de outro GID não é morte do MVP acompanhado');
+  covil.entrouEm = now - 1000;
+  manager.removeLife(42);
+  now += 8000;
+  await context.rodadaCovil(w);
+  assert.equal(exits, 0, 'Remoção logo na entrada não encerra a tentativa');
+  covil.entrouEm = now - 30000;
   manager.removeLife(42);
   now += 1500;
+  await context.rodadaCovil(w);
+  assert.equal(exits, 0, 'Espera a confirmação e o drop antes de sair');
+  now += 6500;
   await context.rodadaCovil(w);
   assert.equal(kills, 1, 'Conta somente a morte confirmada pelo jogo');
   assert.equal(exits, 1, 'Sai após a morte confirmada e a espera do drop');
