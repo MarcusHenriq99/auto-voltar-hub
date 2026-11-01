@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.74
+// @version      2.75
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3173,7 +3173,7 @@
   const covilAlvo = () => COVIS.find((c) => c.mobId === Number(cfg.covil.mobId)) || COVIS.find((c) => c.mobId === 1312);
   const pedraDoCovil = (c) => 'Pedra de Convocação (Grau ' + GRAU[c.tier] + ')';
   const covil = { dentro: false, entrouEm: 0, viuEm: 0, viu: false, falhas: 0, lutaEm: 0 };
-  const COVIL_SEM_MVP_MS = 25000, COVIL_LOOT_MS = 8000, COVIL_TETO_MS = 28 * 60000;
+  const COVIL_SEM_MVP_MS = 25000, COVIL_LOOT_MS = 1000, COVIL_TETO_MS = 28 * 60000;
   const contarCovil = (campo) => {
     const dia = new Date().toLocaleDateString('pt-BR');
     if (cfg.covil.dia !== dia) { cfg.covil.dia = dia; cfg.covil.hoje = 0; cfg.covil.mortesHoje = 0; }
@@ -3203,7 +3203,7 @@
         const alvo = covilAlvo();
         // A entidade pode ser removida ao trocar de mapa ou sincronizar a cena.
         // Só aceitamos o GID que vimos vivo nesta entrada, depois de a luta começar.
-        if (cfg.covil.ligado && covil.dentro && covil.viu && covil.gid &&
+        if (cfg.covil.ligado && covil.dentro && covil.viu && covil.gid && !covil.morteConfirmadaEm &&
             emInstancia(posicao(w)) && mobId === alvo.mobId &&
             Number(gid) === Number(covil.gid) && Date.now() - covil.entrouEm >= 3000) {
           covil.morteConfirmadaEm = Date.now();
@@ -3283,7 +3283,10 @@
     if (!saiu) { log('Covil: saida sem confirmacao em 45 s'); return false; }
     return true;
   };
-  const entrarNoCovil = async (w, c, deDentro = false) => {
+  const entrarNoCovil = async (w, c) => {
+    // Nunca convocar dentro da instância: a resposta pode atrasar e uma
+    // saída de fallback acabaria abandonando o MVP recém-convocado vivo.
+    if (emInstancia(posicao(w))) return false;
     const [base] = c.codigo.split(':');
     const pesquisar = () => [...w.document.querySelectorAll('input')].find((i) => visivel(i) && /Buscar cidade, mapa/.test(i.placeholder || ''));
     if (!pesquisar()) {
@@ -3318,20 +3321,13 @@
     };
     const invocar = await esperarAte(invocarDoAlvo, 8000);
     if (!invocar) { log('Covil: botao Invocar de ' + c.nome + ' nao apareceu'); return false; }
-    if (!cfg.covil.ligado || !cfg.ligado) return false;
+    if (!cfg.covil.ligado || !cfg.ligado || emInstancia(posicao(w))) return false;
     invocar.click();
     const convocar = await esperarAte(() => botaoPorTexto(w.document, (t) => /^Convocar$/i.test(t)) || botaoPorTexto(document, (t) => /^Convocar$/i.test(t)), 5000);
     if (!convocar) { log('Covil: confirmacao "Convocar o MVP?" nao apareceu'); return false; }
     log('Covil: convocando ' + c.nome + ' (T' + c.tier + ', ' + pedraDoCovil(c) + ': ' + quantosNaMochila(pedraDoCovil(c)) + ')');
+    if (emInstancia(posicao(w))) return false;
     convocar.click();
-    if (deDentro) {
-      const pedrasAntes = quantosNaMochila(pedraDoCovil(c));
-      const novo = await esperarAte(() => { const g = gidDoMvp(w, c); return (g && g !== covil.gidMorto) || !emInstancia(posicao(w)); }, 8000, 200);
-      if (novo && emInstancia(posicao(w)) && gidDoMvp(w, c)) return true;
-      await lerMochila(w);
-      if (quantosNaMochila(pedraDoCovil(c)) < pedrasAntes && emInstancia(posicao(w))) return true;
-      return false;
-    }
     const entrou = await esperarAte(() => emInstancia(posicao(w)), 30000, 250);
     if (!entrou) { log('Covil: entrada sem confirmacao em 30 s; nao repito a cobranca agora'); return false; }
     return true;
@@ -3357,6 +3353,7 @@
         }
       }
       if (emInstancia(p) && covil.dentro) {
+        covil.foraDesde = 0;
         if (!autopilotLigado(w)) ligarAutopilot(w, true);
         const agora = Date.now();
         if (!covil.morteConfirmadaEm && mvpNoRadar(w, c)) {
@@ -3374,25 +3371,12 @@
             contarCovil('kill');
             log('Covil: ' + c.nome + ' derrotado em ' + Math.round((agora - covil.entrouEm) / 1000) + ' s (' + cfg.covil.hoje + ' hoje, ' + cfg.covil.total + ' no total, +' + c.tier * 100 + ' pontos)');
           }
-          if (covil.reinvocar !== false && !covil.tentouAqui) {
-            covil.tentouAqui = true;
-            covil.gidMorto = covil.gid;
-            const pedras = quantosNaMochila(pedraDoCovil(c));
-            if (pedras > 0 && !precisaVender(w)) {
-              etapa('Covil', 'Invocando de novo sem sair (' + pedras + ' pedras)');
-              if (await entrarNoCovil(w, c, true)) {
-                if (!covil.reinvocouLog) { covil.reinvocouLog = true; log('Covil: reinvocacao de dentro funcionou; sigo sem passar por Prontera'); }
-                covil.entrouEm = Date.now(); covil.viu = false; covil.morto = false; covil.morteConfirmadaEm = 0; covil.reinvocarFalhas = 0; covil.tentouAqui = false;
-                ligarAutopilot(w, true);
-                return;
-              }
-              covil.reinvocarFalhas = (covil.reinvocarFalhas || 0) + 1;
-              log('Covil: reinvocacao de dentro nao confirmou (' + covil.reinvocarFalhas + '/3); saio pelo SAIR');
-              if (covil.reinvocarFalhas >= 3) { covil.reinvocar = false; log('Covil: reinvocacao desligada nesta sessao; uso sempre o SAIR'); }
-              try { w.document.querySelector('button[aria-label="Mundo de Midgard"]') && botaoPorTexto(w.document, (t) => /^(Cancelar|Fechar)$/i.test(t))?.click(); } catch {}
-            }
+          etapa('Covil', 'MVP derrotado; saindo da instância');
+          if (!await sairDoCovil(w)) {
+            covil.sairFalhas = (covil.sairFalhas || 0) + 1;
+            if (covil.sairFalhas === 10) log('Covil: saída ainda não confirmou; mantenho a tentativa atual sem convocar outro MVP');
+            return;
           }
-          if (!await sairDoCovil(w)) { covil.sairFalhas = (covil.sairFalhas || 0) + 1; if (covil.sairFalhas < 10) return; log('Covil: saida falhou 10 vezes; espero a instancia acabar sozinha'); }
           covil.sairFalhas = 0;
           covil.dentro = false;
           return;
@@ -3403,16 +3387,19 @@
         if (agora - covil.entrouEm > COVIL_TETO_MS && !covil.tetoAvisado) {
           covil.tetoAvisado = true; log('Covil: 28 min sem morte confirmada; aguardando o limite do jogo, sem sair antes do MVP');
         }
-        if (covil.morteConfirmadaEm) etapa('Covil', 'MVP saiu da cena; confirmando por 8 s antes de deixar a instância');
+        if (covil.morteConfirmadaEm) etapa('Covil', 'Morte confirmada; aguardando 1 s para o drop');
         else if (covil.viu) etapa('Covil', 'MVP fora do radar; continuo na instância aguardando confirmação');
         return;
       }
       if (emInstancia(p)) {
-        const jaMorto = covil.morto;
-        covil.dentro = true; covil.entrouEm = Date.now(); covil.viu = false; covil.viuEm = 0; covil.morteConfirmadaEm = 0; covil.morto = jaMorto;
+        covil.dentro = true; covil.entrouEm = Date.now(); covil.viu = false; covil.viuEm = 0; covil.gid = 0; covil.gidMorto = 0; covil.morteConfirmadaEm = 0; covil.morto = false; covil.foraDesde = 0;
         log('Covil: ja estou em ' + p.mapa + '; aguardo morte confirmada do MVP');
         return;
       }
+      // Uma leitura transitória fora do mapa não inicia outra convocação.
+      if (!covil.foraDesde) covil.foraDesde = Date.now();
+      if (Date.now() - covil.foraDesde < 1000) return;
+      covil.dentro = false; covil.viu = false; covil.gid = 0; covil.gidMorto = 0; covil.morto = false; covil.morteConfirmadaEm = 0;
       await lerMochila(w);
       const pedras = quantosNaMochila(pedraDoCovil(c));
       if (pedras <= 0 && itensMochila().length < 5) { diagTela('covil-mochila'); log('Covil: mochila nao foi lida (' + itensMochila().length + ' itens); tento de novo'); return; }
@@ -3420,7 +3407,7 @@
       if (precisaVender(w)) { voltarAoFarmDoCovil('mochila/peso no limite (a venda roda no farm; religue o Covil depois)'); return; }
       etapa('Covil', 'Entrando: ' + c.nome + ' (' + pedras + ' pedras)');
       if (await entrarNoCovil(w, c)) {
-        covil.dentro = true; covil.entrouEm = Date.now(); covil.viu = false; covil.morto = false; covil.morteConfirmadaEm = 0; covil.semMvpAvisado = false; covil.tetoAvisado = false; covil.tentouAqui = false; covil.falhas = 0;
+        covil.dentro = true; covil.entrouEm = Date.now(); covil.viu = false; covil.gid = 0; covil.gidMorto = 0; covil.morto = false; covil.morteConfirmadaEm = 0; covil.semMvpAvisado = false; covil.tetoAvisado = false; covil.foraDesde = 0; covil.falhas = 0;
         ligarAutopilot(w, true);
         return;
       }
@@ -4977,7 +4964,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.74</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.75</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
