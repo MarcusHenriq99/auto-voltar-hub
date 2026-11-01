@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.77
+// @version      2.78
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -2857,6 +2857,7 @@
     return /^lhz_dun04(\.|$)/.test(mapa) || /chef/.test(mapa) || mapaCheffenia(mapa) || mapa.includes('@') || /inv$/.test(mapa) || /chefenia|instancia|covil|invas|maldicao/.test(nome);
   };
   const renascerNoLugar = async (w) => {
+    if (mapaCovil(posicao(w)) || covil.mortePendente) return renascerNoCovil(w);
     ocupado = true;
     try {
       const p = posicao(w);
@@ -2907,6 +2908,10 @@
   };
 
   const aoMorrer = async (w, botaoSalvamento) => {
+    if (mapaCovil(posicao(w)) || covil.mortePendente) {
+      if (!ocupado) await renascerNoCovil(w);
+      return;
+    }
     ocupado = true;
     try {
       const retomar = autopilotLigado(w) || !!botaoHunt(w, true);
@@ -3200,6 +3205,51 @@
   };
   const emInstancia = (p) => String(p?.mapa || '').includes('@');
   const mapaCovil = (p) => /@tower$/i.test(String(p?.mapa || ''));
+  const renascerNoCovil = async (w) => {
+    if (covil.renascendo || Date.now() - (covil.renascerTentouEm || 0) < 3000) return;
+    covil.mortePendente = true;
+    covil.renascendo = true;
+    covil.renascerTentouEm = Date.now();
+    ocupado = true;
+    const mapa = posicao(w)?.mapa;
+    try {
+      if (!mapaCovil({ mapa })) {
+        etapa('Covil', 'Morte pendente fora da instância; retorno ao salvamento bloqueado');
+        return;
+      }
+      const achar = () => botaoPorTexto(w.document, t => /^Renascer agora\b/i.test(t));
+      if (!achar()) abrirMenuMorte(w);
+      const botao = await esperarAte(achar, 3000, 200);
+      if (!botao || botao.disabled || botao.getAttribute('aria-disabled') === 'true') {
+        etapa('Covil', 'Aguardando Renascer agora com Folha de Yggdrasil; permaneço no covil');
+        return;
+      }
+      if (posicao(w)?.mapa !== mapa || !morteConfirmada(w)) return;
+      log('Covil: usando Renascer agora com Folha de Yggdrasil, sem sair da instância');
+      // O .click() global redireciona por coordenadas e emite vários eventos.
+      // Aqui só o botão de renascer pode receber um único click.
+      botao.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true, composed: true, view: w }));
+      const vivo = await esperarAte(() => posicao(w)?.mapa === mapa && !morteConfirmada(w), 6000, 200);
+      if (!vivo) {
+        etapa('Covil', 'Renascimento ainda não confirmado no mesmo mapa; salvamento bloqueado');
+        return;
+      }
+      covil.mortePendente = false;
+      covil.morteRegistrada = false;
+      if (huntsPausados.has(w)) { botaoHunt(w, false)?.click(); huntsPausados.delete(w); }
+      const ok = await esperarAte(() => {
+        if (posicao(w)?.mapa !== mapa || morteConfirmada(w)) return false;
+        if (autopilotLigado(w)) return true;
+        ligarAutopilot(w, true); return false;
+      }, 6000, 300);
+      log(ok ? 'Covil: renasceu no mesmo mapa; caça religada para terminar o MVP' : 'Covil: aguardando Autopilot após renascimento');
+    } catch (e) {
+      log('Covil: falha ao renascer; não saio da instância: ' + String(e?.message || e).slice(0, 100));
+    } finally {
+      covil.renascendo = false;
+      ocupado = false;
+    }
+  };
   const gidDoMvp = (w, c) => {
     try { const m = (w.__elragEngine.getAutopilotRadarSnapshot()?.mobs || []).find((x) => x && Number(x.mobId) === c.mobId); return m ? m.gid : null; } catch { return null; }
   };
@@ -3245,6 +3295,7 @@
     return alvo;
   };
   const sairDoCovil = async (w) => {
+    if (covil.mortePendente || covil.renascendo || morteConfirmada(w)) return false;
     let foraVezes = 0;
     const fora = () => { const q = posicao(w); foraVezes = q?.mapa && !emInstancia(q) ? foraVezes + 1 : 0; return foraVezes >= 2; };
     if (fora() || (await esperar(300), fora())) return true;
@@ -3732,6 +3783,7 @@
     return false;
   };
   const sairParaRifa = async (w) => {
+    if (mapaCovil(posicao(w)) || covil.mortePendente || covil.renascendo) return false;
     if (posicao(w)?.mapa === 'prontera') return true;
     const sair = w.document.querySelector('[data-tutorial="sair-da-instancia"]') ||
       botaoPorTexto(w.document,t => /^Sair$/i.test(t));
@@ -3969,6 +4021,7 @@
     }
   };
   const vigiarRifa = (w) => {
+    if (mapaCovil(posicao(w)) || covil.mortePendente || covil.renascendo) return;
     encerrarObservacoesRifa();
     const edicao = edicaoRifaAtual();
     if (!edicao) return;
@@ -4097,18 +4150,18 @@
     instalarGanchos(w);
     vigiarLucky();
     vigiarTempoConteudo(w);
-    vigiarRifa(w);
+    if (!mapaCovil(posicao(w)) && !covil.mortePendente) vigiarRifa(w);
     if (rifaRodando) return;
     // A tela de tres mortes oferece Renascer agora. Trate-a antes de uma
     // rotina ocupada deixar o personagem esperando no menu.
-    if (cfg.ligado && (cfg.covil.ligado && emInstancia(posicao(w)) || mapaCovil(posicao(w))) && morteConfirmada(w)) {
+    if (cfg.ligado && (cfg.covil.ligado && emInstancia(posicao(w)) || mapaCovil(posicao(w)) || covil.mortePendente) && morteConfirmada(w)) {
+      covil.mortePendente = true;
       if (!covil.morteRegistrada && cfg.covil.ligado) {
         covil.morteRegistrada = true; contarCovil('morte');
         log('Covil: morte na instância; usando Renascer agora sem voltar a Prontera');
       }
       if (!ocupado) {
-        if (!botaoPorTexto(w.document, (t) => /^Renascer agora/i.test(t))) abrirMenuMorte(w);
-        void renascerNoLugar(w);
+        void renascerNoCovil(w);
       }
       return;
     }
@@ -4134,9 +4187,7 @@
     if (cheffRecovery?.active && Date.now() - (cheffRecovery.desde || 0) < 45000 && (mapaCheffenia(mapaCheff) || /^prontera$/i.test(mapaCheff) || /cheffenia|chefenia/i.test(mapaCheff))) return;
     const morreu = morteConfirmada(w);
     if (cfg.covil.ligado) {
-      const salvarC = botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento');
-      if (morreu && !salvarC) { recuperarMorteSemDialogo(w); return; }
-      if (morreu && salvarC) { void aoMorrer(w, salvarC); return; }
+      if (morreu) { etapa('Covil', 'Aguardando renascimento; não uso retorno ao salvamento'); return; }
       rodadaCovil(w); return;
     }
     if (mapaCovil(posicao(w))) {
@@ -5017,7 +5068,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.77</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.78</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);

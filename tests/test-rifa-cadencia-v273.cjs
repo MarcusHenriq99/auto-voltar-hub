@@ -82,6 +82,7 @@ function scheduling() {
   const edition = { id: 'teste', inicio: now, abriu: true };
   const context = {
     cfg, ocupado: false, rifaRodando: false, rifaEstado: { edicao: '' },
+    mapaCovil: () => false, posicao: () => ({}), covil: {},
     tentativaEntradaRifa: { id: 'teste', quantidade: 1, depois: now + 10000 },
     Date: { now: () => now }, edicaoRifaAtual: () => edition, anuncioRifa: () => 'Fúria',
     premioMarcadoRifa: () => true, rifaStatus: x => { status = x; },
@@ -118,12 +119,13 @@ function exclusiveWatch() {
   let otherRoutine = 0;
   Object.assign(context, {
     rifaRodando: false, dispensarAvisoDiario: () => false, cfg: { ligado: true },
+    mapaCovil: () => false, covil: {},
     fecharLojaCash: () => false, ligarCalibracao: () => {}, instalarGanchos: () => {},
     vigiarLucky: () => {}, vigiarTempoConteudo: () => {},
     vigiarRifa: () => { context.rifaRodando = true; },
     posicao: () => { otherRoutine++; return {}; },
   });
-  context.check(); assert.equal(otherRoutine, 0, 'Não executar farm no mesmo tick que inicia rifa');
+  context.check(); assert.equal(otherRoutine, 1, 'Somente consulta mapa para proteger o covil; não executa farm ao iniciar rifa');
 }
 
 function targetAndReader() {

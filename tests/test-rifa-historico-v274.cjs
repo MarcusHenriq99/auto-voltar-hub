@@ -16,6 +16,7 @@ const { document } = require('./fixtures/rifa-dom.cjs');
 const historyElement = document.createElement('div');
 const context = {
   cfg, Date: FakeDate, ocupado: false, rifaMenu: null,
+  mapaCovil: () => false, posicao: () => ({}), covil: {},
   salvarCfg: () => { writes++; }, edicaoRifaAtual: () => edition,
   anuncioRifa: () => prize, premioMarcadoRifa: p => cfg.rifa.premios.includes(p),
   rifaStatus: () => {}, executarRifa: () => { starts++; }, log: () => {},
