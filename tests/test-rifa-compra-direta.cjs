@@ -34,12 +34,22 @@ async function scenario(mode) {
   const w = {
     document: { querySelectorAll: () => mode === 'legacy' ? [confirmButton] : [] },
   };
+  w.MouseEvent = class { constructor(type, init) { this.type = type; Object.assign(this, init); } };
+  w.document.defaultView = w;
+  for (const button of [buyButton, confirmButton]) {
+    button.isConnected = true;
+    button.ownerDocument = w.document;
+    button.getAttribute = () => null;
+    button.dispatchEvent = event => { assert.equal(event.type, 'click'); button.click(); return true; };
+  }
   const context = {
     cfg, rifaEstado: { premio: '', compras: 0 }, rifaMenu: null, PREMIOS_RIFA: ['Fúria do Berserker'], CHAVE_CFG: 'cfg',
     normalizar: x => x.toLowerCase(), textoDe: x => x === buyButton ? 'Comprar número — 500.000z' : 'Comprar — 500.000z',
     visivel: () => true, janelaRifa: () => modal, posicao: () => ({ mapa: 'prontera' }),
     zenyRifa: () => balance, numerosCompradosRifa: () => numbers,
     premioMarcadoRifa: () => true, registroRifa: () => record,
+    registrarMotivoRifa: () => record,
+    atualizarHistoricoRifa: () => {},
     rifaEsgotada: () => false, rifaStatus: (x) => { status = x; },
     gravarJson: () => {}, salvarCfg: () => {}, esperar: async () => {},
     esperarAte: async fn => {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.75
+// @version      2.76
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3529,8 +3529,8 @@
     } else if (premio && !registro.premio) registro.premio = premio;
     return registro;
   };
-  const textoHistoricoRifa = () => (cfg.rifa.historico.length
-    ? cfg.rifa.historico.map(r => {
+  const textoHistoricoRifa = (registros = cfg.rifa.historico) => (registros.length
+    ? registros.map(r => {
       const quando = new Date(r.inicio).toLocaleString('pt-BR');
       return quando+' · '+(r.premio||'Prêmio a confirmar')+'\n'+
         'Tentativas: '+r.tentativas+' · Comprados: '+r.confirmados+
@@ -3539,6 +3539,32 @@
         ((r.ocorrencias || []).length ? '\nMotivos e andamento:\n'+r.ocorrencias.map(o =>
           new Date(o.em).toLocaleTimeString('pt-BR')+' · '+o.etapa+' — '+o.detalhe).join('\n') : '');
     }).join('\n\n') : 'Nenhuma edição observada neste personagem. O histórico é registrado enquanto o jogo e o script estão abertos.');
+  const atualizarHistoricoRifa = () => {
+    const h = rifaMenu?.querySelector('[data-rifa-historico]');
+    if (!h) return;
+    const rolagem = h.scrollTop;
+    const abertos = new Set([...h.querySelectorAll('details[data-rifa-edicao]')]
+      .filter(el => el.open).map(el => el.dataset.rifaEdicao));
+    const doc = h.ownerDocument;
+    const linhas = cfg.rifa.historico.map(r => {
+      const grupo = doc.createElement('details');
+      grupo.dataset.rifaEdicao = r.id;
+      grupo.open = abertos.has(r.id);
+      Object.assign(grupo.style, { borderBottom: '1px solid #445967', padding: '6px 0' });
+      const titulo = doc.createElement('summary');
+      titulo.style.cursor = 'pointer';
+      titulo.textContent = new Date(r.inicio).toLocaleString('pt-BR')+' · '+
+        (r.premio || 'Prêmio a confirmar')+' · '+Number(r.confirmados || 0)+' bilhete(s)';
+      const detalhe = doc.createElement('pre');
+      Object.assign(detalhe.style, { whiteSpace: 'pre-wrap', font: '12px/1.4 Arial,sans-serif', margin: '6px 0' });
+      detalhe.textContent = textoHistoricoRifa([r]);
+      grupo.append(titulo, detalhe);
+      return grupo;
+    });
+    h.replaceChildren(...linhas);
+    if (!linhas.length) h.textContent = textoHistoricoRifa();
+    h.scrollTop = rolagem;
+  };
   const registrarMotivoRifa = (edicao, premio, etapa, detalhe) => {
     const premioAnterior = cfg.rifa.historico.find(r => r.id === edicao.id)?.premio;
     const registro = registroRifa(edicao, premio);
@@ -3549,8 +3575,7 @@
     registro.ocorrencias = ocorrencias.slice(-12);
     if (!registro.confirmados) registro.resultado = etapa+' — '+detalhe;
     salvarCfg();
-    const h = rifaMenu?.querySelector('[data-rifa-historico]');
-    if (h) h.textContent = textoHistoricoRifa();
+    atualizarHistoricoRifa();
     return registro;
   };
   const encerrarObservacoesRifa = () => {
@@ -3564,8 +3589,7 @@
     }
     if (mudou) {
       salvarCfg();
-      const h = rifaMenu?.querySelector('[data-rifa-historico]');
-      if (h) h.textContent = textoHistoricoRifa();
+      atualizarHistoricoRifa();
     }
   };
   const conferirResultadoRifa = (w) => {
@@ -3589,8 +3613,7 @@
       'Vencedor anunciado; informe o nome do personagem para conferir';
     salvarCfg();
     log('Rifa: '+registro.resultado+' · '+registro.premio+' · vencedor '+vencedor);
-    const h = rifaMenu?.querySelector('[data-rifa-historico]');
-    if (h) h.textContent = textoHistoricoRifa();
+    atualizarHistoricoRifa();
   };
   const rifaStatus = (etapa, detalhe = '') => {
     const mudou = rifaEstado.etapa !== etapa || rifaEstado.detalhe !== detalhe;
@@ -3629,6 +3652,8 @@
     const m = /comprar n[uú]mero\s*[—–-]\s*([\d.,]+)\s*z/i.exec(textoDe(botao) || '');
     return m ? Number(m[1].replace(/[^\d]/g, '')) : NaN;
   };
+  const RIFA_INTERVALO_MS = 600;
+  const comprasRifaEmCurso = new WeakSet();
   // O .click() global simula oito eventos e troca o alvo por elementFromPoint.
   // Na rifa use apenas um click no controle exato, mesmo com outro painel por cima.
   const clicarControleRifa = (botao) => {
@@ -3708,6 +3733,9 @@
     fechar?.click();
   };
   const comprarRifa = async (w,edicao,premioAvisado) => {
+    if (comprasRifaEmCurso.has(w)) return;
+    comprasRifaEmCurso.add(w);
+    try {
     let premio = premioAvisado, semBotaoDesde = 0, semJanelaDesde = 0, registro = null;
     const parar = (etapa, detalhe) => {
       registrarMotivoRifa(edicao, premio, etapa, detalhe);
@@ -3815,6 +3843,10 @@
       if (confirmado?.botao) {
         const precoConfirmacao = Number((textoDe(confirmado.botao).match(/[\d.,]+/) || [''])[0].replace(/[^\d]/g, ''));
         if (precoConfirmacao !== preco) { parar('Parada','preço da confirmação difere do botão'); return; }
+        await esperar(RIFA_INTERVALO_MS);
+        if (!cfg.rifa.ligado || !cfg.ligado || posicao(w)?.mapa !== 'prontera') {
+          parar('Interrompida','participação interrompida antes de confirmar a compra'); return;
+        }
         if (!clicarControleRifa(confirmado.botao)) {
           parar('Parada','confirmação indisponível; confira a compra antes de tentar novamente'); return;
         }
@@ -3845,15 +3877,18 @@
       if (!registro.vencedor) registro.resultado = 'Aguardando sorteio';
       if (registro.confirmados % 5 === 0) salvarCfg();
       else gravarJson(CHAVE_CFG,cfg);
-      const h = rifaMenu?.querySelector('[data-rifa-historico]');
-      if (h) h.textContent = textoHistoricoRifa();
+      atualizarHistoricoRifa();
       rifaEstado.compras += comprados;
       rifaStatus('Comprando',rifaEstado.compras+' número(s); '+premio);
-      // A confirmação libera a próxima leitura; o estado do botão dita a cadência.
-      await esperar(100);
+      // O botão pode habilitar antes de o servidor liberar outra compra.
+      // Esperar também após o comprovante impede rajadas de cliques.
+      await esperar(RIFA_INTERVALO_MS);
     }
     parar('Interrompida', !cfg.rifa.ligado ? 'Rifa desligada durante a participação' :
       !cfg.ligado ? 'Auto-voltar desligado durante a participação' : 'personagem saiu de Prontera durante a participação');
+    } finally {
+      comprasRifaEmCurso.delete(w);
+    }
   };
   const executarRifa = async (w,edicao) => {
     if (ocupado || rifaRodando || !cfg.rifa.ligado || !cfg.ligado ||
@@ -3999,15 +4034,14 @@
     personagem.onchange=()=>{cfg.rifa.personagem=personagem.value.trim();
       for (const r of cfg.rifa.historico) if (r.vencedor && r.resultado.startsWith('Vencedor anunciado'))
         r.resultado=normalizar(r.vencedor)===normalizar(cfg.rifa.personagem)?'Ganhou':'Não ganhou';
-      salvarCfg();const h=menu.querySelector('[data-rifa-historico]');if(h)h.textContent=textoHistoricoRifa();};
+      salvarCfg();atualizarHistoricoRifa();};
     personagemLinha.appendChild(personagem);
     const historicoRifa=document.createElement('details');
     Object.assign(historicoRifa.style,{margin:'9px 0',border:'1px solid #445967',padding:'7px',borderRadius:'5px'});
     const tituloHistorico=document.createElement('summary');tituloHistorico.textContent='Histórico de edições, bilhetes e motivos';
     tituloHistorico.style.cursor='pointer';
-    const conteudoHistorico=document.createElement('pre');conteudoHistorico.dataset.rifaHistorico='1';
-    conteudoHistorico.textContent=textoHistoricoRifa();
-    Object.assign(conteudoHistorico.style,{whiteSpace:'pre-wrap',font:'12px/1.4 Arial,sans-serif',maxHeight:'190px',overflowY:'auto'});
+    const conteudoHistorico=document.createElement('div');conteudoHistorico.dataset.rifaHistorico='1';
+    Object.assign(conteudoHistorico.style,{font:'12px/1.4 Arial,sans-serif',maxHeight:'260px',overflowY:'auto'});
     historicoRifa.append(tituloHistorico,conteudoHistorico);
     const acoes=document.createElement('div');
     Object.assign(acoes.style,{display:'flex',gap:'6px',justifyContent:'space-between'});
@@ -4025,6 +4059,7 @@
     );
     menu.append(topo,ajuda,status,lista,limiteLinha,personagemLinha,historicoRifa,acoes);
     document.body.appendChild(menu);rifaMenu=menu;
+    atualizarHistoricoRifa();
     fznArrastavel(menu,topo,'fzn-rifa-ygg-pos-v1');
   };
   let renascimentoImediatoPendente = false, ultimoCliqueRenascer = 0;
@@ -4964,7 +4999,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.75</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.76</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
