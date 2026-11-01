@@ -24,6 +24,7 @@ const context = {
   Date: { now: () => now }, WeakSet, cfg, covil, ocupado: false,
   covilAlvo: () => alvo, posicao: () => ({ mapa: map }),
   carregarEntidadesNpc: async () => manager, autopilotLigado: () => true,
+  morteConfirmada: () => false,
   ligarAutopilot: () => {}, etapa: () => {}, log: () => {},
   contarCovil: () => { kills++; }, sairDoCovil: async () => { exits++; return exitOk; },
   entrarNoCovil: async () => { entries++; map = '1@tower'; return true; },

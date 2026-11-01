@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.78
+// @version      2.79
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -313,6 +313,7 @@
   let controlesAbertos = true;
   let ajustesAbertos = false;
   const etapa = (nome, detalhe = '') => {
+    if (andamento.etapa === nome && andamento.detalhe === detalhe) return;
     andamento.etapa = nome; andamento.detalhe = detalhe; andamento.desde = Date.now();
     log(nome + (detalhe ? ': ' + detalhe : ''));
   };
@@ -3253,6 +3254,51 @@
   const gidDoMvp = (w, c) => {
     try { const m = (w.__elragEngine.getAutopilotRadarSnapshot()?.mobs || []).find((x) => x && Number(x.mobId) === c.mobId); return m ? m.gid : null; } catch { return null; }
   };
+  const recuperarCovilParado = async (w, c) => {
+    const agora = Date.now(), p = posicao(w);
+    if (!mapaCovil(p) || morteConfirmada(w) || covil.mortePendente || covil.morteConfirmadaEm) return;
+    let ap;
+    try { ap = w.__elragEngine.getAutopilotSnapshot(); } catch { return; }
+    if (!ap) return;
+    // Nunca reiniciar durante ataque, conjuração ou deslocamento. O estado
+    // Aguardando é confirmado pela interface, além de não haver alvo fixado.
+    const ocioso = /Autopilot:\s*Aguardando/i.test(w.document.body?.innerText || '') && !Number(ap.targetGid);
+    const chave = p.mapa + ':' + p.x + ':' + p.y;
+    if (!ocioso || covil.paradoChave !== chave) {
+      covil.paradoChave = chave; covil.paradoDesde = agora; return;
+    }
+    if (agora - (covil.paradoDesde || agora) < 12000 || agora - (covil.recuperouEm || 0) < 15000) return;
+    covil.recuperouEm = agora;
+    const manager = await carregarEntidadesNpc(w);
+    if (posicao(w)?.mapa !== p.mapa || morteConfirmada(w)) return;
+    const atual = posicao(w);
+    const apAtual = w.__elragEngine.getAutopilotSnapshot();
+    if (atual?.x !== p.x || atual?.y !== p.y || Number(apAtual?.targetGid) ||
+        !/Autopilot:\s*Aguardando/i.test(w.document.body?.innerText || '')) return;
+    const entidade = covil.gid ? manager?.get?.(covil.gid) : null;
+    // Um cadáver do GID acompanhado é evidência positiva caso o evento de
+    // morte tenha ocorrido durante uma atualização. Radar vazio não é prova.
+    if (covil.viu && entidade && Number(entidade._job || entidade.job || entidade.mobId) === c.mobId && entidade.isDead?.() === true) {
+      covil.morteConfirmadaEm = Date.now(); covil.gidMorto = covil.gid;
+      log('Covil: morte confirmada pela entidade do MVP; retomando conclusão');
+      return;
+    }
+    let alvo = null;
+    try { alvo = (w.__elragEngine.getAutopilotRadarSnapshot()?.mobs || []).find(m => Number(m?.mobId) === c.mobId); } catch {}
+    if (!cfg.ligado || !cfg.covil.ligado || covil.mortePendente) return;
+    if (alvo?.gid) {
+      w.__elragEngine.setAutopilotPinnedTarget?.(alvo.gid);
+      log('Covil: personagem parado sem alvo; fixei novamente ' + c.nome);
+    } else {
+      w.__elragEngine.setAutopilotPinnedTarget?.(0);
+      ligarAutopilot(w, false);
+      await esperar(600);
+      if (!cfg.ligado || !cfg.covil.ligado || posicao(w)?.mapa !== p.mapa || morteConfirmada(w)) return;
+      log('Covil: busca sem progresso; reiniciei o Autopilot dentro da instância');
+    }
+    ligarAutopilot(w, true);
+    covil.paradoDesde = Date.now();
+  };
   const mvpNoRadar = (w, c) => {
     try { return (w.__elragEngine.getAutopilotRadarSnapshot()?.mobs || []).some((m) => m && Number(m.mobId) === c.mobId); } catch { return false; }
   };
@@ -3424,6 +3470,7 @@
       if (emInstancia(p) && covil.dentro) {
         covil.foraDesde = 0;
         if (!autopilotLigado(w)) ligarAutopilot(w, true);
+        await recuperarCovilParado(w, c);
         const agora = Date.now();
         if (!covil.morteConfirmadaEm && mvpNoRadar(w, c)) {
           covil.viu = true; covil.viuEm = agora; covil.gid = gidDoMvp(w, c);
@@ -5068,7 +5115,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.78</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.79</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
