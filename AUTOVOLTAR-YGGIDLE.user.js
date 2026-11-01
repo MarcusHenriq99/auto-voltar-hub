@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.76
+// @version      2.77
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -13,10 +13,25 @@
 (() => {
   'use strict';
 
-  // O Hub pode injetar uma atualizacao na pagina sem encerrar a copia anterior.
-  // Uma unica instancia por janela impede duas rotinas clicando na mesma rifa.
-  if (window.__fznAutoVoltarInstancia) return;
-  window.__fznAutoVoltarInstancia = true;
+  // O Hub descarta os timers antes de reaplicar o arquivo. O marcador precisa
+  // acompanhar esse descarte, ou a próxima cópia retorna sem iniciar o vigia.
+  const noHub = typeof FZN_onDispose === 'function';
+  const instanciaAnterior = window.__fznAutoVoltarInstancia;
+  if (instanciaAnterior && !(noHub && instanciaAnterior === true)) return;
+  const limparInterfaceAutoVoltar = () => {
+    document.querySelectorAll('[data-fzn-auto-voltar], [data-fzn-av-aux], .fzn-rifa-menu')
+      .forEach(el => el.remove());
+  };
+  // Migração do marcador booleano da v2.74–2.76, já descartado pelo Hub.
+  if (instanciaAnterior === true && noHub) limparInterfaceAutoVoltar();
+  const instanciaAutoVoltar = { ativa: true };
+  window.__fznAutoVoltarInstancia = instanciaAutoVoltar;
+  if (noHub) FZN_onDispose(() => {
+    instanciaAutoVoltar.ativa = false;
+    if (window.__fznAutoVoltarInstancia !== instanciaAutoVoltar) return;
+    delete window.__fznAutoVoltarInstancia;
+    limparInterfaceAutoVoltar();
+  });
 
   const fznBypassIsTrusted = (win) => {
     if (!win || win.__fznIsTrustedHook) return;
@@ -99,6 +114,7 @@
     };
     aplicar();
     const alca = doc.createElement('div');
+    alca.dataset.fznAvAux = '1';
     alca.title = 'Arraste para redimensionar · dois cliques: tamanho automatico';
     Object.assign(alca.style, { position: 'fixed', zIndex: 2147483647, width: '12px', height: '12px', display: 'none', touchAction: 'none',
       background: 'linear-gradient(135deg, transparent 45%, rgba(255,255,255,.55) 45%, rgba(255,255,255,.55) 55%, transparent 55%, transparent 70%, rgba(255,255,255,.55) 70%, rgba(255,255,255,.55) 80%, transparent 80%)', opacity: '0.6' });
@@ -135,9 +151,11 @@
     try { est = { ...est, ...JSON.parse(localStorage.getItem(chave)) }; } catch {}
     const gravar = () => { try { localStorage.setItem(chave, JSON.stringify(est)); } catch {} };
     const btn = doc.createElement('div');
+    btn.dataset.fznAvAux = '1';
     btn.textContent = '–'; btn.title = 'Encolher';
     Object.assign(btn.style, { position: 'fixed', zIndex: 2147483647, width: '14px', height: '14px', lineHeight: '12px', textAlign: 'center', font: 'bold 12px sans-serif', color: '#fff', background: 'rgba(0,0,0,.55)', border: '1px solid rgba(255,255,255,.35)', borderRadius: '4px', cursor: 'pointer', userSelect: 'none', display: 'none' });
     const bola = doc.createElement('div');
+    bola.dataset.fznAvAux = '1';
     bola.title = 'Abrir';
     Object.assign(bola.style, { position: 'fixed', zIndex: 2147483647, width: '14px', height: '14px', borderRadius: '50%', background: '#999', border: '1px solid #fff', opacity: '0.25', cursor: 'pointer', display: 'none', transition: 'opacity .15s' });
     bola.addEventListener('mouseenter', () => { bola.style.opacity = '0.9'; });
@@ -4999,7 +5017,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.76</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.77</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
