@@ -24,5 +24,11 @@ w.__fznEu=()=>({ACTION:{DIE:5},action:0});
 (async()=>{
   await ctx.die(w,{click:()=>{throw Error('Não voltar ao salvamento vivo');}});
   await ctx.revive(w);
+  let cityChecks=0;
+  const entry={emInstancia:()=>false,posicao:()=>({mapa:'nif_fild01'}),sairParaRifa:async()=>{cityChecks++;return false;}};
+  vm.createContext(entry);
+  vm.runInContext(section('  const entrarNoCovil =','  const voltarAoFarmDoCovil =')+'\nglobalThis.enter=entrarNoCovil;',entry);
+  assert.equal(await entry.enter({},{}),false,'Não abre convocação fora da cidade sem confirmar retorno');
+  assert.equal(cityChecks,1);
   console.log('OK: menu comum não prende personagem vivo nem autoriza Folha ou salvamento.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

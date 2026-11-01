@@ -45,12 +45,14 @@ async function scenario(mode) {
 }
 (async () => {
   for (const mode of ['success', 'absent', 'disabled', 'pending', 'teleported']) await scenario(mode);
-  const ctx = { mapaCovil: () => true, posicao: () => ({ mapa: '1@tower' }), covil: {} };
+  const ctx = { cfg: { covil: { ligado: true } }, mapaCovil: () => true, posicao: () => ({ mapa: '1@tower' }), covil: {} };
   vm.createContext(ctx);
   vm.runInContext(section('  const sairParaRifa =', '  const fecharRifa =') +
     section('  const vigiarRifa =', '  const abrirMenuRifa =') +
     '\nglobalThis.leave = sairParaRifa; globalThis.watch = vigiarRifa;', ctx);
   assert.equal(await ctx.leave({}), false, 'Rifa não sai do covil');
   ctx.watch({}); // Retorna antes de observar horário ou acionar compras.
+  ctx.mapaCovil = () => false; ctx.posicao = () => ({ mapa: 'prontera' });
+  ctx.watch({}); // Covil ligado também bloqueia rifa entre duas entradas.
   console.log('OK: covil usa uma Folha por tentativa, confirma vida no mesmo mapa e bloqueia salvamento/rifa.');
 })().catch(e => { console.error(e); process.exitCode = 1; });

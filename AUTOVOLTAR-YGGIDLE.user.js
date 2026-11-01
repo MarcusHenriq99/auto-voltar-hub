@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.80
+// @version      2.81
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3406,6 +3406,9 @@
     // Nunca convocar dentro da instância: a resposta pode atrasar e uma
     // saída de fallback acabaria abandonando o MVP recém-convocado vivo.
     if (emInstancia(posicao(w))) return false;
+    // A convocação em grupo é recusada fora da cidade. Confirmar Prontera
+    // antes de abrir a convocação evita ciclos de falha após outra rotina.
+    if (posicao(w)?.mapa !== 'prontera' && !await sairParaRifa(w)) return false;
     const [base] = c.codigo.split(':');
     const pesquisar = () => [...w.document.querySelectorAll('input')].find((i) => visivel(i) && /Buscar cidade, mapa/.test(i.placeholder || ''));
     if (!pesquisar()) {
@@ -4012,6 +4015,7 @@
     }
   };
   const executarRifa = async (w,edicao) => {
+    if (cfg.covil?.ligado || covil.mortePendente) return;
     if (ocupado || rifaRodando || !cfg.rifa.ligado || !cfg.ligado ||
         !(cfg.rifa.premios||[]).length || !(Number(cfg.rifa.limiteGasto) >= 500000)) return;
     rifaRodando = true; ocupado = true;
@@ -4072,7 +4076,7 @@
     }
   };
   const vigiarRifa = (w) => {
-    if (mapaCovil(posicao(w)) || covil.mortePendente || covil.renascendo) return;
+    if (cfg.covil?.ligado || mapaCovil(posicao(w)) || covil.mortePendente || covil.renascendo) return;
     encerrarObservacoesRifa();
     const edicao = edicaoRifaAtual();
     if (!edicao) return;
@@ -4201,7 +4205,7 @@
     instalarGanchos(w);
     vigiarLucky();
     vigiarTempoConteudo(w);
-    if (!mapaCovil(posicao(w)) && !covil.mortePendente) vigiarRifa(w);
+    if (!cfg.covil?.ligado && !mapaCovil(posicao(w)) && !covil.mortePendente) vigiarRifa(w);
     if (rifaRodando) return;
     // A tela de tres mortes oferece Renascer agora. Trate-a antes de uma
     // rotina ocupada deixar o personagem esperando no menu.
@@ -5122,7 +5126,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.80</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.81</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
