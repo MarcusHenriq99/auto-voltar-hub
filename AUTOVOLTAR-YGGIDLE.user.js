@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.79
+// @version      2.80
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -2858,6 +2858,7 @@
     return /^lhz_dun04(\.|$)/.test(mapa) || /chef/.test(mapa) || mapaCheffenia(mapa) || mapa.includes('@') || /inv$/.test(mapa) || /chefenia|instancia|covil|invas|maldicao/.test(nome);
   };
   const renascerNoLugar = async (w) => {
+    if (!morteConfirmada(w)) return;
     if (mapaCovil(posicao(w)) || covil.mortePendente) return renascerNoCovil(w);
     ocupado = true;
     try {
@@ -2909,6 +2910,7 @@
   };
 
   const aoMorrer = async (w, botaoSalvamento) => {
+    if (!morteConfirmada(w)) return;
     if (mapaCovil(posicao(w)) || covil.mortePendente) {
       if (!ocupado) await renascerNoCovil(w);
       return;
@@ -2965,8 +2967,9 @@
         w.document.head.appendChild(script);
       } catch {}
     }
-    const texto = w.document.body?.innerText || '';
-    return hpMortal(w) || (/Renascer agora/i.test(texto) && Boolean(botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento')));
+    // O menu comum também oferece Renascer agora e salvamento a personagens
+    // vivos. Esses botões não comprovam morte e não autorizam gastar Folha.
+    return hpMortal(w);
   };
   const recuperarMorteSemDialogo = (w) => {
     if (morteSemDialogoJanela !== w) { morteSemDialogoJanela = w; morteSemDialogoDesde = 0; }
@@ -3207,6 +3210,7 @@
   const emInstancia = (p) => String(p?.mapa || '').includes('@');
   const mapaCovil = (p) => /@tower$/i.test(String(p?.mapa || ''));
   const renascerNoCovil = async (w) => {
+    if (!morteConfirmada(w)) return;
     if (covil.renascendo || Date.now() - (covil.renascerTentouEm || 0) < 3000) return;
     covil.mortePendente = true;
     covil.renascendo = true;
@@ -4212,7 +4216,10 @@
       }
       return;
     }
-    if (!morteConfirmada(w)) covil.morteRegistrada = false;
+    if (!morteConfirmada(w)) {
+      covil.morteRegistrada = false;
+      covil.mortePendente = false;
+    }
     if (cfg.ligado && mapaDeRenascer(posicao(w)) && !window.top.__FZN_CHEFF_RECOVERY__?.active) {
       const renascer = botaoPorTexto(w.document, (t) => /^Renascer agora/i.test(t));
       if (renascer && morteConfirmada(w) && Date.now() - ultimoCliqueRenascer > 1500) {
@@ -5115,7 +5122,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.79</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.80</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
