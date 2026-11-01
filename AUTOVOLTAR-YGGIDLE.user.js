@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.81
+// @version      2.82
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -5126,7 +5126,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.81</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.82</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
@@ -5148,6 +5148,8 @@
     atualizarStatus();
   }
 
+  // O Auto Hunt consulta o dono do renascimento para não clicar em paralelo.
+  instanciaAutoVoltar.controlaCovil = mapa => Boolean(cfg.ligado && (cfg.covil?.ligado || mapaCovil({ mapa })));
   let ultimoErroVerificarEm = 0;
   const verificarSeguro = () => {
     try { verificar(); }

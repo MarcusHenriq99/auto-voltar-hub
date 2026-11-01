@@ -21,6 +21,7 @@ const ctx = {
 };
 vm.createContext(ctx);
 vm.runInContext(
+  trecho('  const personagemMorto =', '  const covilControladoPeloVoltar =') +
   trecho('  const janelaBloqueiaReligar =', '  // v1.60: sempre ativo') +
   trecho('  const mapaCheffenia =', '  const visivelCheff =') +
   trecho('  let apParadoDesde =', '  const ciclo =') +
@@ -32,7 +33,7 @@ assert.equal(ctx.api.ligarAutopilotAoEntrarCheffenia(w, e, { runtimeState: 1 }, 
 assert.equal(ligacoes, 1, 'Liga na entrada sem esperar tres segundos');
 assert.equal(ctx.api.ligarAutopilotAoEntrarCheffenia(w, e, { runtimeState: 1 }, agora + 100, mapa), false);
 assert.equal(ligacoes, 1, 'Nao repete o clique a cada ciclo');
-w.document.body.innerText = 'Renascer agora';
+w.document.body.innerText = 'HP\n0 / 100\n0,0%\nRenascer agora';
 assert.equal(ctx.api.janelaBloqueiaReligar(w, mapa), true, 'Morte continua bloqueando a religacao');
 
 const asas = {

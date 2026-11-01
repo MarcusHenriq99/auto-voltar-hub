@@ -20,11 +20,13 @@ for (const state of [0, 1]) {
 assert.equal(ap({ __elragEngine: { getAutopilotSnapshot: () => ({ runtimeState: 2 }) } }), true);
 
 const janelaSource = trecho(hunt, '  const janelaBloqueiaReligar =', '  // v1.60: sempre ativo');
-const janela = vm.runInNewContext(janelaSource + '\njanelaBloqueiaReligar;', {
+const janela = vm.runInNewContext(trecho(hunt, '  const personagemMorto =', '  const covilControladoPeloVoltar =') + janelaSource + '\njanelaBloqueiaReligar;', {
   temJanelaAberta: () => true,
+  mapaDeRenascer: () => true,
 });
 assert.equal(janela({ document: { body: { innerText: 'Voltar para o mapa anterior' } } }, 'covil@1'), false);
-assert.equal(janela({ document: { body: { innerText: 'Renascer agora' } } }, 'covil@1'), true);
+assert.equal(janela({ document: { body: { innerText: 'Renascer agora' } } }, 'covil@1'), false, 'Menu comum não é morte');
+assert.equal(janela({ document: { body: { innerText: 'HP\n0 / 100\n0,0%\nRenascer agora' } } }, 'covil@1'), true);
 
 const morteSource = trecho(voltar, '  let ponteMorteJanela =', '  const interromperTudo =');
 let menuClicado = false;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.65
+// @version      1.66
 // @description  Complementa o autopilot do jogo: quando ele fica sem alvo, fixa o monstro visivel mais proximo ou anda explorando o mapa ate aparecer um. v1.54: clique completo no canvas e nos paineis.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -543,7 +543,22 @@
   
   const canvasDoJogo = (w) => [...w.document.querySelectorAll('canvas')]
     .sort((a, b) => (b.clientWidth * b.clientHeight) - (a.clientWidth * a.clientHeight))[0] || null;
-  const temJanelaAberta = (w) => /Renascer agora|Bem-vindo aos servicos Kafra|Voltar para /
+  const personagemMorto = (w) => {
+    try {
+      const eu = w.__fznEu?.();
+      if ((eu?.ACTION && eu.action === eu.ACTION.DIE) || eu?.isDead?.() === true) return true;
+    } catch {}
+    const hp = /\bHP\s*([\d.]+)\s*\/\s*([\d.]+)\s*([\d.,]+)\s*%/i.exec(w.document.body?.innerText || '');
+    return Boolean(hp && Number(hp[2].replace(/\./g, '')) > 1 &&
+      Number(hp[1].replace(/\./g, '')) <= 1 && Number(hp[3].replace(',', '.')) <= 0.1);
+  };
+  const covilControladoPeloVoltar = (mapa) => {
+    try {
+      const dono = window.top.__fznAutoVoltarInstancia;
+      return /@tower$/i.test(mapa) && dono?.ativa === true && dono.controlaCovil?.(mapa) === true;
+    } catch { return false; }
+  };
+  const temJanelaAberta = (w) => personagemMorto(w) || /Bem-vindo aos servicos Kafra|Voltar para /
     .test(w.document.body.innerText || '');
 
   let semAlvoDesde = 0;
@@ -771,8 +786,7 @@
       mapaAgora = String(posicao(e)?.mapa || mapaAgora);
       for (const m of e.getAutopilotRadarSnapshot?.()?.mobs || []) if (m?.gid && m.name) nomesGid.set(m.gid, m.name);
       while (nomesGid.size > 400) nomesGid.delete(nomesGid.keys().next().value);
-      const eu = w.__fznEu?.();
-      const morto = Boolean(eu && eu.ACTION && eu.action === eu.ACTION.DIE) || /Renascer agora|Voltar ao ponto de salvamento/.test(w.document.body?.innerText || '');
+      const morto = personagemMorto(w);
       if (morto && !mortoAntes && Date.now() - morteContadaEm > 15000) { morteContadaEm = Date.now(); somar('mortes'); }
       mortoAntes = morto;
     } catch {}
@@ -1104,7 +1118,7 @@
     if (!mapaDeRenascer(mapa) && !sessaoCheffenia(w, w.__elragEngine)) return temJanelaAberta(w);
     // Em mapas especiais, o convite "Voltar para ..." pode permanecer
     // no HUD depois da entrada e nao deve bloquear o Autopilot.
-    return /Renascer agora|Voltar ao ponto de salvamento|Bem-vindo aos servicos Kafra/
+    return personagemMorto(w) || /Bem-vindo aos servicos Kafra/
       .test(w.document.body?.innerText || '');
   };
   // v1.60: sempre ativo fora da cidade, renascer nos mapas especiais e destravar "ocupado"
@@ -1126,13 +1140,14 @@
         else if (agora - ocupadoDesde > 30000) { ocupado = false; ocupadoDesde = 0; log('ocupado preso ha 30 s -> liberado'); }
       } else ocupadoDesde = 0;
       const texto = w.document.body?.innerText || '';
-      if (/Renascer agora/.test(texto) && mapaDeRenascer(mapa) && agora - renascerEm > 3000) {
+      if (covilControladoPeloVoltar(mapa)) return;
+      if (personagemMorto(w) && /Renascer agora/.test(texto) && mapaDeRenascer(mapa) && agora - renascerEm > 3000) {
         const b = [...w.document.querySelectorAll('button')].find((x) => /^Renascer agora/i.test((x.textContent || '').trim()) && !x.disabled);
         if (b) {
           renascerEm = agora;
           log('Morreu em ' + mapa + ': Renascer agora');
-          b.click();
-          setTimeout(() => { try { if (!/Renascer agora/.test(w.document.body?.innerText || '')) { e.setAutopilotRunning(true); log('Renascer: cacada religada em ' + mapa); } } catch {} }, 1500);
+          b.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true, composed: true, view: w }));
+          setTimeout(() => { try { if (posicao(e)?.mapa === mapa && !personagemMorto(w)) { e.setAutopilotRunning(true); log('Renascer: cacada religada em ' + mapa); } } catch {} }, 1500);
         } else motivo('morto em ' + mapa + ', Renascer agora ainda desabilitado');
       }
     } catch {}
@@ -1443,7 +1458,7 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const cartao = fznCartaoYgg('Auto-hunt', 'v1.65', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
+      const cartao = fznCartaoYgg('Auto-hunt', 'v1.66', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
         cfg.ligado = !cfg.ligado;
