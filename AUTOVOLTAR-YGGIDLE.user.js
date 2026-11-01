@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.82
+// @version      2.83
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3199,7 +3199,11 @@
   cfg.covil = Object.assign({ ligado: false, mobId: 1312, dia: '', hoje: 0, total: 0, mortesHoje: 0 }, cfg.covil || {});
   const covilAlvo = () => COVIS.find((c) => c.mobId === Number(cfg.covil.mobId)) || COVIS.find((c) => c.mobId === 1312);
   const pedraDoCovil = (c) => 'Pedra de Convocação (Grau ' + GRAU[c.tier] + ')';
-  const covil = { dentro: false, entrouEm: 0, viuEm: 0, viu: false, falhas: 0, lutaEm: 0 };
+  // A reaplicação do Hub corta timers, mas o encontro no jogo continua.
+  // Compartilhar a tentativa mantém GID/abate inclusive nos ganchos anteriores.
+  const covil = window.__fznCovilEstado || { dentro: false, entrouEm: 0, viuEm: 0, viu: false, falhas: 0, lutaEm: 0 };
+  window.__fznCovilEstado = covil;
+  covil.ganchoAtivo = false; covil.ganchoTentouEm = 0; covil.renascendo = false;
   const COVIL_SEM_MVP_MS = 25000, COVIL_LOOT_MS = 1000, COVIL_TETO_MS = 28 * 60000;
   const contarCovil = (campo) => {
     const dia = new Date().toLocaleDateString('pt-BR');
@@ -3527,7 +3531,18 @@
       const pedras = quantosNaMochila(pedraDoCovil(c));
       if (pedras <= 0 && itensMochila().length < 5) { diagTela('covil-mochila'); log('Covil: mochila nao foi lida (' + itensMochila().length + ' itens); tento de novo'); return; }
       if (pedras <= 0) { voltarAoFarmDoCovil('sem ' + pedraDoCovil(c) + ' na mochila'); return; }
-      if (precisaVender(w)) { voltarAoFarmDoCovil('mochila/peso no limite (a venda roda no farm; religue o Covil depois)'); return; }
+      if (precisaVender(w)) {
+        if (Date.now() - (covil.vendaTentouEm || 0) < 30000) {
+          etapa('Covil', 'Aguardando nova verificação do peso antes da próxima convocação'); return;
+        }
+        covil.vendaTentouEm = Date.now();
+        etapa('Covil', 'Liberando mochila; retomo o Covil automaticamente enquanto houver pedras');
+        // viagemDeVenda controla o próprio bloqueio. Só é chamada fora da
+        // instância, depois de sair do encontro anterior.
+        ocupado = false;
+        await viagemDeVenda(w, true, true);
+        return;
+      }
       etapa('Covil', 'Entrando: ' + c.nome + ' (' + pedras + ' pedras)');
       if (await entrarNoCovil(w, c)) {
         covil.dentro = true; covil.entrouEm = Date.now(); covil.viu = false; covil.gid = 0; covil.gidMorto = 0; covil.morto = false; covil.morteConfirmadaEm = 0; covil.semMvpAvisado = false; covil.tetoAvisado = false; covil.foraDesde = 0; covil.falhas = 0;
@@ -4541,7 +4556,7 @@
       info.textContent = c.nome + ' · Tier ' + c.tier + ' · ' + pedraDoCovil(c) + ' na mochila: ' + quantosNaMochila(pedraDoCovil(c)) + ' · Hoje: ' + cfg.covil.hoje + ' MVPs (' + cfg.covil.hoje * c.tier * 100 + ' pts deste tier), ' + cfg.covil.mortesHoje + ' mortes · Total: ' + cfg.covil.total;
       p.append(info);
       const dica = document.createElement('p'); dica.style.color = '#8fa3b3';
-      dica.textContent = 'Entra pelo Mundo de Midgard, invoca, deixa o autopilot lutar e só sai após confirmar a morte do MVP. Sem pedra, mochila cheia ou 3 falhas: desliga o Covil e volta ao mapa de farm. Morte dentro do Covil: Renascer agora no mesmo mapa.';
+      dica.textContent = 'Invoca e só sai após confirmar o abate. Com peso/mochila no limite, vende entre os encontros e retoma o Covil automaticamente. Sem pedras ou 3 falhas de entrada, encerra o Covil. Morte no Covil: renasce com Folha no mesmo mapa.';
       p.append(dica);
       const liga = document.createElement('button');
       liga.textContent = 'Covil: ' + (cfg.covil.ligado ? 'ON' : 'OFF'); liga.className = cfg.covil.ligado ? 'fzn-av--on' : 'fzn-av--off';
@@ -5126,7 +5141,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.82</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.83</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
