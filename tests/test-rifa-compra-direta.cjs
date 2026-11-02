@@ -62,7 +62,8 @@ async function scenario(mode) {
   };
   vm.createContext(context);
   vm.runInContext(priceSource + buySource + '\nglobalThis.buy = comprarRifa;', context);
-  await context.buy(w, { inicio: Date.now() - 60_000 }, 'Fúria do Berserker');
+  await context.buy(w, { id: 'teste', inicio: Date.now() - 60_000 }, 'Fúria do Berserker');
+  assert.equal(cfg.rifa.ultimaEdicao, 'teste', 'Mesmo sem resposta, clique enviado não permite nova participação automática');
   return { clicks, confirms, numbers, balance, record, status };
 }
 

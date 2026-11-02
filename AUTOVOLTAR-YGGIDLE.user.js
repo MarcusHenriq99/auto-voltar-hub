@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.86
+// @version      2.87
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3818,11 +3818,36 @@
     return null;
   };
   const zenyRifa = (w) => {
-    const rotulado = textoHudRotulado(w, 'Zeny');
-    const valor = /^(?:Zeny\s*)?([\d.,]+)$/i.exec(rotulado);
-    if (valor) return Number(valor[1].replace(/[^\d]/g, ''));
-    const m = /Zeny\s+([\d.,]+)/i.exec(w.document.body.innerText || '');
-    return m ? Number(m[1].replace(/[^\d]/g, '')) : NaN;
+    const doc = w.document;
+    const hud = doc.getElementById?.('ui-root') || doc;
+    const numero = texto => {
+      const m = /^(?:Zeny\s*:?\s*)?(\d{1,3}(?:[.,]\d{3})+|\d+)(?:\s*Zeny)?$/i.exec(String(texto || '').trim());
+      if (!m) return NaN;
+      const n = Number(m[1].replace(/[^\d]/g, ''));
+      return Number.isSafeInteger(n) && n >= 0 ? n : NaN;
+    };
+    // Na HUD compacta o tooltip pode estar somente no ícone, enquanto o
+    // valor é seu irmão. O primeiro nó "Zeny" sozinho não é o saldo.
+    for (const el of hud.querySelectorAll('[title], [aria-label], [aria-description], [data-tooltip], [data-tooltip-content], [aria-describedby], svg title')) {
+      const rotulos = ['title', 'aria-label', 'aria-description', 'data-tooltip', 'data-tooltip-content']
+        .map(a => el.getAttribute?.(a));
+      const descrito = el.getAttribute?.('aria-describedby');
+      if (descrito) for (const id of descrito.split(/\s+/)) rotulos.push(doc.getElementById?.(id)?.textContent);
+      if (String(el.tagName).toLowerCase() === 'title') rotulos.push(el.textContent);
+      if (!rotulos.some(r => /^Zeny(?:\s|:|$)/i.test(String(r || '').trim()) || /^[\d.,]+\s+Zeny$/i.test(String(r || '').trim()))) continue;
+      for (let area = el, i = 0; area && area !== hud && area !== doc.body && i <= 3; area = area.parentElement, i++) {
+        if (!visivel(area) || area.closest?.('[data-fzn-auto-voltar], .fzn-ygg')) continue;
+        const n = numero(area.innerText || area.textContent);
+        if (Number.isFinite(n)) return n;
+      }
+      if (visivel(el)) for (const rotulo of rotulos) {
+        const n = numero(rotulo);
+        if (Number.isFinite(n)) return n;
+      }
+    }
+    const texto = hud === doc ? doc.body?.innerText : hud.innerText;
+    const m = /(?:^|\n)\s*Zeny\s*:?\s*([\d.,]+)(?=\s*(?:\n|$))/i.exec(texto || '');
+    return m ? numero(m[1]) : NaN;
   };
   const precoBotaoRifa = (botao) => {
     const m = /comprar n[uú]mero\s*[—–-]\s*([\d.,]+)\s*z/i.exec(textoDe(botao) || '');
@@ -3939,7 +3964,7 @@
     if (comprasRifaEmCurso.has(w)) return;
     comprasRifaEmCurso.add(w);
     try {
-    let premio = premioAvisado, semBotaoDesde = 0, semJanelaDesde = 0, registro = null;
+    let premio = premioAvisado, semBotaoDesde = 0, semJanelaDesde = 0, semSaldoDesde = null, registro = null;
     const parar = (etapa, detalhe) => {
       registrarMotivoRifa(edicao, premio, etapa, detalhe);
       rifaStatus(etapa, detalhe);
@@ -3984,7 +4009,13 @@
       registro = registroRifa(edicao,premio);
       const limite = Math.max(0, Math.floor(Number(cfg.rifa.limiteGasto) || 0));
       const saldo = zenyRifa(w);
-      if (!Number.isFinite(saldo)) { parar('Parada','saldo de zeny não identificado'); return; }
+      if (!Number.isFinite(saldo)) {
+        if (semSaldoDesde === null) semSaldoDesde = Date.now();
+        if (Date.now() - semSaldoDesde >= 8000) { parar('Parada','saldo de zeny não identificado após 8 s; nenhuma compra enviada'); return; }
+        rifaStatus('Aguardando saldo','conferindo zeny antes de enviar qualquer compra');
+        await esperar(250); continue;
+      }
+      semSaldoDesde = null;
       if (!Number.isFinite(registro.saldoInicial)) {
         registro.saldoInicial = saldo;
         gravarJson(CHAVE_CFG,cfg);
@@ -4035,6 +4066,9 @@
       const saldoReferencia = Math.min(saldo, registro.saldoInicial - registro.gasto);
       const envioEm = Date.now();
       if (!clicarCompraRifa(comprar)) { await esperar(RIFA_INTERVALO_MS); continue; }
+      // Só consumir a edição quando uma compra realmente foi enviada.
+      // Falha de leitura antes do clique permite reentrada limitada pelo vigia.
+      cfg.rifa.ultimaEdicao = edicao.id;
       registro.tentativas++;
       const auditoria = { em: envioEm, estado: 'enviada', preco, saldoAntes: saldo, numerosAntes,
         intervaloMs: registro.ultimoCliqueEm ? envioEm - registro.ultimoCliqueEm : null };
@@ -4142,9 +4176,8 @@
       if (!await sairParaRifa(w)) throw new Error('não consegui chegar a Prontera');
       rifaStatus('Falando com YggIdle Bet');
       if (!await abrirRifaNoNpc(w)) throw new Error('NPC YggIdle Bet não encontrado');
-      // Falha de viagem/NPC permite nova entrada limitada. Após abrir a rifa,
-      // nenhuma repetição automática pode reenviar uma compra sem comprovante.
-      cfg.rifa.ultimaEdicao = edicao.id; salvarCfg();
+      // comprarRifa marca a edição ao enviar o primeiro clique. Uma falha de
+      // leitura sem compra enviada ainda permite a reentrada limitada.
       await comprarRifa(w,edicao,premioAvisado);
     } catch(e) {
       const motivo = String(e?.message||e).slice(0,160);
@@ -4235,6 +4268,11 @@
     const status = document.createElement('div');
     status.textContent = 'Estado: '+rifaEstado.etapa+(rifaEstado.detalhe?' · '+rifaEstado.detalhe:'');
     status.style.marginBottom = '8px';
+    status.dataset.rifaStatus = '1';
+    const saldo = document.createElement('div');
+    saldo.dataset.rifaSaldo = '1';
+    saldo.textContent = 'Conferindo saldo da conta…';
+    saldo.style.marginBottom = '8px';
     const lista = document.createElement('div');
     Object.assign(lista.style,{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'5px',maxHeight:'360px',overflowY:'auto'});
     for (const nome of PREMIOS_RIFA) {
@@ -4289,7 +4327,7 @@
         void executarRifa(w,edicao);}),
       botao('Fechar',()=>{menu.remove();rifaMenu=null;})
     );
-    menu.append(topo,ajuda,status,lista,limiteLinha,personagemLinha,historicoRifa,acoes);
+    menu.append(topo,ajuda,status,saldo,lista,limiteLinha,personagemLinha,historicoRifa,acoes);
     document.body.appendChild(menu);rifaMenu=menu;
     atualizarHistoricoRifa();
     fznArrastavel(menu,topo,'fzn-rifa-ygg-pos-v1');
@@ -4508,6 +4546,11 @@
     const controles = painel.querySelector('[data-controles]');
     if (controles) controles.style.display = controlesAbertos ? 'flex' : 'none';
     const w = jogo(), peso = w && lerPeso(w), mapaAtual = w && posicao(w)?.mapa;
+    const saldoRifa = rifaMenu?.querySelector('[data-rifa-saldo]');
+    if (saldoRifa) {
+      const saldo = w ? zenyRifa(w) : NaN;
+      saldoRifa.textContent = Number.isFinite(saldo) ? 'Saldo identificado: '+saldo.toLocaleString('pt-BR')+'z' : 'Saldo não identificado — compra aguardará leitura';
+    }
     const destinoAtual = mapaDoConteudo() || cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
     const texto = painel.querySelector('[data-status]');
     if (texto) texto.textContent = andamento.etapa + ' · Peso ' + (peso ? peso.pct.toFixed(0) + '%' : '?') +
@@ -5232,7 +5275,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.86</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.87</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);

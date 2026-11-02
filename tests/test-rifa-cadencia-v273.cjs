@@ -11,7 +11,7 @@ function extract(from, to) {
 const helpers = extract('  const precoBotaoRifa =', '  const rifaEsgotada =');
 const buy = extract('  const comprarRifa =', '  const executarRifa =');
 
-async function purchases({ lag = false, loadingLabel = false, cooldown = 1500, greenDelay = 0, losesGreen = false } = {}) {
+async function purchases({ lag = false, loadingLabel = false, cooldown = 1500, greenDelay = 0, losesGreen = false, saldoDelay = 0, semSaldo = false } = {}) {
   let now = 100000, balance = 3000000, tickets = [], clicks = [], pending = null, enabledAt = now;
   let greenAt = now + greenDelay;
   const debits = [];
@@ -59,7 +59,7 @@ async function purchases({ lag = false, loadingLabel = false, cooldown = 1500, g
   const context = {
     cfg, rifaEstado: { compras: 0 }, rifaMenu: null, PREMIOS_RIFA: ['Fúria'], CHAVE_CFG: 'cfg',
     Date: { now: () => now }, normalizar: s => s.toLowerCase(), textoDe: x => x.innerText,
-    janelaRifa: () => modal, posicao: () => ({ mapa: 'prontera' }), zenyRifa: () => balance,
+    janelaRifa: () => modal, posicao: () => ({ mapa: 'prontera' }), zenyRifa: () => semSaldo || now < 100000 + saldoDelay ? NaN : balance,
     premioMarcadoRifa: () => true, registroRifa: () => record, rifaEsgotada: () => false,
     registrarMotivoRifa: () => record,
     atualizarHistoricoRifa: () => {},
@@ -74,9 +74,17 @@ async function purchases({ lag = false, loadingLabel = false, cooldown = 1500, g
   vm.createContext(context);
   vm.runInContext(helpers + buy + '\nglobalThis.buy = comprarRifa;', context);
   await Promise.all([
-    context.buy(w, { inicio: 0 }, 'Fúria'),
-    context.buy(w, { inicio: 0 }, 'Fúria'),
+    context.buy(w, { id: 'teste', inicio: 0 }, 'Fúria'),
+    context.buy(w, { id: 'teste', inicio: 0 }, 'Fúria'),
   ]);
+  if (semSaldo) {
+    assert.equal(clicks.length, 0, 'Não enviar compra sem saldo identificado');
+    assert.equal(record.tentativas, 0);
+    assert.equal(cfg.rifa.ultimaEdicao, undefined, 'Falha de leitura antes do clique não consome a edição');
+    assert.equal(status, 'Parada');
+    assert.ok(now >= 108000 && now < 109000, 'Aguarda leitura por 8 s, sem travar indefinidamente');
+    return;
+  }
   assert.equal(clicks.length, 3);
   assert.equal(record.confirmados, 3);
   assert.equal(record.gasto, 1500000);
@@ -84,6 +92,7 @@ async function purchases({ lag = false, loadingLabel = false, cooldown = 1500, g
   assert.ok(record.auditoriaCompras.every(a => a.estado === 'confirmada'));
   assert.ok(record.auditoriaCompras.slice(1).every(a => a.intervaloMs >= 600));
   assert.equal(status, 'Limite atingido');
+  assert.equal(cfg.rifa.ultimaEdicao, 'teste', 'Compra enviada consome edição e bloqueia repetição ambígua');
 }
 
 function scheduling() {
@@ -164,6 +173,8 @@ function targetAndReader() {
   await purchases({ cooldown: 100 });
   await purchases({ greenDelay: 2000 });
   await purchases({ losesGreen: true });
+  await purchases({ saldoDelay: 2000 });
+  await purchases({ semSaldo: true });
   scheduling(); exclusiveWatch(); targetAndReader();
   console.log('OK: compras sucessivas, cooldown, preço em carregamento, carteira atrasada, entrada limitada, prêmio e exclusão de cliques paralelos.');
 })().catch(e => { console.error(e); process.exitCode = 1; });
