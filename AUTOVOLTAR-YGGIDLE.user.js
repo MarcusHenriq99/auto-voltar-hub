@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.89
+// @version      2.90
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -1501,12 +1501,19 @@
   };
 
   // v2.54: trava absoluta — nunca vender nem desmantelar, vale antes de qualquer outra regra
-  const NUNCA_VENDER_FIXO = ['Mana Coagulada', 'Cristal do Tempo', 'Energia Instável', 'Frio dos Mortos', 'Mana Sombria'];
+  const NUNCA_VENDER_FIXO = ['Mana Coagulada', 'Cristal do Tempo', 'Energia Instável', 'Frio dos Mortos', 'Mana Sombria', 'Ascensão de LHZ'];
+  const nomeProtegidoDaConta = (nome) => {
+    const n = nomeBase(nome);
+    return (cfg.venda.nomes || []).map(normalizar).find(x => x &&
+      (x.length <= 3 ? n.split(/[^a-z0-9]+/).includes(x) : n.includes(x)));
+  };
   const nuncaVenderNome = (nome) => {
     const n = nomeBase(nome);
     if (!n) return null;
     if (NUNCA_VENDER_FIXO.some((x) => n.includes(normalizar(x)))) return 'NUNCA VENDER (item raro)';
     if (PREMIOS_RIFA.some((x) => n.includes(normalizar(x)))) return 'NUNCA VENDER (premio da rifa)';
+    const pessoal = nomeProtegidoDaConta(nome);
+    if (pessoal) return `NUNCA VENDER (lista desta conta: "${pessoal}")`;
     return null;
   };
   const nuncaVender = (item) => {
@@ -1534,12 +1541,6 @@
     if (v.proteger[tipo]) return TIPOS_VENDA.find(([k]) => k === tipo)?.[1] || tipo;
     if (v.comCarta && (item.cards || []).some(Boolean)) return 'tem carta encaixada';
     if (Number(v.raridadeMin) > 0 && Number(item.rarity?.tier) >= Number(v.raridadeMin)) return item.rarity.label || 'raridade';
-    const n = normalizar(item.name);
-    // Nomes curtos precisam ser palavras inteiras: "Aco" nao faz parte de
-    // "Sacola" nem de "Pedaco". Nomes maiores continuam aceitando trechos.
-    const nome = (v.nomes || []).map(normalizar).find((x) => x &&
-      (x.length <= 3 ? n.split(/[^a-z0-9]+/).includes(x) : n.includes(x)));
-    if (nome) return `nome "${nome}"`;
     return null;
   };
 
@@ -4937,8 +4938,16 @@
     try { await venderItens(w, true); } finally { ocupado = false; }
   };
 
-  function abrirMenuVenda() {
-    if (menuVenda) { menuVenda.remove(); menuVenda = null; return; }
+  function abrirMenuVenda(focoProtegidos = false) {
+    // Eventos de clique passam um objeto; apenas true abre diretamente a lista.
+    focoProtegidos = focoProtegidos === true;
+    if (menuVenda) {
+      if (focoProtegidos) {
+        const lista = menuVenda.querySelector('[data-nunca-vender]');
+        lista.open = true; lista.scrollIntoView({ block: 'nearest' });
+      } else { menuVenda.remove(); menuVenda = null; }
+      return;
+    }
     fecharOutros('venda');
     menuVenda = document.createElement('div');
     abrirSubjanela(menuVenda, 440);
@@ -4965,7 +4974,19 @@
         <label style="display:flex;gap:6px;align-items:center"><input data-ar="usarCartao" type="checkbox"${cfg.armazem.usarCartao ? ' checked' : ''}> Usar Cartao Kafra no mapa quando disponivel</label>
         <div style="opacity:.75;margin-top:4px">Sem cartao, guarda pela Kafra de Prontera. Itens equipados, travados, favoritos e o Cartao Kafra nunca vao para o armazem. A mesma lista abaixo escolhe os itens a guardar.</div>
       </div>
-      <div style="font-weight:bold;margin:8px 0 4px">Nunca vender / Guardar</div>
+      <details data-nunca-vender${focoProtegidos ? ' open' : ''} style="margin:10px 0">
+      <summary style="font-weight:bold;cursor:pointer">Nunca vender — itens protegidos</summary>
+      <p>Estes nomes bloqueiam venda e desmantelamento. A lista pessoal é salva automaticamente só nesta conta.</p>
+      <details style="margin:6px 0"><summary style="cursor:pointer">Itens de mapa e raros (${NUNCA_VENDER_FIXO.length}) — proteção fixa</summary>
+        <ul>${NUNCA_VENDER_FIXO.map(nome => `<li>${nome}</li>`).join('')}</ul></details>
+      <details style="margin:6px 0"><summary style="cursor:pointer">Prêmios da rifa (${PREMIOS_RIFA.length}) — proteção fixa</summary>
+        <ul>${PREMIOS_RIFA.map(nome => `<li>${nome}</li>`).join('')}</ul></details>
+      <label for="fzn-nunca-vender-nomes" style="display:block;margin-top:8px;font-weight:bold">Minha lista desta conta</label>
+      <div>Um nome por linha. Aceita parte do nome; nomes de até 3 letras precisam ser palavras inteiras. Acrescente aqui outros itens de mapa que quiser preservar.</div>
+      <textarea id="fzn-nunca-vender-nomes" aria-label="Itens que nunca serão vendidos nesta conta" data-v="nomes" rows="6" style="${campo};width:100%;box-sizing:border-box">${(v.nomes || []).join('\n').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
+      <div style="opacity:.75">As listas fixas continuam protegidas ao limpar sua lista. Também são preservados lendários/míticos, lucky drops procurados, favoritos, cadeados e suprimentos de farm conforme as regras existentes. O nome indica a proteção; a origem de cada exemplar não é identificada.</div>
+      </details>
+      <div style="font-weight:bold;margin:8px 0 4px">Outras proteções / Guardar</div>
       ${TIPOS_VENDA.map(([k, r]) => `<label style="display:flex;gap:6px;align-items:center"><input data-p="${k}" type="checkbox"${v.proteger[k] ? ' checked' : ''}> ${r}</label>`).join('')}
       <label style="display:flex;gap:6px;align-items:center"><input data-v="comCarta" type="checkbox"${v.comCarta ? ' checked' : ''}> Equipamentos com carta encaixada</label>
       <label style="display:flex;gap:6px;align-items:center;margin-top:4px">Raridade a partir de
@@ -4973,8 +4994,6 @@
           <option value="0"${!(Number(v.raridadeMin) > 0) ? ' selected' : ''}>(nao proteger por raridade)</option>
           ${RARIDADES.map((r, i) => `<option value="${i + 1}"${Number(v.raridadeMin) === i + 1 ? ' selected' : ''}>${r}</option>`).join('')}
         </select></label>
-      <div style="margin-top:6px">Nomes (um por linha; vale parte do nome, ex.: "Elunium"):</div>
-      <textarea data-v="nomes" rows="4" style="${campo};width:100%;box-sizing:border-box">${(v.nomes || []).join('\n').replace(/</g, '&lt;')}</textarea>
       <div style="display:flex;gap:6px;margin-top:8px">
         <button data-a="testar" title="Parado na chegada, ao lado do Mercador: monta a venda e mostra no log o que sairia, sem confirmar" style="${campo};cursor:pointer">Testar (sem vender)</button>
         <button data-a="fechar" style="${campo};cursor:pointer;margin-left:auto">Fechar</button>
@@ -4997,6 +5016,7 @@
       else if (a === 'fechar') abrirMenuVenda();
     });
     document.body.appendChild(menuVenda);
+    if (focoProtegidos) menuVenda.querySelector('[data-nunca-vender]').scrollIntoView({ block: 'nearest' });
   }
 
   function atualizarPainel() {
@@ -5107,6 +5127,10 @@
       estilo(venda);
       venda.textContent = 'Venda';
       venda.addEventListener('click', abrirMenuVenda);
+      const nuncaVenderBtn = document.createElement('button'); estilo(nuncaVenderBtn);
+      nuncaVenderBtn.textContent = 'Nunca vender';
+      nuncaVenderBtn.title = 'Consultar proteções fixas e editar os itens protegidos desta conta';
+      nuncaVenderBtn.addEventListener('click', () => abrirMenuVenda(true));
       const executar = document.createElement('button'); estilo(executar);
       executar.dataset.executar = '1'; executar.addEventListener('click', executarAgora);
       const usarMapa = document.createElement('button'); estilo(usarMapa); usarMapa.textContent = 'Usar mapa atual'; usarMapa.title = 'Limpa o bloqueio antigo e retoma a automacao neste mapa'; usarMapa.addEventListener('click', async()=>{if(ocupado)return;const p=posicao(jogo());if(p?.mapa && p.mapa!=='prontera'){cfg.mapaFarmManual=p.mapa;salvarCfg();}await retomarNoMapaAtual();});
@@ -5290,11 +5314,11 @@
       gaveta.append(
         grupo('Rotina', limites, modoInventario, cartaoFarm, bolso, ferreiro, evento),
         grupo('Extras', bio4, cheffenia, expedicao, faseExpedicao, covilBtn, rifaLiga, lucky),
-        grupo('Configurar', mapaFarm, compras, venda, rifaBtn, calibrar, importar));
+        grupo('Configurar', mapaFarm, compras, venda, nuncaVenderBtn, rifaBtn, calibrar, importar));
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.89</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.90</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
