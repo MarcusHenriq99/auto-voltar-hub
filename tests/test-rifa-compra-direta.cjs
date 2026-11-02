@@ -36,6 +36,8 @@ async function scenario(mode) {
   };
   w.MouseEvent = class { constructor(type, init) { this.type = type; Object.assign(this, init); } };
   w.document.defaultView = w;
+  w.getComputedStyle = () => ({ backgroundColor: 'rgb(22, 163, 74)', display: 'block',
+    visibility: 'visible', pointerEvents: 'auto', opacity: '1' });
   for (const button of [buyButton, confirmButton]) {
     button.isConnected = true;
     button.ownerDocument = w.document;
@@ -81,6 +83,8 @@ async function scenario(mode) {
   const uncertain = await scenario('uncertain');
   assert.equal(uncertain.clicks, 1, 'Nao repete uma compra sem comprovante');
   assert.equal(uncertain.record.confirmados, 0);
+  assert.equal(uncertain.record.auditoriaCompras[0].estado, 'sem confirmação');
+  assert.match(uncertain.record.auditoriaCompras[0].resposta, /Rifa Yggidle/);
   assert.equal(uncertain.status, 'Parada');
   const delayed = await scenario('delayed');
   assert.equal(delayed.clicks, 1, 'Compra lenta não gera segundo clique');

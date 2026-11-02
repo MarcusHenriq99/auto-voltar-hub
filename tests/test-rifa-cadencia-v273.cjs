@@ -11,8 +11,9 @@ function extract(from, to) {
 const helpers = extract('  const precoBotaoRifa =', '  const rifaEsgotada =');
 const buy = extract('  const comprarRifa =', '  const executarRifa =');
 
-async function purchases({ lag = false, loadingLabel = false, cooldown = 1500 } = {}) {
-  let now = 100000, balance = 3000000, tickets = [], clicks = [], pending = null;
+async function purchases({ lag = false, loadingLabel = false, cooldown = 1500, greenDelay = 0, losesGreen = false } = {}) {
+  let now = 100000, balance = 3000000, tickets = [], clicks = [], pending = null, enabledAt = now;
+  let greenAt = now + greenDelay;
   const debits = [];
   const record = { tentativas: 0, confirmados: 0, gasto: 0, resultado: 'Aguardando sorteio' };
   const cfg = { ligado: true, rifa: { ligado: true, premios: ['Fúria'], limiteGasto: 1500000 } };
@@ -20,12 +21,15 @@ async function purchases({ lag = false, loadingLabel = false, cooldown = 1500 } 
     now += ms;
     if (pending && now >= pending.ticketAt && tickets.length < pending.number) tickets.push(pending.number);
     for (const debit of debits) if (now >= debit.at) balance = Math.min(balance, debit.balance);
-    if (pending && now >= pending.readyAt) { button.disabled = false; pending = null; }
+    if (pending && now >= pending.readyAt) { enabledAt = now; greenAt = now + greenDelay; button.disabled = false; pending = null; }
   };
   const w = { document: { querySelectorAll: () => [] }, MouseEvent: class {
     constructor(type, init) { this.type = type; Object.assign(this, init); }
   } };
   w.document.defaultView = w;
+  const isGreen = () => now >= greenAt && !button.disabled && !(losesGreen && now >= 100500 && now < 103000);
+  w.getComputedStyle = () => ({ backgroundColor: isGreen() ? 'rgb(22, 163, 74)' : 'rgb(107, 114, 128)',
+    display: 'block', visibility: 'visible', pointerEvents: 'auto', opacity: '1' });
   const button = {
     disabled: false, isConnected: true, ownerDocument: w.document, getAttribute: () => null,
     get innerText() { return loadingLabel && this.disabled ? 'Comprar número — Aguarde...' : 'Comprar número — 500.000z'; },
@@ -33,8 +37,11 @@ async function purchases({ lag = false, loadingLabel = false, cooldown = 1500 } 
     dispatchEvent(event) {
       assert.equal(event.type, 'click');
       assert.equal(this.disabled, false, 'Não clicar durante cooldown');
+      assert.ok(isGreen(), 'Revalidar a cor imediatamente antes do clique');
+      assert.ok(now >= greenAt + 600, 'Botão habilitado mas cinza não aceita compra; aguardar ficar verde e mais 0,6 s');
       assert.equal(pending, null, 'Uma compra por vez');
-      if (clicks.length) assert.ok(now - clicks.at(-1) <= (lag && clicks.length === 2 ? 4500 : 2100), 'Não adicionar espera fixa após cooldown');
+      if (clicks.length) assert.ok(now - clicks.at(-1) <= (lag && clicks.length === 2 ? 4700 : 2200) + greenDelay, 'Cooldown mais a pausa de estabilização não causa espera excessiva');
+      assert.ok(now - enabledAt >= 600, 'Espera 0,6 s depois de o botão voltar a habilitar');
       if (clicks.length) assert.ok(now - clicks.at(-1) >= 600, 'Intervalo mínimo de 0,6 s, mesmo com botão liberado');
       clicks.push(now); this.disabled = true;
       const slow = lag && clicks.length === 2;
@@ -73,6 +80,9 @@ async function purchases({ lag = false, loadingLabel = false, cooldown = 1500 } 
   assert.equal(clicks.length, 3);
   assert.equal(record.confirmados, 3);
   assert.equal(record.gasto, 1500000);
+  assert.equal(record.auditoriaCompras.length, 3);
+  assert.ok(record.auditoriaCompras.every(a => a.estado === 'confirmada'));
+  assert.ok(record.auditoriaCompras.slice(1).every(a => a.intervaloMs >= 600));
   assert.equal(status, 'Limite atingido');
 }
 
@@ -151,6 +161,8 @@ function targetAndReader() {
   await purchases({ loadingLabel: true });
   await purchases({ lag: true });
   await purchases({ cooldown: 100 });
+  await purchases({ greenDelay: 2000 });
+  await purchases({ losesGreen: true });
   scheduling(); exclusiveWatch(); targetAndReader();
   console.log('OK: compras sucessivas, cooldown, preço em carregamento, carteira atrasada, entrada limitada, prêmio e exclusão de cliques paralelos.');
 })().catch(e => { console.error(e); process.exitCode = 1; });

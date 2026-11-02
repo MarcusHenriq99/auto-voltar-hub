@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.66
+// @version      1.67
 // @description  Complementa o autopilot do jogo: quando ele fica sem alvo, fixa o monstro visivel mais proximo ou anda explorando o mapa ate aparecer um. v1.54: clique completo no canvas e nos paineis.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -543,6 +543,12 @@
   
   const canvasDoJogo = (w) => [...w.document.querySelectorAll('canvas')]
     .sort((a, b) => (b.clientWidth * b.clientHeight) - (a.clientWidth * a.clientHeight))[0] || null;
+  const pausadoPelaRifa = () => {
+    try {
+      const dono = window.top.__fznAutoVoltarInstancia;
+      return dono?.ativa === true && dono.rifaAtiva?.() === true;
+    } catch { return false; }
+  };
   const personagemMorto = (w) => {
     try {
       const eu = w.__fznEu?.();
@@ -558,7 +564,7 @@
       return /@tower$/i.test(mapa) && dono?.ativa === true && dono.controlaCovil?.(mapa) === true;
     } catch { return false; }
   };
-  const temJanelaAberta = (w) => personagemMorto(w) || /Bem-vindo aos servicos Kafra|Voltar para /
+  const temJanelaAberta = (w) => pausadoPelaRifa() || personagemMorto(w) || /Bem-vindo aos servicos Kafra|Voltar para /
     .test(w.document.body.innerText || '');
 
   let semAlvoDesde = 0;
@@ -927,6 +933,7 @@
   // v1.57: Tiro Preciso/ataque do autopilot atrapalham a asa -> para o autopilot, espera o cast acabar, asa, religa
   let pneumaFugindo = false;
   const pneumaFuga = async (w, e, nome, pos) => {
+    if (pausadoPelaRifa()) return;
     pneumaFugindo = true;
     const t0 = Date.now();
     try {
@@ -954,13 +961,14 @@
       log('Pneuma em ' + nome + ' (' + pos[0] + ',' + pos[1] + '): autopilot parado -> asa ' + (foi ? 'OK' : 'SEM EFEITO') + ' -> religado (' + (Date.now() - t0) + ' ms)');
     } catch (err) { log('Pneuma: erro ' + String(err).slice(0, 60)); }
     finally {
-      try { e.setAutopilotRunning(true); } catch {}
+      try { if (!pausadoPelaRifa()) e.setAutopilotRunning(true); } catch {}
       meuAlvoGid = 0;
       pneumaFugindo = false;
     }
     // v1.58: o 1o "ligar" logo apos a asa as vezes nao pega (chegada no mapa); insiste a cada 250 ms por 4 s
     for (let i = 0; i < 16; i++) {
       await esperar(250);
+      if (pausadoPelaRifa()) return;
       let ap = null;
       try { ap = e.getAutopilotSnapshot(); } catch {}
       if (ap && !AUTOPILOT_PARADO.has(ap.runtimeState)) { if (i) log('Pneuma: autopilot religado na tentativa ' + (i + 1) + ' (' + (Date.now() - t0) + ' ms)'); return; }
@@ -1082,6 +1090,7 @@
     try { w.__elragEngine.requestInventorySnapshot(); } catch {}
   };
   const usarAsa = (w, e, agora) => {
+    if (pausadoPelaRifa()) return false;
     if (cfg.asa === 'off' || (sessaoCheffenia(w, e) && cfg.cheffeniaTeleporte !== true)) return false;
     if (mvpEmCombate(snapshotAp(e), agora)) return false;
     ganchoMochila(w);
@@ -1131,6 +1140,7 @@
       if (!e) return;
       const mapa = String(posicao(e)?.mapa || '');
       const agora = Date.now();
+      if (pausadoPelaRifa()) return;
       if (!cfg.ligado && foraDaCidade(mapa)) {
         cfg.ligado = true; gravarJson(CHAVE_CFG, cfg);
         log('Hunt estava OFF em ' + mapa + ' -> ligado de novo (so desliga na cidade)');
@@ -1147,7 +1157,7 @@
           renascerEm = agora;
           log('Morreu em ' + mapa + ': Renascer agora');
           b.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true, composed: true, view: w }));
-          setTimeout(() => { try { if (posicao(e)?.mapa === mapa && !personagemMorto(w)) { e.setAutopilotRunning(true); log('Renascer: cacada religada em ' + mapa); } } catch {} }, 1500);
+          setTimeout(() => { try { if (!pausadoPelaRifa() && posicao(e)?.mapa === mapa && !personagemMorto(w)) { e.setAutopilotRunning(true); log('Renascer: cacada religada em ' + mapa); } } catch {} }, 1500);
         } else motivo('morto em ' + mapa + ', Renascer agora ainda desabilitado');
       }
     } catch {}
@@ -1243,6 +1253,7 @@
     return true;
   };
   const ciclo = async () => {
+    if (pausadoPelaRifa()) return;
     if (!cfg.ligado || (ocupado && !cfg.soMvp)) return;
     const w = jogo();
     if (!w) return;
@@ -1458,7 +1469,7 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const cartao = fznCartaoYgg('Auto-hunt', 'v1.66', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
+      const cartao = fznCartaoYgg('Auto-hunt', 'v1.67', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
         cfg.ligado = !cfg.ligado;

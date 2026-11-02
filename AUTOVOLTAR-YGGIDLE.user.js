@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.83
+// @version      2.85
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3674,6 +3674,11 @@
         'Tentativas: '+r.tentativas+' · Comprados: '+r.confirmados+
         ' · Gasto: '+Number(r.gasto||0).toLocaleString('pt-BR')+'z\n'+
         'Resultado: '+r.resultado+(r.vencedor?' · Vencedor: '+r.vencedor:'')+
+        ((r.auditoriaCompras || []).length ? '\nTentativas de compra:\n'+r.auditoriaCompras.map(a =>
+          new Date(a.em).toLocaleTimeString('pt-BR')+' · '+a.estado+
+          (Number.isFinite(a.intervaloMs) ? ' · intervalo '+a.intervaloMs+' ms' : '')+
+          (Number.isFinite(a.latenciaMs) ? ' · resposta '+a.latenciaMs+' ms' : '')+
+          (a.resposta ? ' · '+a.resposta : '')).join('\n') : '')+
         ((r.ocorrencias || []).length ? '\nMotivos e andamento:\n'+r.ocorrencias.map(o =>
           new Date(o.em).toLocaleTimeString('pt-BR')+' · '+o.etapa+' — '+o.detalhe).join('\n') : '');
     }).join('\n\n') : 'Nenhuma edição observada neste personagem. O histórico é registrado enquanto o jogo e o script estão abertos.');
@@ -3792,6 +3797,31 @@
   };
   const RIFA_INTERVALO_MS = 600;
   const comprasRifaEmCurso = new WeakSet();
+  // A UI pode tirar o disabled antes de terminar o carregamento. Comprar
+  // somente quando o controle estiver visível, disponível e de fato verde.
+  const botaoCompraRifaAtivo = (botao) => {
+    if (!botao?.isConnected || botao.disabled || botao.matches?.(':disabled') ||
+        botao.getAttribute('aria-disabled') === 'true' || botao.getAttribute('aria-busy') === 'true' ||
+        /carregando|comprando|aguarde|processando/i.test(textoDe(botao)) ||
+        botao.querySelector?.('[aria-busy="true"], [role="progressbar"]')) return false;
+    try {
+      const estilo = botao.ownerDocument.defaultView.getComputedStyle(botao);
+      if (estilo.display === 'none' || /hidden|collapse/.test(estilo.visibility) ||
+          estilo.pointerEvents === 'none' || Number(estilo.opacity || 1) < 0.9 ||
+          (botao.getClientRects && !botao.getClientRects().length)) return false;
+      const cor = estilo.backgroundColor || '';
+      const rgb = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)$/i.exec(cor);
+      if (rgb) {
+        const r = Number(rgb[1]), g = Number(rgb[2]), b = Number(rgb[3]), a = Number(rgb[4] ?? 1);
+        return a >= 0.9 && g >= 60 && g > r + 10 && g > b + 10;
+      }
+      // Tailwind moderno pode manter o fundo em OKLCH no estilo computado.
+      const oklch = /^oklch\(\s*([\d.]+)(%)?\s+([\d.]+)\s+([\d.]+)(?:deg)?(?:\s*\/\s*([\d.]+))?\s*\)$/i.exec(cor);
+      return Boolean(oklch && Number(oklch[1]) / (oklch[2] ? 100 : 1) >= 0.25 &&
+        Number(oklch[3]) >= 0.05 && Number(oklch[4]) >= 100 && Number(oklch[4]) <= 175 &&
+        Number(oklch[5] ?? 1) >= 0.9);
+    } catch { return false; }
+  };
   // O .click() global simula oito eventos e troca o alvo por elementFromPoint.
   // Na rifa use apenas um click no controle exato, mesmo com outro painel por cima.
   const clicarControleRifa = (botao) => {
@@ -3800,6 +3830,7 @@
     botao.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true, composed: true, view: w }));
     return true;
   };
+  const clicarCompraRifa = (botao) => botaoCompraRifaAtivo(botao) && clicarControleRifa(botao);
   const numerosCompradosRifa = (modal) => {
     const texto = modal?.innerText || '';
     const trecho = /Seus n[uú]meros nesta edi[cç][aã]o\s*([\s\S]*?)(?=Comprar n[uú]mero|Comprando\b|Aguarde\b|$)/i.exec(texto)?.[1];
@@ -3925,9 +3956,9 @@
         registro.saldoInicial = saldo;
         gravarJson(CHAVE_CFG,cfg);
       }
-      const comprar = [...modal.querySelectorAll('button')].find(b => /comprar n[uú]mero/i.test(textoDe(b)));
+      let comprar = [...modal.querySelectorAll('button')].find(b => /comprar n[uú]mero/i.test(textoDe(b)));
       const preco = comprar ? precoBotaoRifa(comprar) : NaN;
-      if (comprar && !comprar.disabled && comprar.getAttribute('aria-disabled') !== 'true' && (!Number.isFinite(preco) || preco <= 0)) {
+      if (botaoCompraRifaAtivo(comprar) && (!Number.isFinite(preco) || preco <= 0)) {
         parar('Parada','preço do bilhete não identificado no botão'); return;
       }
       const gastoEfetivo = Math.max(Number(registro.gasto) || 0,
@@ -3938,7 +3969,7 @@
       if (Number.isFinite(preco) && saldo < preco) {
         parar('Sem saldo','menos de '+preco.toLocaleString('pt-BR')+'z para outro bilhete'); return;
       }
-      if (!comprar || comprar.disabled || comprar.getAttribute('aria-disabled') === 'true') {
+      if (!botaoCompraRifaAtivo(comprar)) {
         if (!semBotaoDesde) semBotaoDesde = Date.now();
         if (!comprar && Date.now() - semBotaoDesde > 10000) {
           rifaStatus('Reabrindo rifa','botão de compra não apareceu');
@@ -3948,17 +3979,35 @@
           await esperar(500);
           continue;
         }
-        rifaStatus('Aguardando botão','compra indisponível há '+(Math.floor((Date.now()-semBotaoDesde)/10000)*10)+' s');
+        rifaStatus('Aguardando botão verde','compra indisponível há '+(Math.floor((Date.now()-semBotaoDesde)/10000)*10)+' s');
         await esperar(100); continue;
       }
       semBotaoDesde = 0;
-      const numerosAntes = numerosCompradosRifa(modal);
+      // O cooldown pode durar mais que a pausa após a compra. Ao habilitar,
+      // aguardar 0,6 s e obter o controle atual, pois a UI pode recriá-lo.
+      await esperar(RIFA_INTERVALO_MS);
+      if (!cfg.rifa.ligado || !cfg.ligado || posicao(w)?.mapa !== 'prontera') {
+        parar('Interrompida','participação interrompida antes do próximo clique'); return;
+      }
+      const modalPronto = janelaRifa(w);
+      comprar = modalPronto && [...modalPronto.querySelectorAll('button')].find(b => /comprar n[uú]mero/i.test(textoDe(b)));
+      if (!botaoCompraRifaAtivo(comprar) || precoBotaoRifa(comprar) !== preco) continue;
+      if (zenyRifa(w) !== saldo) continue; // Refazer orçamento se a carteira mudou.
+      if (rifaEsgotada(modalPronto.innerText || '') || /edi[cç][aã]o encerrada|n[aã]o est[aá] aberta para compras/i.test(modalPronto.innerText || '')) {
+        parar('Encerrada','edição encerrada antes do próximo clique'); return;
+      }
+      const numerosAntes = numerosCompradosRifa(modalPronto);
       // A lista de bilhetes pode atualizar antes da carteira. Não aceitar o
       // débito atrasado da compra anterior como comprovante do próximo clique.
       const saldoReferencia = Math.min(saldo, registro.saldoInicial - registro.gasto);
+      const envioEm = Date.now();
+      if (!clicarCompraRifa(comprar)) { await esperar(RIFA_INTERVALO_MS); continue; }
       registro.tentativas++;
+      const auditoria = { em: envioEm, estado: 'enviada', preco, saldoAntes: saldo, numerosAntes,
+        intervaloMs: registro.ultimoCliqueEm ? envioEm - registro.ultimoCliqueEm : null };
+      registro.ultimoCliqueEm = envioEm;
+      registro.auditoriaCompras = [...(registro.auditoriaCompras || []), auditoria].slice(-30);
       gravarJson(CHAVE_CFG,cfg);
-      if (!clicarControleRifa(comprar)) { await esperar(100); continue; }
       const comprovante = () => {
         const novoSaldo = zenyRifa(w);
         const novosNumeros = numerosCompradosRifa(janelaRifa(w));
@@ -3974,7 +4023,7 @@
         const compra = comprovante();
         if (compra) return { compra };
         const botao = [...w.document.querySelectorAll('button')]
-          .find(b => visivel(b) && !b.disabled &&
+          .find(b => visivel(b) && botaoCompraRifaAtivo(b) &&
             /^comprar\s*[—–-]\s*[\d.,]+\s*z?$/i.test(textoDe(b)) &&
             /confirmar compra|voc[eê] vai gastar/i.test(b.parentElement?.parentElement?.innerText || ''));
         return botao ? { botao } : null;
@@ -3986,7 +4035,7 @@
         if (!cfg.rifa.ligado || !cfg.ligado || posicao(w)?.mapa !== 'prontera') {
           parar('Interrompida','participação interrompida antes de confirmar a compra'); return;
         }
-        if (!clicarControleRifa(confirmado.botao)) {
+        if (!clicarCompraRifa(confirmado.botao)) {
           parar('Parada','confirmação indisponível; confira a compra antes de tentar novamente'); return;
         }
         confirmado = await esperarAte(comprovante,8000,100);
@@ -3999,6 +4048,11 @@
       }
       if (!confirmado) {
         const atual = janelaRifa(w);
+        auditoria.estado = 'sem confirmação';
+        auditoria.latenciaMs = Date.now() - envioEm;
+        auditoria.saldoDepois = zenyRifa(w);
+        auditoria.numerosDepois = numerosCompradosRifa(atual);
+        auditoria.resposta = String(atual?.innerText || 'janela fechada').replace(/\s+/g, ' ').slice(0, 500);
         if (atual && rifaEsgotada(atual.innerText || '')) {
           parar('Encerrada','todos os números vendidos'); return;
         }
@@ -4011,6 +4065,10 @@
       const porZeny = Number.isFinite(confirmado.saldo)
         ? Math.floor((saldoReferencia - confirmado.saldo) / preco) : 0;
       const comprados = Math.max(1, porNumeros, porZeny);
+      auditoria.estado = 'confirmada';
+      auditoria.latenciaMs = Date.now() - envioEm;
+      auditoria.saldoDepois = confirmado.saldo;
+      auditoria.numerosDepois = confirmado.numeros;
       registro.confirmados += comprados;
       registro.gasto += preco * comprados;
       if (!registro.vencedor) registro.resultado = 'Aguardando sorteio';
@@ -5141,7 +5199,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.83</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.85</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
@@ -5165,6 +5223,7 @@
 
   // O Auto Hunt consulta o dono do renascimento para não clicar em paralelo.
   instanciaAutoVoltar.controlaCovil = mapa => Boolean(cfg.ligado && (cfg.covil?.ligado || mapaCovil({ mapa })));
+  instanciaAutoVoltar.rifaAtiva = () => rifaRodando;
   let ultimoErroVerificarEm = 0;
   const verificarSeguro = () => {
     try { verificar(); }
