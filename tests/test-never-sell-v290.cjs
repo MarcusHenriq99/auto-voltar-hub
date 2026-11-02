@@ -28,7 +28,7 @@ vm.runInContext(extract('  const nomeBase =', '  const ITENS_ALFHEIM =') +
   extract('  const NUNCA_VENDER_FIXO =', '  const protecaoDaLinha =') +
   extract('  const PREMIOS_RIFA =', '  const rifaEstado =') +
   extract('  const protecaoDaLinha =', '  const linhasDeVenda =') +
-  'let menuVenda = null;\n' + extract('  function abrirMenuVenda(', '  function atualizarPainel()') +
+  'let menuVenda = null, menuVendaProtegidos = false;\n' + extract('  function abrirMenuVenda(', '  function atualizarPainel()') +
   '\nglobalThis.api = { nuncaVender, nuncaVenderNome, motivoProtecao, protecaoDaLinha, abrirMenuVenda, menu: () => menuVenda, premios: PREMIOS_RIFA };', context);
 const a = context.api;
 assert.match(a.nuncaVenderNome('+7 Carta Ascensão de LHZ [1]'), /item raro/);
@@ -46,13 +46,12 @@ for (const item of [{ name: 'Ovo procurado' }, { name: 'Ovo de pet' },
 context.estadoLoja.mochila = { etc: [{ name: 'Cristal pessoal' }] };
 a.abrirMenuVenda(true);
 let menu = a.menu();
-assert.match(menu.innerHTML, /data-nunca-vender open/);
+assert.match(menu.innerHTML, /data-nunca-vender/);
 assert.match(menu.innerHTML, /Gema &lt;especial&gt; &amp; rara/);
 assert.match(menu.innerHTML, /Prêmios da rifa/);
 assert.match(menu.innerHTML, /Ascensão de LHZ/);
-a.abrirMenuVenda(true);
-assert.equal(menus, 1, 'Reabrir atalho mantém uma única janela');
-assert.equal(scrolls, 2);
+assert.doesNotMatch(menu.innerHTML, /data-v="ligado"|data-v="limite"|data-capacidade|data-ar=|data-a="testar"/, 'Nunca vender não duplica controles da rotina');
+assert.match(menu.innerHTML, /data-v="comCarta"|data-v="raridadeMin"/, 'Regras de proteção ficam na lista');
 menu.listeners.input({ target: { dataset: { v: 'nomes' }, value: '  Cristal pessoal  \n\nOutra gema' } });
 assert.equal(saves, 1);
 assert.deepEqual(Array.from(context.cfg.venda.nomes), ['Cristal pessoal', 'Outra gema']);
@@ -63,5 +62,14 @@ menu.listeners.input({ target: { dataset: { v: 'nomes' }, value: '' } });
 assert.match(a.nuncaVenderNome('Carta Ascensão de LHZ'), /item raro/);
 assert.match(a.nuncaVenderNome('Runa Eterna de Thanatos'), /rifa/);
 a.abrirMenuVenda({ type: 'click' });
+assert.ok(a.menu(), 'Botão Venda troca para opções da rotina');
+assert.match(a.menu().innerHTML, /data-v="ligado"/);
+assert.match(a.menu().innerHTML, /data-v="limite"/);
+assert.match(a.menu().innerHTML, /data-a="testar"/);
+assert.doesNotMatch(a.menu().innerHTML, /data-v="nomes"|data-v="raridadeMin"|data-v="comCarta"|data-p=|data-nunca-vender/, 'Venda não duplica listas e proteções');
+a.abrirMenuVenda({ type: 'click' });
 assert.equal(a.menu(), null, 'Botão Venda mantém alternância normal');
-console.log('OK: lista por conta, bloqueio sem mochila, LHZ/rifa fixos e painel recolhível com salvamento.');
+a.abrirMenuVenda(true);
+a.menu().listeners.click({ target: { dataset: { a: 'fechar' } } });
+assert.equal(a.menu(), null, 'Fechar Nunca vender não abre Venda');
+console.log('OK: proteção por conta e janelas distintas de Venda e Nunca vender, sem controles duplicados.');

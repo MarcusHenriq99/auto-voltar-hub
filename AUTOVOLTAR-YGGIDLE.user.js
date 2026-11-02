@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.90
+// @version      2.91
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -4752,7 +4752,7 @@
   const abrirEditor = () => {
     if (editor) { editor.remove(); editor = null; return; }
     if (calib) abrirCalibracao();
-    if (menuVenda) abrirMenuVenda();
+    if (menuVenda) abrirMenuVenda(menuVendaProtegidos);
     editor = document.createElement('div');
     abrirSubjanela(editor, 440);
     const campo = '';
@@ -4899,7 +4899,7 @@
       return;
     }
     if (editor) abrirEditor();
-    if (menuVenda) abrirMenuVenda();
+    if (menuVenda) abrirMenuVenda(menuVendaProtegidos);
     calib = document.createElement('div');
     abrirSubjanela(calib, 440);
     calib.addEventListener('click', (ev) => {
@@ -4925,10 +4925,11 @@
   };
 
   let menuVenda = null;
+  let menuVendaProtegidos = false;
   const fecharOutros = (manter) => {
     if (manter !== 'editor' && editor) abrirEditor();
     if (manter !== 'calib' && calib) abrirCalibracao();
-    if (manter !== 'venda' && menuVenda) abrirMenuVenda();
+    if (manter !== 'venda' && menuVenda) abrirMenuVenda(menuVendaProtegidos);
   };
 
   const testarVenda = async () => {
@@ -4942,13 +4943,12 @@
     // Eventos de clique passam um objeto; apenas true abre diretamente a lista.
     focoProtegidos = focoProtegidos === true;
     if (menuVenda) {
-      if (focoProtegidos) {
-        const lista = menuVenda.querySelector('[data-nunca-vender]');
-        lista.open = true; lista.scrollIntoView({ block: 'nearest' });
-      } else { menuVenda.remove(); menuVenda = null; }
-      return;
+      const mesmoMenu = menuVendaProtegidos === focoProtegidos;
+      menuVenda.remove(); menuVenda = null;
+      if (mesmoMenu) return;
     }
     fecharOutros('venda');
+    menuVendaProtegidos = focoProtegidos;
     menuVenda = document.createElement('div');
     abrirSubjanela(menuVenda, 440);
     const campo = '';
@@ -4956,6 +4956,7 @@
     const w = jogo();
     const p = w && lerPeso(w);
     menuVenda.innerHTML = `
+      ${!focoProtegidos ? `
       <div style="font-weight:bold;margin-bottom:4px">Vender no Mercador</div>
       <div style="margin-bottom:8px;color:#ffb38a">Retorno permitido somente abaixo de ${limiteSeguro()}% de peso (teto de 70%). Se o peso continuar alto ou nao puder ser lido, Auto-voltar e autopilot ficam pausados. Cartao Kafra nunca e vendido.</div>
       <div style="opacity:.75;margin-bottom:8px">Ao chegar no limite de peso, volta ao ponto de salvamento, usa "Vender tudo" e tira os itens protegidos antes de confirmar. Itens com cadeado o jogo ja nao vende.</div>
@@ -4972,10 +4973,11 @@
       <div style="margin:8px 0">
         <label style="display:flex;gap:6px;align-items:center"><input data-ar="ligado" type="checkbox"${cfg.armazem.ligado ? ' checked' : ''}> Guardar no armazem os itens de Nunca vender</label>
         <label style="display:flex;gap:6px;align-items:center"><input data-ar="usarCartao" type="checkbox"${cfg.armazem.usarCartao ? ' checked' : ''}> Usar Cartao Kafra no mapa quando disponivel</label>
-        <div style="opacity:.75;margin-top:4px">Sem cartao, guarda pela Kafra de Prontera. Itens equipados, travados, favoritos e o Cartao Kafra nunca vao para o armazem. A mesma lista abaixo escolhe os itens a guardar.</div>
+        <div style="opacity:.75;margin-top:4px">Sem cartao, guarda pela Kafra de Prontera. Itens equipados, travados, favoritos e o Cartao Kafra nunca vao para o armazem. Configure os itens protegidos em Nunca vender.</div>
       </div>
-      <details data-nunca-vender${focoProtegidos ? ' open' : ''} style="margin:10px 0">
-      <summary style="font-weight:bold;cursor:pointer">Nunca vender — itens protegidos</summary>
+      ` : `
+      <div data-nunca-vender>
+      <div style="font-weight:bold;margin-bottom:4px">Nunca vender — itens protegidos</div>
       <p>Estes nomes bloqueiam venda e desmantelamento. A lista pessoal é salva automaticamente só nesta conta.</p>
       <details style="margin:6px 0"><summary style="cursor:pointer">Itens de mapa e raros (${NUNCA_VENDER_FIXO.length}) — proteção fixa</summary>
         <ul>${NUNCA_VENDER_FIXO.map(nome => `<li>${nome}</li>`).join('')}</ul></details>
@@ -4985,8 +4987,8 @@
       <div>Um nome por linha. Aceita parte do nome; nomes de até 3 letras precisam ser palavras inteiras. Acrescente aqui outros itens de mapa que quiser preservar.</div>
       <textarea id="fzn-nunca-vender-nomes" aria-label="Itens que nunca serão vendidos nesta conta" data-v="nomes" rows="6" style="${campo};width:100%;box-sizing:border-box">${(v.nomes || []).join('\n').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
       <div style="opacity:.75">As listas fixas continuam protegidas ao limpar sua lista. Também são preservados lendários/míticos, lucky drops procurados, favoritos, cadeados e suprimentos de farm conforme as regras existentes. O nome indica a proteção; a origem de cada exemplar não é identificada.</div>
-      </details>
-      <div style="font-weight:bold;margin:8px 0 4px">Outras proteções / Guardar</div>
+      </div>
+      <div style="font-weight:bold;margin:8px 0 4px">Proteção por tipo e raridade</div>
       ${TIPOS_VENDA.map(([k, r]) => `<label style="display:flex;gap:6px;align-items:center"><input data-p="${k}" type="checkbox"${v.proteger[k] ? ' checked' : ''}> ${r}</label>`).join('')}
       <label style="display:flex;gap:6px;align-items:center"><input data-v="comCarta" type="checkbox"${v.comCarta ? ' checked' : ''}> Equipamentos com carta encaixada</label>
       <label style="display:flex;gap:6px;align-items:center;margin-top:4px">Raridade a partir de
@@ -4994,8 +4996,9 @@
           <option value="0"${!(Number(v.raridadeMin) > 0) ? ' selected' : ''}>(nao proteger por raridade)</option>
           ${RARIDADES.map((r, i) => `<option value="${i + 1}"${Number(v.raridadeMin) === i + 1 ? ' selected' : ''}>${r}</option>`).join('')}
         </select></label>
+      `}
       <div style="display:flex;gap:6px;margin-top:8px">
-        <button data-a="testar" title="Parado na chegada, ao lado do Mercador: monta a venda e mostra no log o que sairia, sem confirmar" style="${campo};cursor:pointer">Testar (sem vender)</button>
+        ${!focoProtegidos ? `<button data-a="testar" title="Parado na chegada, ao lado do Mercador: monta a venda e mostra no log o que sairia, sem confirmar" style="${campo};cursor:pointer">Testar (sem vender)</button>` : ''}
         <button data-a="fechar" style="${campo};cursor:pointer;margin-left:auto">Fechar</button>
       </div>`;
     menuVenda.addEventListener('input', (ev) => {
@@ -5013,10 +5016,9 @@
     menuVenda.addEventListener('click', (ev) => {
       const a = ev.target?.dataset?.a;
       if (a === 'testar') testarVenda();
-      else if (a === 'fechar') abrirMenuVenda();
+      else if (a === 'fechar') abrirMenuVenda(focoProtegidos);
     });
     document.body.appendChild(menuVenda);
-    if (focoProtegidos) menuVenda.querySelector('[data-nunca-vender]').scrollIntoView({ block: 'nearest' });
   }
 
   function atualizarPainel() {
@@ -5318,7 +5320,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.90</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.91</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
