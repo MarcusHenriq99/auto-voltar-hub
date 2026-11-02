@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.87
+// @version      2.88
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3821,7 +3821,8 @@
     const doc = w.document;
     const hud = doc.getElementById?.('ui-root') || doc;
     const numero = texto => {
-      const m = /^(?:Zeny\s*:?\s*)?(\d{1,3}(?:[.,]\d{3})+|\d+)(?:\s*Zeny)?$/i.exec(String(texto || '').trim());
+      const limpo = String(texto || '').trim().replace(/^[Ƶℤⓩ🪙Z]\s*(?=\d)/u, '').replace(/(\d)\s*z$/i, '$1');
+      const m = /^(?:Zeny\s*:?\s*)?(\d{1,3}(?:[.,]\d{3})+|\d+)(?:\s*Zeny)?$/i.exec(limpo);
       if (!m) return NaN;
       const n = Number(m[1].replace(/[^\d]/g, ''));
       return Number.isSafeInteger(n) && n >= 0 ? n : NaN;
@@ -3839,6 +3840,9 @@
         if (!visivel(area) || area.closest?.('[data-fzn-auto-voltar], .fzn-ygg')) continue;
         const n = numero(area.innerText || area.textContent);
         if (Number.isFinite(n)) return n;
+        const valores = new Set([...(area.querySelectorAll?.('span') || [])]
+          .filter(visivel).map(e => numero(e.innerText || e.textContent)).filter(Number.isFinite));
+        if (valores.size === 1) return [...valores][0];
       }
       if (visivel(el)) for (const rotulo of rotulos) {
         const n = numero(rotulo);
@@ -3847,7 +3851,21 @@
     }
     const texto = hud === doc ? doc.body?.innerText : hud.innerText;
     const m = /(?:^|\n)\s*Zeny\s*:?\s*([\d.,]+)(?=\s*(?:\n|$))/i.exec(texto || '');
-    return m ? numero(m[1]) : NaN;
+    if (m) return numero(m[1]);
+    if (typeof rifaMenu !== 'undefined' && rifaMenu?.isConnected &&
+        Date.now() - (w.__fznSaldoRifaDiagEm || 0) > 10000) {
+      w.__fznSaldoRifaDiagEm = Date.now();
+      const marcadores = [...doc.querySelectorAll('[title], [aria-label], [aria-description], [data-tooltip], [data-hud-tooltip], svg title')]
+        .filter(e => /zeny/i.test(['title','aria-label','aria-description','data-tooltip','data-hud-tooltip'].map(a => e.getAttribute(a)).join(' ') + (String(e.tagName).toLowerCase() === 'title' ? e.textContent : '')))
+        .slice(0, 12).map(e => {
+          const pais = [];
+          for (let p = e, i = 0; p && p !== doc.body && i < 4; p = p.parentElement, i++)
+            pais.push({ tag: p.tagName, texto: String(p.innerText || p.textContent || '').slice(0, 220), visivel: visivel(p), atributos: [...p.attributes].filter(a => /title|aria|data-hud|class|id/.test(a.name)).map(a => [a.name, a.value]).slice(0, 8) });
+          return pais;
+        });
+      gravarJson('fzn-rifa-saldo-diagnostico-v1', { em: Date.now(), marcadores });
+    }
+    return NaN;
   };
   const precoBotaoRifa = (botao) => {
     const m = /comprar n[uú]mero\s*[—–-]\s*([\d.,]+)\s*z/i.exec(textoDe(botao) || '');
@@ -5275,7 +5293,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.87</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.88</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);

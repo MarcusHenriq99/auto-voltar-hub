@@ -31,6 +31,16 @@ ids['zeny-help'] = { textContent: 'Zeny' };
 assert.equal(ctx.read(w), 32492176);
 nodes = [element('', { title: 'Zeny: 32.492.176' }, hud)];
 assert.equal(ctx.read(w), 32492176, 'Valor completo no tooltip também é válido');
+for (const symbol of ['Ƶ', 'ℤ', 'ⓩ', '🪙', 'Z']) {
+  nodes = [element(symbol + '32.492.176', { title: 'Zeny' }, hud)];
+  assert.equal(ctx.read(w), 32492176, 'Ícone textual da moeda: ' + symbol);
+}
+const nested = element('moeda32.492.176', { title: 'Zeny' }, hud);
+nested.querySelectorAll = () => [element('moeda'), element('32.492.176')];
+nodes = [nested];
+assert.equal(ctx.read(w), 32492176, 'Valor numérico isolado em span do controle identificado');
+nested.querySelectorAll = () => [element('32.492.176'), element('3.751'), element('6.000')];
+assert.ok(Number.isNaN(ctx.read(w)), 'Descendentes com múltiplos números não identificam uma carteira');
 const svgTitle = element('Zeny', {}, element('Zeny', {}, element('32.492.176', {}, hud)), false);
 svgTitle.tagName = 'title'; nodes = [svgTitle];
 assert.equal(ctx.read(w), 32492176, 'Título SVG não tem retângulo, mas seu controle pai tem');
