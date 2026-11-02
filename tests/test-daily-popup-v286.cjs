@@ -4,7 +4,7 @@ const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '..', 'AUTOVOLTAR-YGGIDLE.user.js'), 'utf8');
 let now = 100000;
 const logs = [];
-const context = { Date: { now: () => now }, log: s => logs.push(s),
+const context = { cfg: { ligado: true }, Date: { now: () => now }, log: s => logs.push(s),
   visivel: e => e.visible !== false && e.isConnected !== false,
   textoDe: e => e.innerText || '',
   normalizar: s => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim() };
@@ -30,6 +30,15 @@ function scenario({ heading = 'Logue e Ganhe', checkbox = true, checked = false,
     querySelectorAll: selector => !close.isConnected ? [] : selector === 'input[type="checkbox"]' ? (checkbox ? [check] : []) : [title] } };
   return { w, close, check, stats: () => ({ closes, toggles, claims }) };
 }
+const off = scenario();
+context.cfg.ligado = false;
+assert.equal(context.dismiss(off.w), false, 'OFF deixa a recompensa aberta');
+assert.deepEqual(off.stats(), { closes: 0, toggles: 0, claims: 0 });
+assert.equal(off.check.checked, false);
+assert.equal(context.dismiss({ document: { querySelectorAll: () => { throw Error('OFF nem procura controles para fechar'); } } }), false);
+context.cfg.ligado = true;
+assert.equal(context.dismiss(off.w), true, 'ON volta a permitir o fechamento');
+assert.deepEqual(off.stats(), { closes: 1, toggles: 0, claims: 0 });
 for (const checked of [false, true]) {
   const s = scenario({ heading: 'Aviso do dia', checked });
   assert.equal(context.dismiss(s.w), true);
@@ -53,6 +62,11 @@ for (let i = 0; i < 10; i++) assert.equal(context.dismiss(delayed.w), true);
 assert.equal(delayed.stats().closes, 1, 'Não spammar enquanto a janela fecha');
 now += 1500; context.dismiss(delayed.w);
 assert.equal(delayed.stats().closes, 2, 'Retentar fechamento sem efeito com intervalo');
+context.cfg.ligado = false;
+now += 2000;
+assert.equal(context.dismiss(delayed.w), false, 'Desligar suspende também a retentativa de fechamento');
+assert.equal(delayed.stats().closes, 2);
+context.cfg.ligado = true;
 for (const heading of ['Kafra', 'Confirmar compra', 'Prêmios da rifa', 'Ferreiro', 'Chat: Logue e Ganhe']) {
   const s = scenario({ heading, checkbox: false });
   assert.equal(context.dismiss(s.w), false, heading);
@@ -66,7 +80,7 @@ const cashTitle = { innerText: 'YggIdle · Loja de Cash', parentElement: cashPan
 assert.equal(context.cash({ document: { body: cashBody, querySelectorAll: () => [cashTitle] } }), true);
 assert.equal(cashClosed, true);
 let checkedDuringRaffle = 0;
-const priority = { atualizarPainel: () => {}, jogo: () => ({}),
+const priority = { cfg: { ligado: true }, atualizarPainel: () => {}, jogo: () => ({}),
   dispensarAvisoDiario: () => { checkedDuringRaffle++; return true; }, rifaRodando: true,
   conferirResultadoRifa: () => { throw Error('Não agir enquanto o aviso cobre o jogo'); } };
 vm.createContext(priority);
@@ -75,4 +89,8 @@ const checkEnd = source.indexOf('    if (cfg.ligado && fecharLojaCash(w))', chec
 vm.runInContext(source.slice(checkStart, checkEnd) + '\n}; globalThis.check = verificar;', priority);
 priority.check();
 assert.equal(checkedDuringRaffle, 1, 'Reset diário também é tratado durante a rifa');
+priority.cfg.ligado = false;
+priority.conferirResultadoRifa = () => {};
+priority.check();
+assert.equal(checkedDuringRaffle, 1, 'Vigia não chama fechamento no OFF, mesmo com estado de rifa pendente');
 console.log('OK: fecha aviso e Logue e Ganhe sem marcar lembrete nem coletar; título exclusivo, ícone, cooldown e confirmação.');

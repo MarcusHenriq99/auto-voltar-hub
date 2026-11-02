@@ -127,6 +127,7 @@ function scheduling() {
 function exclusiveWatch() {
   let clicks = 0;
   const context = {
+    cfg: { ligado: true },
     atualizarPainel: () => {}, jogo: () => ({}), conferirResultadoRifa: () => {},
     dispensarAvisoDiario: () => false,
     rifaRodando: true, rifaFarmPausado: true,

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.88
+// @version      2.89
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -3617,6 +3617,7 @@
 
   const avisosDiarios = new WeakMap();
   const dispensarAvisoDiario = (w) => {
+    if (!cfg.ligado) return false;
     // O aviso diario cobre a cacada. Identificar pelo controle exclusivo evita
     // fechar por engano uma conversa de NPC ou uma janela de venda.
     const caixas = [...w.document.querySelectorAll('input[type="checkbox"]')].filter(caixa => {
@@ -4355,7 +4356,7 @@
     atualizarPainel();
     const w = jogo();
     if (!w) return;
-    if (dispensarAvisoDiario(w)) return;
+    if (cfg.ligado && dispensarAvisoDiario(w)) return;
     conferirResultadoRifa(w);
     if (rifaRodando) {
       // A caça já foi pausada e confirmada por executarRifa. Não gerar cliques
@@ -5293,7 +5294,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.88</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.89</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
