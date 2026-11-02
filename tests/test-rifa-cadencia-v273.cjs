@@ -119,6 +119,7 @@ function exclusiveWatch() {
   let clicks = 0;
   const context = {
     atualizarPainel: () => {}, jogo: () => ({}), conferirResultadoRifa: () => {},
+    dispensarAvisoDiario: () => false,
     rifaRodando: true, rifaFarmPausado: true,
     botaoHunt: () => ({ click: () => { clicks++; } }),
   };

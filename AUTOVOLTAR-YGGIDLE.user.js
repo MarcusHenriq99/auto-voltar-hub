@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.85
+// @version      2.86
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -1414,13 +1414,28 @@
   };
 
   const RE_PESO = /Peso\s*([\d.]+)\s*\/\s*([\d.]+)/;
+  const textoHudRotulado = (w, nome) => {
+    // No modo compacto o jogo remove "Peso"/"Zeny" do texto, mas mantém
+    // o significado no tooltip/aria-label. Nunca interpretar qualquer X/Y
+    // da página (HP, slots, quests) como peso.
+    for (const el of w.document.querySelectorAll('[title], [aria-label]')) {
+      const rotulos = [el.getAttribute?.('title'), el.getAttribute?.('aria-label')];
+      if (!rotulos.some(r => r && new RegExp('^' + nome + '(?:\\s*:|$)', 'i').test(r.trim()))) continue;
+      if (!visivel(el) || el.closest?.('[data-fzn-auto-voltar], .fzn-ygg')) continue;
+      const texto = (el.innerText || el.textContent || '').trim();
+      if (texto && texto.length < 80) return texto;
+    }
+    return '';
+  };
   let elPeso = null;
   const textoPeso = (w) => {
-    if (elPeso && elPeso.ownerDocument === w.document && elPeso.isConnected && RE_PESO.test(elPeso.textContent || '')) return elPeso.textContent;
+    const rotulado = textoHudRotulado(w, 'Peso');
+    if (rotulado) return /^Peso\b/i.test(rotulado) ? rotulado : 'Peso ' + rotulado;
+    if (elPeso && elPeso.ownerDocument === w.document && elPeso.isConnected && visivel(elPeso) && RE_PESO.test(elPeso.textContent || '')) return elPeso.textContent;
     elPeso = null;
     for (const el of w.document.querySelectorAll('div, span')) {
       const t = el.textContent || '';
-      if (t.length <= 40 && RE_PESO.test(t)) elPeso = el;
+      if (t.length <= 40 && visivel(el) && !el.closest?.('[data-fzn-auto-voltar]') && RE_PESO.test(t)) elPeso = el;
     }
     return elPeso ? elPeso.textContent : (w.document.body.innerText || '');
   };
@@ -1429,7 +1444,7 @@
     if (!m) return null;
     const atual = Number(m[1].replace(/\./g, ''));
     const max = Number(m[2].replace(/\./g, ''));
-    return max > 0 ? { atual, max, pct: (atual / max) * 100 } : null;
+    return max > 0 && atual >= 0 ? { atual, max, pct: (atual / max) * 100 } : null;
   };
 
   const nomeBase = (s) => normalizar(String(s || '')
@@ -3600,27 +3615,42 @@
     recuperacao = { motivo: 'fora do mapa de farm', desde: agora, ultimaEm: agora - 20000, tentativas: 0, retomarAutopilot: true };
   };
 
+  const avisosDiarios = new WeakMap();
   const dispensarAvisoDiario = (w) => {
     // O aviso diario cobre a cacada. Identificar pelo controle exclusivo evita
     // fechar por engano uma conversa de NPC ou uma janela de venda.
     const caixas = [...w.document.querySelectorAll('input[type="checkbox"]')].filter(caixa => {
-      if (!visivel(caixa) || caixa.disabled) return false;
       const nomes = [caixa.getAttribute('aria-label'), ...[...(caixa.labels || [])].map(l => l.innerText || l.textContent),
         caixa.closest('label')?.innerText, caixa.parentElement?.innerText].filter(Boolean);
       return nomes.some(nome => normalizar(nome).includes('nao mostrar novamente hoje'));
     });
-    if (caixas.length !== 1) return false;
-    const caixa = caixas[0];
-    let area = caixa.parentElement;
     let fechar = null;
-    for (let i = 0; i < 6 && area && area !== w.document.body; i++, area = area.parentElement) {
-      const botoes = [...area.querySelectorAll('button')].filter(b => visivel(b) && /^fechar$/i.test(textoDe(b)));
-      if (botoes.length === 1) { fechar = botoes[0]; break; }
+    const titulos = [...w.document.querySelectorAll('h1, h2, h3, h4, div, span, strong')].filter(el =>
+      visivel(el) && /^(?:logue\s*(?:e|&)\s*ganhe|recompensas? diarias?)(?:\s*[—–-].{0,60})?$/.test(normalizar(textoDe(el))));
+    const referencias = [...caixas, ...titulos];
+    for (const referencia of referencias) {
+      let area = referencia.parentElement;
+      for (let i = 0; i < 8 && area && area !== w.document.body && !/^(ui-root|elrag-dialogs)$/.test(area.id || ''); i++, area = area.parentElement) {
+        if (!visivel(area)) continue;
+        const botoes = [...area.querySelectorAll('button')].filter(b => visivel(b) && !b.disabled &&
+          /^(fechar|x|×|✕)$/i.test(b.getAttribute('aria-label') || b.title || textoDe(b)));
+        if (botoes.length === 1) { fechar = botoes[0]; break; }
+      }
+      if (fechar) break;
     }
-    if (!fechar) return false;
-    if (!caixa.checked) { caixa.click(); log('Aviso diario: marquei Nao mostrar novamente hoje'); return true; }
-    fechar.click();
-    log('Aviso diario: fechado; cacada liberada');
+    const anterior = avisosDiarios.get(w);
+    if (!fechar) {
+      if (anterior && (!anterior.botao.isConnected || !visivel(anterior.botao))) {
+        log('Aviso diario: fechamento confirmado; recompensa e lembrete preservados');
+        avisosDiarios.delete(w);
+      }
+      return false;
+    }
+    if (anterior?.botao === fechar && Date.now() - anterior.em < 1500) return true;
+    // Não marcar "Não mostrar novamente hoje" nem coletar por conta do
+    // usuário. Um único click no fechar, mesmo quando é apenas um ícone.
+    fechar.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true, composed: true, view: w }));
+    avisosDiarios.set(w, { botao: fechar, em: Date.now() });
     return true;
   };
 
@@ -3788,6 +3818,9 @@
     return null;
   };
   const zenyRifa = (w) => {
+    const rotulado = textoHudRotulado(w, 'Zeny');
+    const valor = /^(?:Zeny\s*)?([\d.,]+)$/i.exec(rotulado);
+    if (valor) return Number(valor[1].replace(/[^\d]/g, ''));
     const m = /Zeny\s+([\d.,]+)/i.exec(w.document.body.innerText || '');
     return m ? Number(m[1].replace(/[^\d]/g, '')) : NaN;
   };
@@ -4266,13 +4299,13 @@
     atualizarPainel();
     const w = jogo();
     if (!w) return;
+    if (dispensarAvisoDiario(w)) return;
     conferirResultadoRifa(w);
     if (rifaRodando) {
       // A caça já foi pausada e confirmada por executarRifa. Não gerar cliques
       // paralelos enquanto o servidor processa bilhetes ou o retorno ao farm.
       return;
     }
-    if (dispensarAvisoDiario(w)) return;
     if (cfg.ligado && fecharLojaCash(w)) return;
     ligarCalibracao(w);
     instalarGanchos(w);
@@ -5199,7 +5232,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.85</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.86</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
