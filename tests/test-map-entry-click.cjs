@@ -13,7 +13,7 @@ const clickSource = section('  const clicarBotao =', '  const clicarNoCanvas =')
 const entrySource = section('  const entradaDoMapaPesquisado =', '  const PORTEIRO_BIO4 =');
 const returnSource = section('  const voltarAoMapa =', '  const TENTATIVAS_VOLTAR =');
 
-let map = 'prontera', open = false, entryClicks = 0, confirmClicks = 0;
+let map = 'prontera', open = false, entryClicks = 0, confirmClicks = 0, shopStuck = true, blocked;
 const overlay = {};
 const mapButton = { visible: true, isConnected: true, label: 'Mundo de Midgard', click() { open = true; } };
 const card = { innerText: 'Mapa: mag_dun02', parentElement: null };
@@ -50,14 +50,19 @@ const context = {
   botaoPorTexto: (doc, fn) => doc.querySelectorAll('button').find(b => b.visible && fn(b.label)) || null,
   esperar: async () => {}, esperarAte: async fn => fn(),
   etapa: () => {}, log: () => {}, salvarCfg: () => {}, limiteSeguro: () => 70,
-  fecharArmazem: async () => true, pesoSeguroParaVoltar: async () => true,
+  fecharArmazem: async () => true, fecharLoja: async () => !shopStuck, pesoSeguroParaVoltar: async () => true,
   sairDaEconomia: async () => {}, religarEconomia: async () => {},
-  diagTela: () => {}, apertarEsc: () => {}, segurarRetorno: () => false,
+  diagTela: () => {}, apertarEsc: () => {}, segurarRetorno: (_, reason) => { blocked = reason; return false; },
   historicoLog: () => [],
 };
 vm.createContext(context);
 vm.runInContext(clickSource + entrySource + returnSource + '\nglobalThis.returnToMap = voltarAoMapa;', context);
-context.returnToMap(w).then(ok => {
+Promise.resolve().then(async () => {
+  assert.equal(await context.returnToMap(w), false);
+  assert.match(blocked, /Loja de Suprimentos/);
+  assert.equal(open, false, 'O mapa-múndi não deve abrir com a loja travada');
+  shopStuck = false;
+  const ok = await context.returnToMap(w);
   assert.equal(ok, true, 'Deve confirmar chegada ao mapa pesquisado');
   assert.equal(entryClicks, 1, 'Clique enviado ao botao Entrar, nao a camada sobreposta');
   assert.equal(confirmClicks, 1, 'Encontra confirmacao que ja existia oculta');
