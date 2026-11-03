@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.91
+// @version      2.93
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -609,7 +609,7 @@
   };
 
   const curarNaKafra = async (w) => {
-    if (!await falarComNpc(w, 'kafra', () => dialogoKafraAberto(w.document))) { log('Kafra: pulando cura'); return false; }
+    if (!await falarComNpc(w, 'kafra', () => dialogoKafraAberto(w.document))) { log('Kafra: cura pulada porque o diálogo não abriu'); return false; }
     const curar = await esperarAte(() => botaoPorTexto(w.document, (t) => /^Curar\b/.test(t)), 3000);
     if (!curar) { diagTela('curar'); log('Kafra: botao Curar nao apareceu'); w.__elragEngine.cancelNpcDialog?.(); return false; }
     curar.click();
@@ -777,7 +777,7 @@
   let compraCidadeBloqueadaAte = 0;
   const comprarItens = async (w, bolso = false, { mochilaLida = false, aoEnviar = null, aoRetentar = null } = {}) => {
     const lista = (cfg.compras || []).filter((c) => c && c.nome && Number(c.alvo) > 0);
-    if (!lista.length) return false;
+    if (!lista.length) { if (!bolso) log('Loja: compras puladas; lista sem itens com quantidade-alvo válida'); return false; }
     const rapido = bolso && aoEnviar;
     let fresca = mochilaLida || await lerMochila(w);
     let faltas = calcularFaltas(w, lista);
@@ -789,7 +789,7 @@
       if (!await abrirLojaDeBolso(w)) return false;
     } else {
       if (!await falarComNpc(w, 'vendedor', () => dialogoMercadorAberto(w))) {
-          log('Loja: pulando compras');
+          log('Loja: compras puladas; diálogo do vendedor não abriu. Nova tentativa na cidade liberada em 15 min');
           compraCidadeBloqueadaAte = Date.now() + 15 * 60000;
           return false; 
       }
@@ -1106,10 +1106,10 @@
   };
   const retirarDoArmazem = async (w) => {
     const lista = (cfg.compras || []).filter((c) => c && c.nome && Number(c.alvo) > 0);
-    if (!lista.length) return;
+    if (!lista.length) { log('Armazém: retirada pulada porque a lista de compras não tem quantidades-alvo válidas'); return; }
     await lerMochila(w);
     const faltas = calcularFaltas(w, lista);
-    if (!faltas.length) return;
+    if (!faltas.length) { log('Armazém: retirada pulada porque a mochila já tem os suprimentos da lista'); return; }
     etapa('6/8 Armazem', 'Pegando do armazem os itens da lista de Compras');
     ponteRetirar(w);
     const seq0 = estadoLoja.armazemSeq;
@@ -1281,7 +1281,7 @@
   };
 
   const guardarProtegidos = async (w, naCidade, todos = false) => {
-    if (!todos && !cfg.armazem.ligado) return { ok: true, depositados: 0 };
+    if (!todos && !cfg.armazem.ligado) { log('Armazém: depósito pulado porque está desativado nos ajustes'); return { ok: true, depositados: 0 }; }
     if (!await lerMochila(w)) return { ok: false, motivo: 'mochila nao atualizou' };
     const equipados = await lerEquipados(w);
     if (!equipados) return { ok: false, motivo: 'nao consegui conferir os itens equipados' };
@@ -1694,7 +1694,7 @@
   const venderItens = async (w, simular = false, bolso = false) => {
     if (simular) return venderUmaTentativa(w, true, bolso);
     for (let tentativa=1;tentativa<=3;tentativa++) {
-      if (!cfg.ligado) return false;
+      if (!cfg.ligado) { log('Venda interrompida: Auto-voltar desligado antes da próxima tentativa'); return false; }
       etapa('5/8 Vendendo', 'Tentativa '+tentativa+'/3; conferindo mochila e resposta do vendedor');
       if (await venderUmaTentativa(w, false, bolso)) return true;
       if (tentativa<3 && cfg.ligado) {
@@ -1895,7 +1895,21 @@
     return true;
   };
 
-  const autopilotLigado = (w) => { try { const ap = w.__elragEngine.getAutopilotSnapshot(); return Boolean(ap && ![0, 1].includes(Number(ap.runtimeState))); } catch { return false; } };
+  const estadoAutopilot = (w) => {
+    try {
+      const estado = w.__elragEngine.getAutopilotSnapshot()?.runtimeState;
+      return estado != null && estado !== '' && Number.isFinite(Number(estado)) ? Number(estado) : null;
+    } catch { return null; }
+  };
+  const autopilotLigado = (w) => {
+    const estado = estadoAutopilot(w);
+    return estado !== null && estado !== 0 && estado !== 1;
+  };
+  const motivoAutopilotParado = (w) => {
+    const estado = estadoAutopilot(w);
+    return estado === null ? 'estado do Autopilot indisponível no motor do jogo' :
+      'Autopilot não confirmou ativação (estado ' + estado + ')';
+  };
   const ligarAutopilot = (w, ligar) => { try { w.__elragEngine.setAutopilotRunning(ligar); return true; } catch { return false; } };
 
   const huntsPausados = new WeakSet();
@@ -1913,15 +1927,60 @@
     }
     return ligarAutopilot(w, false);
   };
+  const retomadasEmCurso = new WeakSet();
   const retomarCacada = async (w) => {
-    if (!await fecharArmazem(w)) return segurarRetorno(w, 'armazem aberto; cacada bloqueada');
-    if (!validarChegadaFarm(w)) return false;
-    etapa('Concluido', 'Armazem fechado; retomando a cacada');
-    if (huntsPausados.has(w)) {
-      botaoHunt(w, false)?.click();
+    if (retomadasEmCurso.has(w)) return false;
+    retomadasEmCurso.add(w);
+    try {
+      if (!await fecharArmazem(w)) return segurarRetorno(w, 'armazem aberto; cacada bloqueada');
+      if (!validarChegadaFarm(w)) return false;
+      const mapa = posicao(w)?.mapa;
+      etapa('Retomando caça', 'Mapa ' + mapa + ' confirmado; verificando Hunt e Autopilot');
+      let motivo = '', proximoComando = 0, confirmandoDesde = null;
+      const confirmou = await esperarAte(() => {
+        if (!cfg.ligado || cancelando()) { motivo = 'Auto-voltar desligado ou rotina cancelada'; return 'interrompido'; }
+        if (posicao(w)?.mapa !== mapa || morteConfirmada(w)) {
+          motivo = 'personagem mudou de mapa, está carregando ou morreu';
+          return 'interrompido';
+        }
+        if (dispensarAvisoDiario(w) || fecharLojaCash(w) || armazemAberto(w)) {
+          motivo = 'janela do jogo ainda aberta (aviso diário, loja Cash ou armazém)';
+          confirmandoDesde = null;
+          return false;
+        }
+        const agora = Date.now();
+        if (huntsPausados.has(w) && !botaoHunt(w, true)) {
+          const hunt = botaoHunt(w, false);
+          motivo = hunt ? 'Hunt continuou OFF após o clique' : 'controle do Hunt indisponível após a pausa';
+          if (hunt && agora >= proximoComando) {
+            proximoComando = agora + 1500;
+            hunt.click();
+          }
+          confirmandoDesde = null;
+          return false;
+        }
+        if (autopilotLigado(w)) {
+          confirmandoDesde ??= agora;
+          return agora - confirmandoDesde >= 1000 ? 'confirmado' : false;
+        }
+        confirmandoDesde = null;
+        motivo = motivoAutopilotParado(w);
+        if (agora >= proximoComando) {
+          proximoComando = agora + 1500;
+          if (!ligarAutopilot(w, true)) motivo = 'motor do jogo não aceitou o comando de ligar o Autopilot';
+        }
+        return false;
+      }, 10000, 250);
+      if (confirmou !== 'confirmado') {
+        etapa('Caça não retomada', 'Mapa ' + mapa + ' confirmado; ' + (motivo || 'Autopilot não permaneceu ligado pelo tempo de confirmação'));
+        return false;
+      }
       huntsPausados.delete(w);
+      etapa('Concluído', 'Caça religada no mapa ' + mapa + '; Autopilot confirmado');
+      return true;
+    } finally {
+      retomadasEmCurso.delete(w);
     }
-    return ligarAutopilot(w, true);
   };
 
   const TITULO_FERREIRO = /Ferreiro\s*[—-]\s*Desmantelar/;
@@ -1965,7 +2024,7 @@
       livres.set(b, (livres.get(b) || 0) + (pode ? Math.max(1, Number(item.count) || 1) : 0));
     }
     if (![...livres.values()].some((n) => n > 0)) { log('Ferreiro: nada desmontavel na mochila'); return true; }
-    if (!await falarComNpc(w, 'ferreiro', () => dialogoFerreiro(w) || ferreiroAberto(w))) { log('Ferreiro: pulando'); return false; }
+    if (!await falarComNpc(w, 'ferreiro', () => dialogoFerreiro(w) || ferreiroAberto(w))) { log('Ferreiro: desmantelamento pulado porque o diálogo não abriu'); return false; }
     if (!ferreiroAberto(w)) {
       const op = await esperarAte(() => botaoQualquer(w, /^Desmantelar item/i), 3000);
       if (!op) { log('Ferreiro: opcao "Desmantelar item" nao apareceu'); return false; }
@@ -2056,7 +2115,7 @@
       if (tinhaAutopilot) {
         if (huntsPausados.has(w)) { botaoHunt(w, false)?.click(); huntsPausados.delete(w); }
         const voltou = await esperarAte(() => { if (autopilotLigado(w)) return true; ligarAutopilot(w, true); return false; }, 6000, 300);
-        log(voltou ? 'Venda na instancia: cacada religada' : 'Venda na instancia: autopilot NAO confirmou religar');
+        log(voltou ? 'Venda na instancia: cacada religada' : 'Venda na instância: ' + motivoAutopilotParado(w));
       }
       etapa('Aguardando', 'Monitorando peso e morte');
       ocupado = false;
@@ -2161,7 +2220,7 @@
           return segurarRetorno(w, 'deposito no mapa falhou: ' + deposito.motivo + '. Nao sairei para Prontera com o cartao disponivel');
         }
         if (!deposito.ok) log('Sem Cartao Kafra utilizavel: seguirei para a Kafra de Prontera (' + deposito.motivo + ')');
-        if (!cfg.ligado) return;
+        if (!cfg.ligado) { etapa('Rotina interrompida', 'Auto-voltar desligado após o depósito no mapa'); return; }
         if (armazemAberto(w)) { segurarRetorno(w, 'armazem nao fechou'); return; }
       }
       if (!await fecharArmazem(w)) { segurarRetorno(w, 'armazem nao fechou antes da viagem'); return; }
@@ -2710,7 +2769,8 @@
     if(codigo && /^[a-z0-9_]+$/.test(codigo)) { cfg.destinoFarm={...cfg.destinoFarm,mapa:codigo};salvarCfg(); }
     etapa('7/8 Conferindo retorno','Peso precisa estar abaixo de '+limiteSeguro()+'%');
     if(!await fecharArmazem(w)) return segurarRetorno(w,'armazem nao fechou antes do retorno');
-    if(!cfg.ligado || !await pesoSeguroParaVoltar(w)) return false;
+    if (!cfg.ligado) { log('Retorno ao mapa interrompido: Auto-voltar desligado'); return false; }
+    if (!await pesoSeguroParaVoltar(w)) return false;
     if(posicao(w)?.mapa===codigo || mapaConfereConteudo(posicao(w)?.mapa)) return true;
     await sairDaEconomia(w);
     if (tempoConteudoEsgotado()) {
@@ -2795,14 +2855,16 @@
       log('Mapa: nenhum modal; aguardando teleporte');
       const chegou = await esperarAte(() => posicao(w)?.mapa === codigo, 40000, 250);
       if (chegou) { log('Mapa: teleporte confirmado'); return true; }
-      const erro = (w.document.body.innerText || '').match(/(zeny insuficiente|peso|bloqueado|indisponivel|nao pode)/i);
+      const erro = normalizar(w.document.body.innerText || '').match(/zeny insuficiente|peso (?:excedido|acima do limite)|entrada (?:bloqueada|indisponivel)|nao (?:pode|e possivel) (?:entrar|teleportar)/i);
       if (erro) log('Mapa: possivel bloqueio: "' + erro[0] + '"');
+      log('Mapa: chegada a ' + codigo + ' sem confirmação após 40 s; mapa atual ' + (posicao(w)?.mapa || 'indisponível'));
       diagTela('mapa-sem-teleporte');
       return false;
     };
 
     for (let i = 1; i <= 2; i++) {
-      if (!cfg.ligado || !await pesoSeguroParaVoltar(w)) return false;
+      if (!cfg.ligado) { log('Entrada em ' + codigo + ' interrompida: Auto-voltar desligado'); return false; }
+      if (!await pesoSeguroParaVoltar(w)) return false;
       etapa('8/8 Voltando ao mapa', 'Tentativa ' + i + '/2: ' + codigo);
       if (await tentarEntrar(i === 1)) {
         delete cfg.retornoPendente; salvarCfg();
@@ -2916,8 +2978,8 @@
         if (huntsPausados.has(w)) { botaoHunt(w, false)?.click(); huntsPausados.delete(w); }
         else if (botaoHunt(w, false)) botaoHunt(w, false).click();
         const ok = await esperarAte(() => { if (autopilotLigado(w)) return true; ligarAutopilot(w, true); return false; }, 6000, 300);
-        log(ok ? 'Renascer: cacada religada no mesmo mapa' : 'Renascer: autopilot nao confirmou religar');
-      }
+        log(ok ? 'Renascer: cacada religada no mesmo mapa' : 'Renascer: ' + motivoAutopilotParado(w));
+      } else log('Renascer: retomada pulada porque Hunt e Autopilot estavam desligados quando a rotina começou');
     } catch (e) {
       log('Renascer: erro ' + String(e?.message || e).slice(0, 100));
     } finally {
@@ -3049,6 +3111,7 @@
     etapa('4/8 Kafra na cidade', 'Cura e deposito dos itens protegidos');
     if (!await fecharArmazem(w)) return segurarRetorno(w, 'armazem nao fechou antes de falar com a Kafra');
     if (cfg.curarNaKafra) await curarNaKafra(w);
+    else log('Kafra: cura pulada porque está desativada nos ajustes');
     if (cfg.ferreiro) {
       etapa('5/8 Ferreiro', 'Desmantelando equipamentos da mochila');
       let desmantelamentoOk = false;
@@ -3065,7 +3128,7 @@
     const deposito = await guardarProtegidos(w, true, guardarTudo());
     if (!deposito.ok) log('Armazem na cidade: ' + deposito.motivo);
     fezReducao.add(w);
-    if (!cfg.ligado) return false;
+    if (!cfg.ligado) { etapa('Rotina interrompida', 'Auto-voltar desligado após o depósito, antes da venda e do retorno'); return false; }
     const venderNestaVisita = (deposito.cheio && itensVendaveis()) ||
       (!guardarTudo() && cfg.venda.ligado &&
       (forcada || pesoAltoNaChegada || ((!cfg.armazem.tudoNoMapa) && viagemPorPeso) || await pesoAlto()));
@@ -3083,17 +3146,21 @@
         log('Venda nao concluiu: mantenho o personagem na cidade para repetir sem pagar outra entrada');
         return false;
       }
-    } else if (!cfg.venda.ligado && await pesoAlto()) log('Peso no limite e a venda esta DESLIGADA na configuracao');
+    } else {
+      log('Venda pulada: ' + (guardarTudo() ? 'modo Guardar tudo ativo' : !cfg.venda.ligado ? 'venda desativada nos ajustes' : 'peso abaixo do limite e venda não programada para esta visita'));
+    }
     if (!deposito.ok) return segurarRetorno(w, 'nao consegui guardar todos os protegidos: ' + deposito.motivo);
     if (cfg.comprar && !guardarTudo()) {
       try { await retirarDoArmazem(w); } catch (e) { if (cancelando()) throw e; log('Armazem: falha ao retirar — ' + String(e?.message || e).slice(0, 100)); await fecharArmazem(w); }
       etapa('6/8 Comprando', 'Repondo os itens da lista de Compras'); await comprarItens(w);
+    } else {
+      log('Compras puladas: ' + (guardarTudo() ? 'modo Guardar tudo ativo' : 'reposição desligada nos ajustes'));
     }
     const voltou = await voltarComInsistencia(w);
     if (voltou && retomar && cfg.ligado) {
-      log(await retomarCacada(w) ? 'Cacada religada no mapa' : 'Nao consegui religar o autopilot');
+      await retomarCacada(w);
     } else if (voltou) {
-      etapa('Concluido', 'Armazem fechado; retorno ao mapa confirmado');
+      etapa('Concluído', 'Mapa confirmado; retomada da caça pulada porque ' + (cfg.ligado ? 'Hunt e Autopilot já estavam desligados antes da rotina' : 'Auto-voltar foi desligado'));
     } else if (!voltou && cfg.ligado) {
       if (vigia) vigia.retomarAutopilot = retomar;
     }
@@ -3267,7 +3334,7 @@
         if (autopilotLigado(w)) return true;
         ligarAutopilot(w, true); return false;
       }, 6000, 300);
-      log(ok ? 'Covil: renasceu no mesmo mapa; caça religada para terminar o MVP' : 'Covil: aguardando Autopilot após renascimento');
+      log(ok ? 'Covil: renasceu no mesmo mapa; caça religada para terminar o MVP' : 'Covil: ' + motivoAutopilotParado(w) + ' após renascimento');
     } catch (e) {
       log('Covil: falha ao renascer; não saio da instância: ' + String(e?.message || e).slice(0, 100));
     } finally {
@@ -3441,7 +3508,7 @@
     botaoPorTexto(w.document, (t) => /^Todos \(\d+\)$/.test(t))?.click();
     botaoPorTexto(w.document, (t) => /^Limpar filtros$/i.test(t))?.click();
     input = await esperarAte(pesquisar, 2000);
-    if (!input) return false;
+    if (!input) { log('Covil: campo de busca indisponível após limpar os filtros'); return false; }
     etapa('Covil', 'Pesquisando ' + c.codigo + ' (' + c.nome + ')');
     Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype, 'value').set.call(input, base);
     input.dispatchEvent(new w.Event('input', { bubbles: true }));
@@ -3463,7 +3530,10 @@
     };
     const invocar = await esperarAte(invocarDoAlvo, 8000);
     if (!invocar) { log('Covil: botao Invocar de ' + c.nome + ' nao apareceu'); return false; }
-    if (!cfg.covil.ligado || !cfg.ligado || emInstancia(posicao(w))) return false;
+    if (!cfg.covil.ligado || !cfg.ligado || emInstancia(posicao(w))) {
+      log('Covil: convocação cancelada antes do clique. ' + (!cfg.ligado ? 'Auto-voltar desligado' : !cfg.covil.ligado ? 'modo Covil desligado' : 'personagem já está em uma instância'));
+      return false;
+    }
     invocar.click();
     const convocar = await esperarAte(() => botaoPorTexto(w.document, (t) => /^Convocar$/i.test(t)) || botaoPorTexto(document, (t) => /^Convocar$/i.test(t)), 5000);
     if (!convocar) { log('Covil: confirmacao "Convocar o MVP?" nao apareceu'); return false; }
@@ -4357,7 +4427,7 @@
     atualizarPainel();
     const w = jogo();
     if (!w) return;
-    if (cfg.ligado && dispensarAvisoDiario(w)) return;
+    if (retomadasEmCurso.has(w) || (cfg.ligado && dispensarAvisoDiario(w))) return;
     conferirResultadoRifa(w);
     if (rifaRodando) {
       // A caça já foi pausada e confirmada por executarRifa. Não gerar cliques
@@ -5320,7 +5390,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.91</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.93</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
