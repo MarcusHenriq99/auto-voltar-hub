@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.93
+// @version      2.94
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -722,10 +722,11 @@
   const textoTela = (w) => w.document.body.innerText || '';
   const dialogoMercadorAberto = (w) => /\[Mercador\]/.test(textoTela(w)) || Boolean(botaoPorTexto(w.document, (t) => /^Comprar suprimentos/.test(t)));
 
-  const lojaAberta = (w) => {
-    if (/Confirmar compra|Buscar item|Loja de Suprimentos/i.test(w.document.body.innerText || '')) return true;
-    return [...w.document.querySelectorAll('button')].some((b) => visivel(b) && /^Confirmar compra$/i.test(textoDe(b)));
-  };
+  const tituloLojaSuprimentos = (w) => [...w.document.querySelectorAll('h1, h2, h3, h4, div, span, strong')]
+    .find((el) => visivel(el) && /^loja\s*[—–-]\s*suprimentos$/.test(normalizar(textoDe(el))));
+
+  const lojaAberta = (w) => Boolean(tituloLojaSuprimentos(w)) ||
+    [...w.document.querySelectorAll('button')].some((b) => visivel(b) && /^Confirmar compra$/i.test(textoDe(b)));
 
   const linhaDoProduto = (w, nome) => {
     const alvo = normalizar(nome);
@@ -753,14 +754,30 @@
   };
 
   const fecharLoja = async (w) => {
-    for (let i = 0; i < 3; i++) {
-      if (!lojaAberta(w) && !dialogoMercadorAberto(w)) return;
-      const b = botaoPorTexto(w.document, (t) => /^(×|✕|x|Cancelar|Fechar)$/i.test(t))
-        || [...w.document.querySelectorAll('button[aria-label]')].find((x) => visivel(x) && /fechar|close/i.test(x.getAttribute('aria-label')));
-      if (b) b.click();
-      else { try { w.__elragEngine.closeNpcStore(); w.__elragEngine.cancelNpcDialog?.(); } catch {} }
-      await esperar(250);
+    const fechada = () => !lojaAberta(w) && !dialogoMercadorAberto(w);
+    for (let i = 0; i < 3 && !fechada(); i++) {
+      const titulo = tituloLojaSuprimentos(w);
+      let fechar = null;
+      for (let area = titulo?.parentElement, nivel = 0;
+        area && area !== w.document.body && !/^(ui-root|elrag-dialogs)$/.test(area.id || '') && nivel < 6;
+        area = area.parentElement, nivel++) {
+        const botoes = [...area.querySelectorAll('button')].filter((b) => visivel(b) && !b.disabled &&
+          [b.getAttribute('aria-label'), b.title, textoDe(b)].some((t) => /^(fechar|close|×|✕|x)$/i.test(t || '')));
+        if (botoes.length !== 1) continue;
+        fechar = botoes[0];
+        break;
+      }
+      if (fechar) fechar.click();
+      else {
+        try { w.__elragEngine.closeNpcStore?.(); } catch {}
+        try { w.__elragEngine.cancelNpcDialog?.(); } catch {}
+      }
+      if (await esperarAte(fechada, 1000, 150)) return true;
     }
+    if (fechada()) return true;
+    log('Loja: fechamento não confirmado após 3 tentativas; ' +
+      (lojaAberta(w) ? 'janela Suprimentos continua aberta' : 'diálogo do vendedor continua aberto'));
+    return false;
   };
 
   const buscarNaLoja = async (w, nome) => {
@@ -803,14 +820,14 @@
       sup.click();
       compraCidadeBloqueadaAte = 0;
     }
-    if (!await esperarAte(() => lojaAberta(w), 6000)) { log('Loja: a janela Suprimentos nao abriu'); await fecharLoja(w); return false; }
+    if (!await esperarAte(() => lojaAberta(w), 6000)) { log('Loja: janela Suprimentos não detectada em 6 s após abrir; compra pulada'); await fecharLoja(w); return false; }
     if (!fresca) {
       fresca = await lerMochila(w);
       if (!fresca && !estadoLoja.mochila) { log('Loja: mochila ilegivel mesmo com a loja aberta; pulando'); await fecharLoja(w); return false; }
       faltas = calcularFaltas(w, lista);
       const contas = lista.map((c) => `${c.nome} ${quantosNaMochila(c.nome)}+${naBolsa(w, c.nome)}`).join(', ');
       log(`Loja: conferido com a loja aberta (${fresca ? 'mochila nova' : 'mochila AINDA velha'}): ${contas}`);
-      if (!faltas.length) { await fecharLoja(w); return false; }
+      if (!faltas.length) { log('Loja: compra pulada após nova leitura; suprimentos já completos'); await fecharLoja(w); return false; }
     }
 
     const porAba = new Map();
@@ -2769,6 +2786,7 @@
     if(codigo && /^[a-z0-9_]+$/.test(codigo)) { cfg.destinoFarm={...cfg.destinoFarm,mapa:codigo};salvarCfg(); }
     etapa('7/8 Conferindo retorno','Peso precisa estar abaixo de '+limiteSeguro()+'%');
     if(!await fecharArmazem(w)) return segurarRetorno(w,'armazem nao fechou antes do retorno');
+    if (!await fecharLoja(w)) return segurarRetorno(w, 'Loja de Suprimentos ou diálogo do vendedor ainda aberto; retorno bloqueado');
     if (!cfg.ligado) { log('Retorno ao mapa interrompido: Auto-voltar desligado'); return false; }
     if (!await pesoSeguroParaVoltar(w)) return false;
     if(posicao(w)?.mapa===codigo || mapaConfereConteudo(posicao(w)?.mapa)) return true;
@@ -2865,6 +2883,8 @@
     for (let i = 1; i <= 2; i++) {
       if (!cfg.ligado) { log('Entrada em ' + codigo + ' interrompida: Auto-voltar desligado'); return false; }
       if (!await pesoSeguroParaVoltar(w)) return false;
+      if (!await fecharLoja(w))
+        return segurarRetorno(w, 'Loja de Suprimentos reabriu antes da tentativa de retorno; mapa-múndi não acionado');
       etapa('8/8 Voltando ao mapa', 'Tentativa ' + i + '/2: ' + codigo);
       if (await tentarEntrar(i === 1)) {
         delete cfg.retornoPendente; salvarCfg();
@@ -3152,7 +3172,12 @@
     if (!deposito.ok) return segurarRetorno(w, 'nao consegui guardar todos os protegidos: ' + deposito.motivo);
     if (cfg.comprar && !guardarTudo()) {
       try { await retirarDoArmazem(w); } catch (e) { if (cancelando()) throw e; log('Armazem: falha ao retirar — ' + String(e?.message || e).slice(0, 100)); await fecharArmazem(w); }
-      etapa('6/8 Comprando', 'Repondo os itens da lista de Compras'); await comprarItens(w);
+      etapa('6/8 Comprando', 'Repondo os itens da lista de Compras');
+      try { await comprarItens(w); }
+      catch (e) {
+        if (cancelando()) throw e;
+        log('Loja: reposição interrompida por erro: ' + String(e?.message || e).slice(0, 120));
+      }
     } else {
       log('Compras puladas: ' + (guardarTudo() ? 'modo Guardar tudo ativo' : 'reposição desligada nos ajustes'));
     }
@@ -5390,7 +5415,7 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.93</small>';
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.94</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
