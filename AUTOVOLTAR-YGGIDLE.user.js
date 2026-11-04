@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.94
+// @version      2.95
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-start
@@ -1550,7 +1550,6 @@
     if (deCaixa) return deCaixa;
     if (/cartao (?:de )?kafra/.test(normalizar(item.name))) return 'Cartao Kafra reservado';
     if (ovoDePet(item)) return 'ovo de pet preservado na mochila';
-    if (/\basas? de mosca\b|\bfly wings?\b/.test(normalizar(item.name))) return 'Asa de Mosca reservada para farm';
     if (itemTravado(item)) return 'cadeado';
     if (itemDeCompra(item)) return 'item da lista de Compras';
     if (itemFavorito(item)) return 'favorito';
@@ -1622,7 +1621,7 @@
     if (equipados && !itensMochila().some(({item,tipo}) =>
       Number(item.count) > 0 && !equipados.has(item.index) &&
       !cartaoKafra(item) && !motivoProtecao(item,tipo))) {
-      log('Venda: nada vendavel na mochila atual; etapa concluida');
+      vendaVaziaEm = Date.now(); log('Venda: nada vendavel na mochila atual; etapa concluida');
       await fecharVenda(w);
       return true;
     }
@@ -1675,7 +1674,7 @@
       vendendo.push(`${l.nome || 'Item'} x${l.campo.value}`);
     }
     if (tirados.length) log(`Venda: protegidos ${tirados.slice(0, 12).join(', ')}${tirados.length > 12 ? ` e mais ${tirados.length - 12}` : ''}`);
-    if (!vendendo.length) { log('Venda: nada vendavel; etapa concluida'); await fecharVenda(w); return true; }
+    if (!vendendo.length) { vendaVaziaEm = Date.now(); log('Venda: nada vendavel; etapa concluida'); await fecharVenda(w); return true; }
     if (simular) {
       log(`Venda (TESTE, nao confirmei): ${vendendo.join(', ')}`);
       botaoPorTexto(w.document, (t) => /^Limpar sele[cç][aã]o$/i.test(t))?.click();
@@ -1740,6 +1739,9 @@
   const retomadaPlanejada = new WeakMap();
   const PESO_TEIMOSO_MS = 30 * 60 * 1000;
   let pesoTeimosoAte = 0, pesoTeimosoPct = 0;
+  // v2.95: vendedor disse "nada vendavel" ha menos de 1 min -> o que sobrou nao se vende; evita refazer Kafra/venda para sempre
+  let vendaVaziaEm = 0;
+  const semVendaveis = () => !itensVendaveis() || Date.now() - vendaVaziaEm < 60 * 1000;
   const vendaForcada = new WeakSet();
   const fezReducao = new WeakSet();
   const limiteSeguro = () => Math.min(70, Math.max(10, Number(cfg.venda.limite) || 70));
@@ -1776,7 +1778,7 @@
     const peso = lerPeso(w);
     if (!peso) return segurarRetorno(w, 'nao consegui conferir o peso');
     if (peso.pct >= limiteSeguro()) {
-      if (peso.pct < 90 && !itensVendaveis() && (fezReducao.has(w) || normalizar(posicao(w)?.mapa) === 'prontera')) {
+      if (peso.pct < 90 && semVendaveis() && (fezReducao.has(w) || normalizar(posicao(w)?.mapa) === 'prontera')) {
         pesoTeimosoAte = Date.now() + PESO_TEIMOSO_MS;
         log('Peso ' + peso.pct.toFixed(1) + '% depois de guardar e vender: o resto e de itens protegidos. Voltando mesmo assim; nova viagem por peso so em 30 min ou se passar de ' + (Math.ceil(peso.pct) + 5) + '%');
         pesoTeimosoPct = peso.pct;
@@ -1908,7 +1910,7 @@
     if (!cfg.venda.ligado && !guardarTudo()) return false;
     const p = lerPeso(w);
     if (!p || p.pct < limiteSeguro()) return false;
-    if (Date.now() < pesoTeimosoAte && p.pct < pesoTeimosoPct + 5 && !itensVendaveis()) return false;
+    if (Date.now() < pesoTeimosoAte && p.pct < pesoTeimosoPct + 5 && semVendaveis()) return false;
     return true;
   };
 
@@ -5322,7 +5324,7 @@
       const abrir = document.createElement('button'); estilo(abrir); abrir.dataset.abrir = '1';
       const conteudo = document.createElement('div'); conteudo.dataset.controles = '1';
       Object.assign(conteudo.style, { display: 'flex', flexWrap: 'wrap', gap: '4px', width: '100%', alignItems: 'center' });
-      const ajuda = document.createElement('div'); ajuda.textContent = 'Rotina por limite ON: peso em 70% OU mochila com 95% dos espacos confirmados iniciam o processo; Cartao Kafra e Loja de Bolso podem concluir no mapa. OFF: ignora esses limites e continua a cacada mesmo com mochila cheia; Executar agora ainda funciona. Evento ON retorna pelo Gerente de Premios. Ferreiro ON desmantela antes da venda. Ovos de pet, Cartao, Asa de Mosca, flechas, equipados, travados e favoritos ficam na mochila. Historico mostra as etapas. Funciona em segundo plano.';
+      const ajuda = document.createElement('div'); ajuda.textContent = 'Rotina por limite ON: peso em 70% OU mochila com 95% dos espacos confirmados iniciam o processo; Cartao Kafra e Loja de Bolso podem concluir no mapa. OFF: ignora esses limites e continua a cacada mesmo com mochila cheia; Executar agora ainda funciona. Evento ON retorna pelo Gerente de Premios. Ferreiro ON desmantela antes da venda. Ovos de pet, Cartao, flechas, equipados, travados e favoritos ficam na mochila. Historico mostra as etapas. Funciona em segundo plano.';
       Object.assign(ajuda.style, { color: '#8fa3b3', fontSize: '11px', width: '100%', padding: '4px 0' });
       const cartaoFarm=document.createElement('button');estilo(cartaoFarm);cartaoFarm.dataset.cartaoFarm='1';
       cartaoFarm.title='ON: usar Cartao Kafra no mapa. No modo Vender permitidos, ative tambem Loja de Bolso para guardar e vender sem ir a Prontera. OFF: usar a Kafra na cidade.';
