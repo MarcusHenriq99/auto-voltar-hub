@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.04
+// @version      3.05
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -780,11 +780,35 @@
     const paraBolsa = Math.min(lote, estoque - naBolsa(w, c.nome));
     return Math.max(paraAlvo, paraBolsa);
   };
+  // v3.05: gatilho pelo CONSUMO. Elixir Azul caiu 142 -> 111 -> 20 -> 0 entre
+  // conferencias de 1 min: com minimo 20 nunca dava tempo. Mede quanto o item
+  // gasta por minuto e compra quando sobrar menos de 3 min de uso (ou no
+  // minimo, o que for maior; teto de 80% do alvo).
+  const consumo = new Map();
+  const registrarConsumo = (nome, tem) => {
+    const k = normalizar(nome), agora = Date.now();
+    const a = consumo.get(k);
+    if (!a || tem > a.tem) { consumo.set(k, { tem, t: agora, porMin: a && tem > a.tem ? a.porMin : 0 }); return; }
+    const min = (agora - a.t) / 60000;
+    if (min < 0.25) return;
+    const taxa = (a.tem - tem) / min;
+    consumo.set(k, { tem, t: agora, porMin: a.porMin ? a.porMin * 0.5 + taxa * 0.5 : taxa });
+  };
+  const gatilhoDe = (c, tem) => {
+    const base = minimoEfetivo(c);
+    if (!(base > 0)) return 0;
+    registrarConsumo(c.nome, tem);
+    const porMin = consumo.get(normalizar(c.nome))?.porMin || 0;
+    const tresMin = Math.ceil(porMin * 3);
+    const teto = Math.max(base, Math.floor(Number(c.alvo) * 0.8));
+    return Math.min(teto, Math.max(base, tresMin));
+  };
   const calcularFaltas = (w, lista, completar = false) => lista
     .map((c) => ({ ...c, tem: quantosNaMochila(c.nome) + naBolsa(w, c.nome) }))
-    .map((c) => ({ ...c, qtd: qtdDaCompra(w, c, completar), minimo: minimoEfetivo(c) }))
+    .map((c) => ({ ...c, qtd: qtdDaCompra(w, c, completar), minimo: completar ? minimoEfetivo(c) : gatilhoDe(c, c.tem) }))
     // v2.96: projetil compra sempre que estiver abaixo da trava, mesmo com minimo menor
-    .filter((c) => c.qtd > 0 && (completar || !(Number(c.minimo) > 0) || c.tem < Number(c.minimo) || (ehMunicao(c.nome) && c.tem < MUNICAO_MIN)));
+    // v3.05: "<=" -- 20/20 (no minimo) ja compra; antes so abaixo.
+    .filter((c) => c.qtd > 0 && (completar || !(Number(c.minimo) > 0) || c.tem <= Number(c.minimo) || (ehMunicao(c.nome) && c.tem < MUNICAO_MIN)));
 
   const textoTela = (w) => w.document.body.innerText || '';
   const dialogoMercadorAberto = (w) => /\[Mercador\]/.test(textoTela(w)) || Boolean(botaoPorTexto(w.document, (t) => /^Comprar suprimentos/.test(t)));
@@ -4820,7 +4844,12 @@
       }
     }
     if (travaDeMunicao(w)) return;
-    if ((!cfg.lojaBolso || !lojaDeBolso()) && Date.now() - suprimentoLidoEm > 5000 && Date.now() - ultimaViagemVenda > VENDA_INTERVALO_MS) {
+    // v3.05: com Loja de Bolso, a viagem por suprimento ficava desligada; se a
+    // compra na cacada nao acontecia, o item zerava e nada mais o repunha.
+    const zerado = cfg.lojaBolso && lojaDeBolso() && itensMochila().length &&
+      (cfg.compras || []).some((c) => c && c.nome && Number(c.alvo) > 0 && Number(c.minimo) > 0 && !compraRecusada(c.nome) &&
+        quantosNaMochila(c.nome) + naBolsa(w, c.nome) === 0);
+    if ((!cfg.lojaBolso || !lojaDeBolso() || zerado) && Date.now() - suprimentoLidoEm > 5000 && Date.now() - ultimaViagemVenda > VENDA_INTERVALO_MS) {
       suprimentoLidoEm = Date.now();
       const pos = posicao(w);
       const listaMin = (cfg.compras || []).filter((c) => c && c.nome && Number(c.alvo) > 0 && Number(c.minimo) > 0 && !compraRecusada(c.nome));
