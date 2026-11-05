@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.98
+// @version      3.00
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -673,7 +673,7 @@
     }
     const ui = w.__elragUI;
     if (!ui) return;
-    for (const [metodo, chave] of [['updateInventorySnapshot', 'mochila'], ['updateEquipmentSnapshot', 'equipamento'], ['updateStorageSnapshot', 'armazem']]) {
+    for (const [metodo, chave] of [['updateInventorySnapshot', 'mochila'], ['updateEquipmentSnapshot', 'equipamento'], ['updateStorageSnapshot', 'armazem'], ['updatePouchShopAdmission', 'admissaoBolsa']]) {
       const original = ui[metodo];
       if (typeof original !== 'function' || original.__fznAutovoltar === donoGancho) continue;
       const gancho = function (snap) {
@@ -758,11 +758,33 @@
   const COMPRA_FALHOU_MS = 30 * 60 * 1000;
   const compraFalhou = new Map();
   const compraRecusada = (nome) => Date.now() - (compraFalhou.get(normalizar(nome)) || 0) < COMPRA_FALHOU_MS;
-  const calcularFaltas = (w, lista) => lista
+  // v2.99: com "gatilho baixo" a volta so acontece com 20% do alvo (ou o minimo,
+  // o que for MENOR). Menos viagens, cada uma trazendo mais.
+  const minimoEfetivo = (c) => {
+    const m = Number(c.minimo) || 0;
+    if (!(m > 0)) return 0;
+    return cfg.gatilhoBaixo ? Math.max(1, Math.min(m, Math.ceil(Number(c.alvo) * 0.2))) : m;
+  };
+  // completar=true (compra/retirada durante a viagem): enche TODOS os itens ate o
+  // alvo, mesmo os que ainda estao acima do minimo -- assim um item nao gera
+  // outra viagem 2 min depois da primeira.
+  // v3.00: "Estoque Bolsa" + "Lote" por item. Alem do alvo, a compra traz no
+  // maximo 1 lote por vez ate a Bolsa ALT+B chegar ao estoque (ex.: 999) --
+  // enche aos poucos, sem gastar todo o zeny de uma vez.
+  const qtdDaCompra = (w, c, completar) => {
+    const tem = quantosNaMochila(c.nome) + naBolsa(w, c.nome);
+    const paraAlvo = Number(c.alvo) - tem;
+    const estoque = Number(c.estoque) || 0;
+    if (!completar || !cfg.usarBolsa || !(estoque > 0)) return paraAlvo;
+    const lote = Math.max(1, Number(c.lote) || 100);
+    const paraBolsa = Math.min(lote, estoque - naBolsa(w, c.nome));
+    return Math.max(paraAlvo, paraBolsa);
+  };
+  const calcularFaltas = (w, lista, completar = false) => lista
     .map((c) => ({ ...c, tem: quantosNaMochila(c.nome) + naBolsa(w, c.nome) }))
-    .map((c) => ({ ...c, qtd: Number(c.alvo) - c.tem }))
+    .map((c) => ({ ...c, qtd: qtdDaCompra(w, c, completar), minimo: minimoEfetivo(c) }))
     // v2.96: projetil compra sempre que estiver abaixo da trava, mesmo com minimo menor
-    .filter((c) => c.qtd > 0 && (!(Number(c.minimo) > 0) || c.tem < Number(c.minimo) || (ehMunicao(c.nome) && c.tem < MUNICAO_MIN)));
+    .filter((c) => c.qtd > 0 && (completar || !(Number(c.minimo) > 0) || c.tem < Number(c.minimo) || (ehMunicao(c.nome) && c.tem < MUNICAO_MIN)));
 
   const textoTela = (w) => w.document.body.innerText || '';
   const dialogoMercadorAberto = (w) => /\[Mercador\]/.test(textoTela(w)) || Boolean(botaoPorTexto(w.document, (t) => /^Comprar suprimentos/.test(t)));
@@ -837,12 +859,59 @@
   };
 
   let compraCidadeBloqueadaAte = 0;
+  // --- Bolsa de consumiveis (ALT+B), v2.99 ----------------------------------
+  // Do proprio cliente (src/Engine/MapEngine/ConsumablePouch.js): o que esta na
+  // Bolsa NAO pesa e o Autopilot consome dela antes da mochila. O servidor decide
+  // o que e admitido (admissibleInventoryIndexes) e o teto de cada slot.
+  const pedirBolsa = async (w) => {
+    const antes = w.__elragEngine.getConsumablePouchSnapshot?.();
+    try { w.__elragEngine.requestConsumablePouchSnapshot?.(); } catch { return antes; }
+    await esperarAte(() => w.__elragEngine.getConsumablePouchSnapshot?.() !== antes, 2500, 150);
+    return w.__elragEngine.getConsumablePouchSnapshot?.() || antes;
+  };
+  const guardarNaBolsa = async (w) => {
+    if (!cfg.usarBolsa || typeof w?.__elragEngine?.depositIntoConsumablePouch !== 'function') return 0;
+    try {
+      const snap = await pedirBolsa(w);
+      const aceita = snap?.admissibleInventoryIndexes;
+      if (!(aceita instanceof Set) || !aceita.size) return 0;
+      await lerMochila(w);
+      const equipados = (await lerEquipados(w)) || new Set();
+      const nomes = new Set((cfg.compras || []).filter((c) => c && c.nome).map((c) => normalizar(c.nome)));
+      const guardar = itensMochila().filter(({ item }) => item && Number(item.count) > 0 && aceita.has(item.index) &&
+        !equipados.has(item.index) && nomes.has(nomeBase(item.name)));
+      if (!guardar.length) return 0;
+      for (const { item } of guardar) {
+        w.__elragEngine.depositIntoConsumablePouch(item.index, Number(item.count));
+        await esperar(350);
+      }
+      await esperar(600);
+      await lerMochila(w);
+      const sobrou = guardar.filter(({ item }) => quantosNaMochila(item.name) > 0).map(({ item }) => item.name);
+      log('Bolsa ALT+B: guardei ' + guardar.map(({ item }) => item.name + ' x' + item.count).join(', ') +
+        (sobrou.length ? ' (parte ficou na mochila: slot cheio ou travado: ' + sobrou.join(', ') + ')' : ''));
+      return guardar.length;
+    } catch (e) { log('Bolsa ALT+B: falhou ao guardar: ' + String(e?.message || e).slice(0, 80)); return 0; }
+  };
+  // Antes de viajar por suprimento: "Completar" do jogo enche as pilhas da Bolsa
+  // com o que houver na mochila e, para VIP, no Armazem. Se resolver, nao viaja.
+  let completarBolsaEm = 0;
+  const completarBolsa = async (w) => {
+    if (!cfg.usarBolsa || Date.now() - completarBolsaEm < 5 * 60 * 1000) return false;
+    if (typeof w?.__elragEngine?.autoFillConsumablePouch !== 'function') return false;
+    completarBolsaEm = Date.now();
+    try { w.__elragEngine.autoFillConsumablePouch(); } catch { return false; }
+    await esperar(1500);
+    await pedirBolsa(w);
+    return true;
+  };
+
   const comprarItens = async (w, bolso = false, { mochilaLida = false, aoEnviar = null, aoRetentar = null } = {}) => {
-    const lista = (cfg.compras || []).filter((c) => c && c.nome && Number(c.alvo) > 0);
+    const lista = (cfg.compras || []).filter((c) => c && c.nome && (Number(c.alvo) > 0 || (cfg.usarBolsa && Number(c.estoque) > 0)));
     if (!lista.length) { if (!bolso) log('Loja: compras puladas; lista sem itens com quantidade-alvo válida'); return false; }
     const rapido = bolso && aoEnviar;
     let fresca = mochilaLida || await lerMochila(w);
-    let faltas = calcularFaltas(w, lista);
+    let faltas = calcularFaltas(w, lista, true);
     if (!faltas.length && fresca) { log('Loja: mochila completa, nada a comprar'); return false; }
     if (!fresca) log('Loja: mochila nao atualizou; vou conferir com a loja aberta');
     if (!bolso && Date.now() < compraCidadeBloqueadaAte) { log('Loja: compra na cidade em espera; venda continua independente'); return false; }
@@ -869,10 +938,40 @@
     if (!fresca) {
       fresca = await lerMochila(w);
       if (!fresca && !estadoLoja.mochila) { log('Loja: mochila ilegivel mesmo com a loja aberta; pulando'); await fecharLoja(w); return false; }
-      faltas = calcularFaltas(w, lista);
+      faltas = calcularFaltas(w, lista, true);
       const contas = lista.map((c) => `${c.nome} ${quantosNaMochila(c.nome)}+${naBolsa(w, c.nome)}`).join(', ');
       log(`Loja: conferido com a loja aberta (${fresca ? 'mochila nova' : 'mochila AINDA velha'}): ${contas}`);
       if (!faltas.length) { log('Loja: compra pulada após nova leitura; suprimentos já completos'); await fecharLoja(w); return false; }
+    }
+
+    // v3.00: compra DIRETO na Bolsa quando a loja aberta admite o item
+    // (beneficio VIP do jogo). O que nao entrar segue a compra normal e depois
+    // e guardado na Bolsa.
+    const diretos = [];
+    if (cfg.usarBolsa && typeof w.__elragEngine?.buyIntoConsumablePouch === 'function') {
+      const admitidos = estadoLoja.admissaoBolsa?.itemIds;
+      const idDoItem = (nome) => {
+        const n = normalizar(nome);
+        const naBolsaSlot = (w.__elragEngine.getConsumablePouchSnapshot?.()?.slots || []).find((sl) => sl.itemId && normalizar(sl.name) === n);
+        if (naBolsaSlot) return naBolsaSlot.itemId;
+        return itensMochila().find(({ item }) => nomeBase(item?.name) === n)?.item.itemId;
+      };
+      for (const c of faltas) {
+        const id = Number(idDoItem(c.nome));
+        if (!id || !(admitidos instanceof Set) || !admitidos.has(id)) continue;
+        const antes = naBolsa(w, c.nome);
+        w.__elragEngine.buyIntoConsumablePouch(id, c.qtd);
+        await esperar(rapido ? 500 : 900);
+        await pedirBolsa(w);
+        const depois = naBolsa(w, c.nome);
+        if (depois > antes) diretos.push({ c, n: depois - antes });
+      }
+    }
+    if (diretos.length) {
+      log('Bolsa ALT+B: comprei direto na bolsa ' + diretos.map((d) => d.c.nome + ' +' + d.n).join(', '));
+      faltas = faltas.filter((c) => !diretos.some((d) => d.c === c && d.n >= c.qtd))
+        .map((c) => { const d = diretos.find((x) => x.c === c); return d ? { ...c, qtd: c.qtd - d.n, tem: c.tem + d.n } : c; });
+      if (!faltas.length) { await fecharLoja(w); return true; }
     }
 
     const porAba = new Map();
@@ -928,6 +1027,7 @@
       else compraFalhou.set(n, Date.now());
     }
     log(feitos.length ? `Loja: comprei ${feitos.join(', ')}` : 'Loja: nada foi comprado');
+    if (feitos.length) await guardarNaBolsa(w);
     const recusados = faltas.filter((c) => compraRecusada(c.nome)).map((c) => c.nome);
     if (recusados.length) log('Loja: sem conseguir comprar ' + recusados.join(', ') + ' (zeny ou peso?). Nao volto a cidade por esse item nos proximos 30 min');
     return feitos.length > 0;
@@ -935,6 +1035,10 @@
 
   const LOJA_BOLSO_ID = 1280330;
   cfg.lojaBolso = cfg.lojaBolso === true;
+  // v2.99: guardar suprimentos na Bolsa ALT+B (nao pesa; o Autopilot usa dela
+  // primeiro) e gatilho baixo (volta so com 20% do alvo). Ligados por padrao.
+  cfg.usarBolsa = cfg.usarBolsa !== false;
+  cfg.gatilhoBaixo = cfg.gatilhoBaixo !== false;
   const lojaDeBolso = () => itensMochila().find(({ item }) => Number(item.itemId) === LOJA_BOLSO_ID || /loja de bolso/.test(normalizar(item.name)));
 
   const abrirLojaDeBolso = async (w) => {
@@ -1177,7 +1281,7 @@
     const lista = (cfg.compras || []).filter((c) => c && c.nome && Number(c.alvo) > 0);
     if (!lista.length) { log('Armazém: retirada pulada porque a lista de compras não tem quantidades-alvo válidas'); return; }
     await lerMochila(w);
-    const faltas = calcularFaltas(w, lista);
+    const faltas = calcularFaltas(w, lista, true);
     if (!faltas.length) { log('Armazém: retirada pulada porque a mochila já tem os suprimentos da lista'); return; }
     etapa('6/8 Armazem', 'Pegando do armazem os itens da lista de Compras');
     ponteRetirar(w);
@@ -2219,6 +2323,12 @@
     const baixa = lista.map((c) => ({ ...c, tem: quantosNaMochila(c.nome) + naBolsa(w, c.nome) })).filter((c) => c.tem < MUNICAO_MIN);
     if (!baixa.length) return false;
     municaoViagemEm = Date.now();
+    if (cfg.lojaBolso && lojaDeBolso()) {
+      log('Projeteis abaixo de ' + MUNICAO_MIN + ': comprando pela Loja de Bolso sem sair do mapa');
+      compraBolsoEm = 0;
+      void compraNaHunt(w);
+      return true;
+    }
     viagemPorSuprimento = baixa.map((c) => c.nome + ' ' + c.tem + '/' + MUNICAO_MIN).join(', ');
     log('Projeteis abaixo de ' + MUNICAO_MIN + ' (' + viagemPorSuprimento + '): voltando a cidade AGORA para comprar');
     void viagemDeVenda(w, true);
@@ -4663,7 +4773,22 @@
       if (listaMin.length && pos?.mapa && normalizar(pos.mapa) !== 'prontera' && !mapaDeRenascer(pos) && autopilotLigado(w) && itensMochila().length) {
         const baixo = calcularFaltas(w, listaMin);
         suprimentoBaixoVezes = baixo.length ? suprimentoBaixoVezes + 1 : 0;
-        if (suprimentoBaixoVezes >= 2) { suprimentoBaixoVezes = 0; viagemPorSuprimento = baixo.map((c) => c.nome + ' ' + c.tem + '/' + c.minimo).join(', '); viagemDeVenda(w, true); return; }
+        if (suprimentoBaixoVezes >= 2) {
+          suprimentoBaixoVezes = 0;
+          if (cfg.usarBolsa && Date.now() - completarBolsaEm >= 5 * 60 * 1000) {
+            ocupado = true;
+            completarBolsa(w).then(async (pediu) => {
+              ocupado = false;
+              if (!pediu) return;
+              await lerMochila(w);
+              const ainda = calcularFaltas(w, listaMin);
+              if (ainda.length) { viagemPorSuprimento = ainda.map((c) => c.nome + ' ' + c.tem + '/' + c.minimo).join(', '); viagemDeVenda(w, true); }
+              else log('Bolsa ALT+B: Completar repos ' + baixo.map((c) => c.nome).join(', ') + ' sem sair do mapa');
+            }, () => { ocupado = false; });
+            return;
+          }
+          viagemPorSuprimento = baixo.map((c) => c.nome + ' ' + c.tem + '/' + c.minimo).join(', '); viagemDeVenda(w, true); return;
+        }
       }
     }
     if (venderParaComprar && cfg.lojaBolso && !ocupado && normalizar(posicao(w)?.mapa) !== 'prontera') {
@@ -4942,7 +5067,7 @@
     if (calib) abrirCalibracao();
     if (menuVenda) abrirMenuVenda(menuVendaProtegidos);
     editor = document.createElement('div');
-    abrirSubjanela(editor, 440);
+    abrirSubjanela(editor, 540);
     const campo = '';
     const desenhar = () => {
       const linhas = (cfg.compras || []).map((c, i) => `
@@ -4951,13 +5076,20 @@
           <select data-k="aba" style="${campo}">${ABAS.map((a) => `<option${a === c.aba ? ' selected' : ''}>${a}</option>`).join('')}</select>
           <input data-k="minimo" type="number" min="0" value="${Number(c.minimo) || 0}" title="Minimo: so compra abaixo disto (0 = sempre que faltar)" style="${campo};width:52px">
           <input data-k="alvo" type="number" min="0" value="${Number(c.alvo) || 0}" title="Alvo: completa ate esta quantidade" style="${campo};width:52px">
+          <input data-k="estoque" type="number" min="0" max="9999" value="${Number(c.estoque) || 0}" title="Estoque na Bolsa ALT+B (0 = desligado). Ex.: 999. Nao pesa." style="${campo};width:52px">
+          <input data-k="lote" type="number" min="1" max="9999" value="${Number(c.lote) || 100}" title="Lote: quanto compra por vez para a Bolsa ate chegar ao estoque" style="${campo};width:46px">
           <button data-rm="${i}" title="Remover" style="${campo};cursor:pointer">✕</button>
         </div>`).join('');
       editor.innerHTML = `
         <div style="font-weight:bold;margin-bottom:4px">Comprar ao voltar</div>
-        <div style="opacity:.75;margin-bottom:6px">Nome igual ao da loja, aba, minimo e alvo. Abaixo do minimo, completa ate o alvo (minimo 0 = sempre que faltar).</div>
-        <div style="display:flex;gap:4px;opacity:.6;font-size:11px"><span style="flex:1">Item</span><span>Aba</span><span style="width:52px;text-align:center">Min.</span><span style="width:52px;text-align:center">Alvo</span><span style="width:24px"></span></div>
+        <div style="opacity:.75;margin-bottom:6px">Nome igual ao da loja, aba, minimo e alvo. Abaixo do minimo, completa ate o alvo (minimo 0 = sempre que faltar). Bolsa: estoque na ALT+B (nao pesa), enchido de Lote em Lote a cada compra.</div>
+        <div style="display:flex;gap:4px;opacity:.6;font-size:11px"><span style="flex:1">Item</span><span>Aba</span><span style="width:52px;text-align:center">Min.</span><span style="width:52px;text-align:center">Alvo</span><span style="width:52px;text-align:center" title="Estoque na Bolsa ALT+B">Bolsa</span><span style="width:46px;text-align:center">Lote</span><span style="width:24px"></span></div>
         ${linhas || '<div style="opacity:.6">Nenhum item.</div>'}
+        <label style="display:flex;gap:4px;align-items:center;margin-top:6px" title="Depois de comprar, guarda os itens da lista na Bolsa de consumiveis (ALT+B): nao pesa e o Autopilot usa dela primeiro. Antes de viajar por suprimento, usa o Completar do jogo.">
+          <input data-usar-bolsa type="checkbox"${cfg.usarBolsa ? ' checked' : ''}> guardar na Bolsa ALT+B (nao pesa)</label>
+        <label style="display:flex;gap:4px;align-items:center" title="Volta a cidade so quando o item cair a 20% do alvo (ou ao minimo, o que for menor). Na viagem, completa TODOS os itens ate o alvo.">
+          <input data-gatilho type="checkbox"${cfg.gatilhoBaixo ? ' checked' : ''}> voltar so com 20% do alvo</label>
+        <div style="opacity:.6;font-size:11px">Sem voltar a cidade: ligue a Loja de Bolso (precisa do item na mochila).</div>
         <div style="display:flex;gap:6px;margin-top:8px">
           <button data-add style="${campo};cursor:pointer">+ Item</button>
           <label style="display:flex;gap:4px;align-items:center;margin-left:auto">
@@ -4970,9 +5102,11 @@
       if (linha) {
         const c = cfg.compras[Number(linha.dataset.i)];
         const k = ev.target.dataset.k;
-        c[k] = (k === 'alvo' || k === 'minimo') ? Math.max(0, Number(ev.target.value) || 0) : ev.target.value;
+        c[k] = (k === 'alvo' || k === 'minimo' || k === 'estoque') ? Math.max(0, Number(ev.target.value) || 0) : k === 'lote' ? Math.max(1, Number(ev.target.value) || 100) : ev.target.value;
       }
       if (ev.target.matches('[data-ativo]')) cfg.comprar = ev.target.checked;
+      if (ev.target.matches('[data-usar-bolsa]')) cfg.usarBolsa = ev.target.checked;
+      if (ev.target.matches('[data-gatilho]')) cfg.gatilhoBaixo = ev.target.checked;
       salvarCfg();
     });
     editor.addEventListener('click', (ev) => {
