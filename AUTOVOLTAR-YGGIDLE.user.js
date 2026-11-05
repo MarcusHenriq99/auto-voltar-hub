@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.02
+// @version      3.03
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -3010,7 +3010,7 @@
   };
 
   const voltarAoMapa = async (w) => {
-    const semMuni = semMunicaoParaCacar(w);
+    const semMuni = typeof semMunicaoParaCacar === 'function' ? semMunicaoParaCacar(w) : null;
     if (semMuni && normalizar(posicao(w)?.mapa) === 'prontera') {
       if (Date.now() - semMunicaoAvisoEm > 10 * 60 * 1000) {
         semMunicaoAvisoEm = Date.now();
