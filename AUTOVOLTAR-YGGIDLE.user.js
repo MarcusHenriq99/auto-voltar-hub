@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.05
+// @version      3.06
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -209,6 +209,9 @@
     window.addEventListener('resize', manterNaTela);
   };
 
+  // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
+  // -- mantida igual ao @version a cada versao.
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.06'); } catch { return '3.06'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -5736,7 +5739,8 @@
       conteudo.append(barra, status, gaveta, linhaHistorico, abasHist, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
-      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.94</small>';
+      // v3.06: versao tirada do cabecalho @version (antes fixa em v2.94).
+      topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v' + VERSAO_SCRIPT + '</small>';
       topo.title = ajuda.textContent;
       painel.append(topo, conteudo);
       document.body.appendChild(painel);
