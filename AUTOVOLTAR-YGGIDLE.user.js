@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.95
+// @version      2.97
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
+// @noframes
 // @run-at       document-start
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -714,10 +715,17 @@
     return true;
   };
 
+  // v2.97: compra que a loja recusou (zeny ou peso) nao dispara nova viagem
+  // por "abaixo do minimo" durante COMPRA_FALHOU_MS. Antes: Morango 0/21 sem
+  // zeny -> volta a cidade, nao compra, volta a cacar, 2 min depois volta de novo.
+  const COMPRA_FALHOU_MS = 30 * 60 * 1000;
+  const compraFalhou = new Map();
+  const compraRecusada = (nome) => Date.now() - (compraFalhou.get(normalizar(nome)) || 0) < COMPRA_FALHOU_MS;
   const calcularFaltas = (w, lista) => lista
     .map((c) => ({ ...c, tem: quantosNaMochila(c.nome) + naBolsa(w, c.nome) }))
     .map((c) => ({ ...c, qtd: Number(c.alvo) - c.tem }))
-    .filter((c) => c.qtd > 0 && (!(Number(c.minimo) > 0) || c.tem < Number(c.minimo)));
+    // v2.96: projetil compra sempre que estiver abaixo da trava, mesmo com minimo menor
+    .filter((c) => c.qtd > 0 && (!(Number(c.minimo) > 0) || c.tem < Number(c.minimo) || (ehMunicao(c.nome) && c.tem < MUNICAO_MIN)));
 
   const textoTela = (w) => w.document.body.innerText || '';
   const dialogoMercadorAberto = (w) => /\[Mercador\]/.test(textoTela(w)) || Boolean(botaoPorTexto(w.document, (t) => /^Comprar suprimentos/.test(t)));
@@ -877,7 +885,14 @@
       }
     }
     await fecharLoja(w);
+    for (const c of faltas) {
+      const n = normalizar(c.nome);
+      if (feitos.some((x) => normalizar(x).startsWith(n + ' '))) compraFalhou.delete(n);
+      else compraFalhou.set(n, Date.now());
+    }
     log(feitos.length ? `Loja: comprei ${feitos.join(', ')}` : 'Loja: nada foi comprado');
+    const recusados = faltas.filter((c) => compraRecusada(c.nome)).map((c) => c.nome);
+    if (recusados.length) log('Loja: sem conseguir comprar ' + recusados.join(', ') + ' (zeny ou peso?). Nao volto a cidade por esse item nos proximos 30 min');
     return feitos.length > 0;
   };
 
@@ -2142,6 +2157,36 @@
   };
 
   let viagemPorSuprimento = '', suprimentoLidoEm = 0, suprimentoBaixoVezes = 0;
+  // v2.96: trava de projeteis. Sem flecha/bala o personagem para de atacar
+  // para sempre (Sniper, Gunslinger...). Abaixo de MUNICAO_MIN volta a cidade
+  // na hora para comprar, sem as 2 leituras e os 2 min do minimo comum.
+  const MUNICAO_MIN = 100, MUNICAO_ALVO_MIN = 300, MUNICAO_REPETE_MS = 3 * 60 * 1000;
+  const ehMunicao = (nome) => /\b(?:flechas?|arrows?|balas?|bullets?|projeteis|projetil|cartuchos?|municao|esferas?|kunais?|shurikens?)\b/.test(normalizar(nome));
+  let municaoViagemEm = 0, municaoAvisoEm = 0;
+  const travaDeMunicao = (w) => {
+    if (ocupado || Date.now() - municaoViagemEm < MUNICAO_REPETE_MS) return false;
+    const pos = posicao(w);
+    if (!pos?.mapa || normalizar(pos.mapa) === 'prontera' || mapaDeRenascer(pos) || !itensMochila().length) return false;
+    const lista = (cfg.compras || []).filter((c) => c && c.nome && ehMunicao(c.nome) && !compraRecusada(c.nome));
+    if (!lista.length) {
+      const naMochila = itensMochila().find(({ item }) => ehMunicao(item?.name) && Number(item.count) < MUNICAO_MIN);
+      if (naMochila && Date.now() - municaoAvisoEm > 10 * 60 * 1000) {
+        municaoAvisoEm = Date.now();
+        log('Projeteis: ' + naMochila.item.name + ' ' + naMochila.item.count + ' (menos de ' + MUNICAO_MIN + '). Coloque o nome dele na lista de Compras para eu repor sozinho');
+      }
+      return false;
+    }
+    for (const c of lista) {
+      if (!(Number(c.alvo) >= MUNICAO_ALVO_MIN)) { c.alvo = MUNICAO_ALVO_MIN; salvarCfg(); log('Projeteis: compra de ' + c.nome + ' ajustada para ' + MUNICAO_ALVO_MIN + ' (a trava pede no minimo ' + MUNICAO_MIN + ')'); }
+    }
+    const baixa = lista.map((c) => ({ ...c, tem: quantosNaMochila(c.nome) + naBolsa(w, c.nome) })).filter((c) => c.tem < MUNICAO_MIN);
+    if (!baixa.length) return false;
+    municaoViagemEm = Date.now();
+    viagemPorSuprimento = baixa.map((c) => c.nome + ' ' + c.tem + '/' + MUNICAO_MIN).join(', ');
+    log('Projeteis abaixo de ' + MUNICAO_MIN + ' (' + viagemPorSuprimento + '): voltando a cidade AGORA para comprar');
+    void viagemDeVenda(w, true);
+    return true;
+  };
   const viagemDeVenda = async (w, manual = false, retomarForcado = false) => {
     if (ocupado) return false;
     const atual = posicao(w);
@@ -4573,10 +4618,11 @@
         } else if (precisaVender(w)) void viagemDeVenda(w);
       }
     }
+    if (travaDeMunicao(w)) return;
     if ((!cfg.lojaBolso || !lojaDeBolso()) && Date.now() - suprimentoLidoEm > 5000 && Date.now() - ultimaViagemVenda > VENDA_INTERVALO_MS) {
       suprimentoLidoEm = Date.now();
       const pos = posicao(w);
-      const listaMin = (cfg.compras || []).filter((c) => c && c.nome && Number(c.alvo) > 0 && Number(c.minimo) > 0);
+      const listaMin = (cfg.compras || []).filter((c) => c && c.nome && Number(c.alvo) > 0 && Number(c.minimo) > 0 && !compraRecusada(c.nome));
       if (listaMin.length && pos?.mapa && normalizar(pos.mapa) !== 'prontera' && !mapaDeRenascer(pos) && autopilotLigado(w) && itensMochila().length) {
         const baixo = calcularFaltas(w, listaMin);
         suprimentoBaixoVezes = baixo.length ? suprimentoBaixoVezes + 1 : 0;
