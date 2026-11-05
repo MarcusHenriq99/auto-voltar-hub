@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      2.97
+// @version      2.98
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,6 +211,7 @@
 
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
+  const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
   const CHAVE_BACKUP = 'fzn-autovoltar-ygg-backup-v1';
   const PREFIXO_BACKUP_HUB = 'fzn-autovoltar-ajustes-v2:';
 
@@ -313,18 +314,54 @@
   let detalhesProcesso = false;
   let controlesAbertos = true;
   let ajustesAbertos = false;
+  // Etapas que ficam paradas por natureza (nao sao trava quando demoram).
+  const ETAPA_PARADA = /^(Aguardando|Vigia|Recuperando|Desligado|Covil|Concluid|Concluíd|Retomando|Rotina interrompida|Caça não retomada|Aguardando jogo)/i;
   const etapa = (nome, detalhe = '') => {
     if (andamento.etapa === nome && andamento.detalhe === detalhe) return;
+    const durou = Date.now() - andamento.desde;
+    if (andamento.etapa !== nome && durou > 2 * 60 * 1000 && !ETAPA_PARADA.test(andamento.etapa)) {
+      problema('Etapa demorada: ' + andamento.etapa + ' levou ' + Math.round(durou / 60000) + ' min', andamento.etapa);
+    }
     andamento.etapa = nome; andamento.detalhe = detalhe; andamento.desde = Date.now();
     log(nome + (detalhe ? ': ' + detalhe : ''));
   };
   let historicoMem = null;
   const historicoLog = () => (historicoMem ??= lerJson(CHAVE_LOG, []));
+  // v2.98: historico com 300 linhas e repetidas juntas ("x12"); aba Problemas
+  // so com erros/travas/avisos/morte/etapa demorada, sempre com a etapa.
+  const HIST_MAX = 300;
+  let problemasMem = null;
+  const problemasLog = () => (problemasMem ??= lerJson(CHAVE_PROBLEMAS, []));
+  let abaHistorico = 'problemas';
+  // Texto sem numeros (hora, contagens, coordenadas) para achar "a mesma mensagem".
+  const assinatura = (msg) => String(msg).replace(/\d+([.,:]\d+)*/g, '#').replace(/\s+/g, ' ').trim();
+  const empilhar = (lista, texto, max) => {
+    const hora = new Date().toLocaleTimeString();
+    const sig = assinatura(texto);
+    for (let i = lista.length - 1; i >= Math.max(0, lista.length - 8); i--) {
+      const e = lista[i];
+      if (e && typeof e === 'object' && e.sig === sig) {
+        lista.splice(i, 1);
+        lista.push({ ...e, ultima: hora, texto, n: (e.n || 1) + 1 });
+        return;
+      }
+    }
+    lista.push({ hora, ultima: hora, texto, sig, n: 1 });
+    if (lista.length > max) lista.splice(0, lista.length - max);
+  };
+  const linhaHist = (e) => typeof e === 'string' ? e
+    : e.hora + (e.n > 1 ? '–' + e.ultima : '') + ' ' + e.texto + (e.n > 1 ? '  (x' + e.n + ')' : '');
+  const RE_PROBLEMA = /PROBLEMA|Recuperando|cancelad|interrompid|falh|erro|nao (?:encontr|abriu|fechou|consegui|confirm|detect)|não (?:encontr|abriu|fechou|consegui|confirm|detect)|desabilitado|recus|NAO entrou|nada foi comprado|sem resposta|ilegivel|travad|Vigia|Peso \d[\d.]*%|abaixo do minimo|Projeteis|Suprimentos:|mochila (?:ainda )?(?:acima|cheia)|Mochila em \d|Morreu|morte|Renascer|desisto|DESLIGADO|Desligado|Religado/i;
+  const problema = (texto, etapaAtual = andamento.etapa) => {
+    const onde = etapaAtual && !/^Aguardando/.test(etapaAtual) && !texto.startsWith(etapaAtual) ? '[' + etapaAtual + '] ' : '';
+    empilhar(problemasLog(), onde + texto, HIST_MAX);
+    gravarJson(CHAVE_PROBLEMAS, problemasLog());
+  };
   const log = (msg) => {
     const l = historicoLog();
-    l.push(`${new Date().toLocaleTimeString()} ${msg}`);
-    if (l.length > 40) l.splice(0, l.length - 40);
+    empilhar(l, String(msg), HIST_MAX);
     gravarJson(CHAVE_LOG, l);
+    if (RE_PROBLEMA.test(msg)) problema(String(msg));
     console.log('[autovoltar-ygg]', msg);
     atualizarPainel();
   };
@@ -2825,7 +2862,7 @@
   const voltarAoMapa = async (w) => {
     if (mapaDeRenascer(posicao(w))) { log('Voltar ao mapa: estou em ' + posicao(w).mapa + ' (protegido); nao saio daqui'); return true; }
     if (!cfg.mapaFarmManual && String(cfg.destinoFarm?.mapa || '').includes('@')) {
-      const antigo = historicoLog().map((l) => /pesquisa exata ([a-z0-9_]+)/.exec(l)?.[1]).filter(Boolean).pop();
+      const antigo = historicoLog().map((l) => /pesquisa exata ([a-z0-9_]+)/.exec(linhaHist(l))?.[1]).filter(Boolean).pop();
       if (antigo) { cfg.destinoFarm = { mapa: antigo, nome: antigo }; salvarCfg(); log('Mapa de farm recuperado do historico: ' + antigo + ' (o covil tinha gravado ' + '1@tower)'); }
     }
     const codigo=mapaDoConteudo() || cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
@@ -4766,11 +4803,19 @@
     const executar = painel.querySelector('[data-executar]');
     if (executar) { executar.disabled = ocupado; executar.textContent = ocupado ? '⏳ Em andamento' : '▶ Executar'; }
     const historico = painel.querySelector('[data-historico]');
+    const abasHist = painel.querySelector('[data-abas-hist]');
+    if (abasHist) {
+      abasHist.style.display = detalhesProcesso ? 'flex' : 'none';
+      for (const b of abasHist.querySelectorAll('[data-aba-hist]')) b.className = b.dataset.abaHist === abaHistorico ? 'fzn-av--on' : '';
+      const np = problemasLog().length;
+      const bp = abasHist.querySelector('[data-aba-hist="problemas"]');
+      if (bp) bp.textContent = '⚠ Problemas' + (np ? ' (' + np + ')' : '');
+    }
     if (historico) { historico.style.display = detalhesProcesso ? 'block' : 'none'; historico.textContent =
       (cfg.rotinaLimites === false ? 'Rotina por limite OFF: peso e espacos nao iniciam viagens automaticas. Executar agora continua disponivel; morte e falta de suprimentos seguem suas rotinas.\n' : 'Rotina por limite ON: peso inicia em 70%; espacos em 95/100 ou 190/200. Com Ferreiro ON, vai a Prontera para desmantelar antes de guardar e vender.\n') +
       (cfg.retornoEvento ? 'Evento ON: depois da rotina na cidade, fala com o Gerente de Premios e escolhe Ir para o evento. Se falhar, aguarda em Prontera sem usar o mapa-mundi.\n' : '') +
       (mapaDoConteudo() ? (cfg.conteudo.modo === 'bio4' ? 'Bio 4 ON: tempo acompanhado; retorno pelo Porteiro do Biolaboratorio em Prontera.\n' : cfg.conteudo.modo === 'cheffenia' ? 'Cheffenia ON: tempo acompanhado; retorno pelo Arauto em Prontera.\n' : 'Expedição ON: ' + cfg.expedicaoFase + '; retorno somente pelo NPC Expedições de Yggdrasil em Prontera.\n') : '') +
-      (guardarNoMapa() ? 'Passos: pausar cacada → cartao → guardar tudo no maximo → fechar armazem → conferir peso → cacar no mesmo mapa.\n\n' : venderNoMapa() ? 'Passos: pausar cacada → cartao/guardar protegidos → fechar armazem → Loja de Bolso/vender permitidos → conferir peso → cacar no mesmo mapa.\n\n' : guardarTudo() ? 'Passos: pausar cacada → Prontera/Kafra → guardar tudo no maximo → conferir peso → voltar e cacar.\n\n' : 'Passos: pausar cacada → guardar protegidos → Prontera/Kafra → vender permitidos → comprar → conferir peso → voltar e cacar.\n\n') + historicoLog().slice(-18).join('\n'); }
+      (guardarNoMapa() ? 'Passos: pausar cacada → cartao → guardar tudo no maximo → fechar armazem → conferir peso → cacar no mesmo mapa.\n\n' : venderNoMapa() ? 'Passos: pausar cacada → cartao/guardar protegidos → fechar armazem → Loja de Bolso/vender permitidos → conferir peso → cacar no mesmo mapa.\n\n' : guardarTudo() ? 'Passos: pausar cacada → Prontera/Kafra → guardar tudo no maximo → conferir peso → voltar e cacar.\n\n' : 'Passos: pausar cacada → guardar protegidos → Prontera/Kafra → vender permitidos → comprar → conferir peso → voltar e cacar.\n\n') + (abaHistorico === 'problemas' ? (problemasLog().slice(-60).map(linhaHist).join('\n') || 'Nenhum problema registrado.') : historicoLog().slice(-60).map(linhaHist).join('\n')); }
   };
 
   let painel = null;
@@ -5365,6 +5410,17 @@
       const linhaHistorico = document.createElement('div');
       Object.assign(linhaHistorico.style, { display: 'flex', alignItems: 'center', gap: '8px', width: '100%' });
       linhaHistorico.append(detalhe, alternarHistorico);
+      const abasHist = document.createElement('div'); abasHist.dataset.abasHist = '1';
+      Object.assign(abasHist.style, { display: 'none', gap: '4px', width: '100%', marginTop: '3px' });
+      for (const [id, nome] of [['problemas', '⚠ Problemas'], ['tudo', 'Tudo']]) {
+        const b = document.createElement('button'); estilo(b); b.dataset.abaHist = id; b.textContent = nome;
+        b.addEventListener('click', () => { abaHistorico = id; atualizarStatus(); });
+        abasHist.appendChild(b);
+      }
+      const limparProb = document.createElement('button'); estilo(limparProb); limparProb.textContent = 'Limpar problemas';
+      limparProb.style.marginLeft = 'auto';
+      limparProb.addEventListener('click', () => { problemasMem = []; gravarJson(CHAVE_PROBLEMAS, []); atualizarStatus(); });
+      abasHist.appendChild(limparProb);
       const historico = document.createElement('pre'); historico.dataset.historico = '1';
       Object.assign(historico.style, { whiteSpace: 'pre-wrap', width: '100%', maxHeight: '28vh', overflow: 'auto', margin: '3px 0', font: '11px/1.35 system-ui,sans-serif' });
       const abrir = document.createElement('button'); estilo(abrir); abrir.dataset.abrir = '1';
@@ -5460,7 +5516,7 @@
         grupo('Rotina', limites, modoInventario, cartaoFarm, bolso, ferreiro, evento),
         grupo('Extras', bio4, cheffenia, expedicao, faseExpedicao, covilBtn, rifaLiga, lucky),
         grupo('Configurar', mapaFarm, compras, venda, nuncaVenderBtn, rifaBtn, calibrar, importar));
-      conteudo.append(barra, status, gaveta, linhaHistorico, historico);
+      conteudo.append(barra, status, gaveta, linhaHistorico, abasHist, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
       const topo = document.createElement('div'); topo.className = 'fzn-av__topo';
       topo.innerHTML = '<b>fzN · Auto-voltar</b><small>v2.94</small>';
@@ -5474,7 +5530,7 @@
     liga.textContent = rifaRodando ? '⏸ Rifa' : (cfg.ligado ? '● ON' : '○ OFF');
     liga.disabled = rifaRodando;
     liga.className = cfg.ligado ? 'fzn-av--on' : 'fzn-av--off';
-    liga.title = historicoLog().slice(-12).join('\n') || 'sem eventos ainda';
+    liga.title = historicoLog().slice(-12).map(linhaHist).join('\n') || 'sem eventos ainda';
     const rifaBtn = painel.querySelector('[data-rifa]');
     if (rifaBtn) rifaBtn.textContent = 'Prêmios da rifa ('+(cfg.rifa.premios||[]).length+')';
     const rifaLiga = painel.querySelector('[data-rifa-liga], [data-rifaLiga]');
