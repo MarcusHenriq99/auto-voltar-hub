@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.03
+// @version      3.04
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -926,7 +926,10 @@
     if (!lista.length) { if (!bolso) log('Loja: compras puladas; lista sem itens com quantidade-alvo válida'); return false; }
     const rapido = bolso && aoEnviar;
     let fresca = mochilaLida || await lerMochila(w);
-    let faltas = calcularFaltas(w, lista, true);
+    // v3.04: projetil SEMPRE primeiro: antes, Morango x333 vinha antes na lista,
+    // gastava o zeny e o projetil era recusado -> Sniper/Gunslinger sem atacar.
+    const municaoPrimeiro = (xs) => xs.slice().sort((a, b) => Number(ehMunicao(b.nome)) - Number(ehMunicao(a.nome)));
+    let faltas = municaoPrimeiro(calcularFaltas(w, lista, true));
     if (!faltas.length && fresca) { log('Loja: mochila completa, nada a comprar'); return false; }
     if (!fresca) log('Loja: mochila nao atualizou; vou conferir com a loja aberta');
     if (!bolso && Date.now() < compraCidadeBloqueadaAte) { log('Loja: compra na cidade em espera; venda continua independente'); return false; }
@@ -953,7 +956,7 @@
     if (!fresca) {
       fresca = await lerMochila(w);
       if (!fresca && !estadoLoja.mochila) { log('Loja: mochila ilegivel mesmo com a loja aberta; pulando'); await fecharLoja(w); return false; }
-      faltas = calcularFaltas(w, lista, true);
+      faltas = municaoPrimeiro(calcularFaltas(w, lista, true));
       const contas = lista.map((c) => `${c.nome} ${quantosNaMochila(c.nome)}+${naBolsa(w, c.nome)}`).join(', ');
       log(`Loja: conferido com a loja aberta (${fresca ? 'mochila nova' : 'mochila AINDA velha'}): ${contas}`);
       if (!faltas.length) { log('Loja: compra pulada após nova leitura; suprimentos já completos'); await fecharLoja(w); return false; }
@@ -2323,7 +2326,9 @@
     if (ocupado || Date.now() - municaoViagemEm < MUNICAO_REPETE_MS) return false;
     const pos = posicao(w);
     if (!pos?.mapa || normalizar(pos.mapa) === 'prontera' || mapaDeRenascer(pos) || !itensMochila().length) return false;
-    const lista = (cfg.compras || []).filter((c) => c && c.nome && ehMunicao(c.nome) && !compraRecusada(c.nome));
+    // v3.04: a trava NAO respeita a espera de 30 min da compra recusada: sem
+    // projetil o personagem nao ataca; tenta de novo a cada MUNICAO_REPETE_MS.
+    const lista = (cfg.compras || []).filter((c) => c && c.nome && ehMunicao(c.nome));
     if (!lista.length) {
       const naMochila = itensMochila().find(({ item }) => ehMunicao(item?.name) && Number(item.count) < MUNICAO_MIN);
       if (naMochila && Date.now() - municaoAvisoEm > 10 * 60 * 1000) {
