@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.01
+// @version      3.02
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -642,7 +642,7 @@
     }
 
     try { w.__elragEngine.cancelNpcDialog?.(); w.__elragEngine.closeNpcDialog?.(); } catch {}
-    diagTela('dialogo-' + tipo); log(nome + ': o dialogo nao abriu apos 3 tentativas. Verifique a calibracao.');
+    diagTela('dialogo-' + tipo); log(nome + ': o dialogo nao abriu apos 3 tentativas. ' + (janelaOculta(w) ? 'A janela do jogo esta minimizada/oculta: deixe-a aberta (a calibracao provavelmente esta certa).' : 'Verifique a calibracao.'));
     return false;
   };
 
@@ -2984,7 +2984,40 @@
     return validarChegadaFarm(w);
   };
 
+  // v3.02: sem NENHUM projetil (Sniper/Gunslinger nao atacam) e a loja recusando
+  // a compra (zeny): voltar ao mapa so faz o personagem morrer em ciclo. Fica na
+  // cidade, avisa em Problemas e a recuperacao tenta comprar de novo sozinha.
+  let semMunicaoAvisoEm = 0;
+  const semMunicaoParaCacar = (w) => {
+    const muni = (cfg.compras || []).filter((c) => c && c.nome && ehMunicao(c.nome));
+    if (!muni.length || !itensMochila().length) return null;
+    const total = muni.reduce((t, c) => t + quantosNaMochila(c.nome) + naBolsa(w, c.nome), 0);
+    if (total > 0) return null;
+    return muni.some((c) => compraRecusada(c.nome)) ? muni.map((c) => c.nome).join(', ') : null;
+  };
+
+  // v3.02: janela do navegador minimizada/em segundo plano: o jogo para de
+  // desenhar e cliques em NPC e no mapa-mundi falham. Avisa (1x a cada 10 min).
+  let ocultaDesde = 0, ocultaAvisoEm = 0;
+  const janelaOculta = (w) => { try { return document.visibilityState === 'hidden' || w.document.visibilityState === 'hidden'; } catch { return false; } };
+  const avisarJanelaOculta = (w) => {
+    if (!janelaOculta(w)) { ocultaDesde = 0; return; }
+    if (!ocultaDesde) ocultaDesde = Date.now();
+    if (Date.now() - ocultaDesde > 60 * 1000 && Date.now() - ocultaAvisoEm > 10 * 60 * 1000) {
+      ocultaAvisoEm = Date.now();
+      problema('Janela do jogo minimizada ou em segundo plano ha ' + Math.round((Date.now() - ocultaDesde) / 60000) + ' min: cliques em Kafra, vendedor e mapa-mundi podem falhar. Deixe a janela aberta (pode ficar atras de outras)', andamento.etapa);
+    }
+  };
+
   const voltarAoMapa = async (w) => {
+    const semMuni = semMunicaoParaCacar(w);
+    if (semMuni && normalizar(posicao(w)?.mapa) === 'prontera') {
+      if (Date.now() - semMunicaoAvisoEm > 10 * 60 * 1000) {
+        semMunicaoAvisoEm = Date.now();
+        problema('Sem projetil (' + semMuni + ') e a loja recusou a compra (zeny?). Fico em Prontera em vez de morrer no mapa; tento comprar de novo sozinho', 'Sem municao');
+      }
+      return segurarRetorno(w, 'sem projetil e sem zeny para comprar; aguardando em Prontera');
+    }
     if (mapaDeRenascer(posicao(w))) { log('Voltar ao mapa: estou em ' + posicao(w).mapa + ' (protegido); nao saio daqui'); return true; }
     if (!cfg.mapaFarmManual && String(cfg.destinoFarm?.mapa || '').includes('@')) {
       const antigo = historicoLog().map((l) => /pesquisa exata ([a-z0-9_]+)/.exec(linhaHist(l))?.[1]).filter(Boolean).pop();
@@ -4743,6 +4776,7 @@
       if (mapaDeRenascer(posicao(w))) { renascerNoLugar(w); return; }
       aoMorrer(w, salvar); return;
     }
+    avisarJanelaOculta(w);
     conferirMapaFarm(w);
     vigiarCidadeSemRotina(w);
     if ((chegadaAtrasada || vigia) && /Economia de energia/.test(w.document.body.innerText || '')) { sairDaEconomia(w); return; }
