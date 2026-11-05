@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.00
+// @version      3.01
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -870,25 +870,40 @@
     return w.__elragEngine.getConsumablePouchSnapshot?.() || antes;
   };
   const guardarNaBolsa = async (w) => {
-    if (!cfg.usarBolsa || typeof w?.__elragEngine?.depositIntoConsumablePouch !== 'function') return 0;
+    if (!cfg.usarBolsa) return 0;
+    if (typeof w?.__elragEngine?.depositIntoConsumablePouch !== 'function') { log('Bolsa ALT+B: o jogo nao expos a funcao de guardar; nada guardado'); return 0; }
     try {
       const snap = await pedirBolsa(w);
+      // v3.01: o Set vem do iframe do jogo (outro "realm"): `instanceof Set` da
+      // falso aqui fora. Testar pelo metodo. Sem lista, tenta assim mesmo -- a
+      // regra de admissao e do servidor, que recusa o que nao puder.
       const aceita = snap?.admissibleInventoryIndexes;
-      if (!(aceita instanceof Set) || !aceita.size) return 0;
+      const temLista = aceita && typeof aceita.has === 'function' && aceita.size > 0;
       await lerMochila(w);
       const equipados = (await lerEquipados(w)) || new Set();
       const nomes = new Set((cfg.compras || []).filter((c) => c && c.nome).map((c) => normalizar(c.nome)));
-      const guardar = itensMochila().filter(({ item }) => item && Number(item.count) > 0 && aceita.has(item.index) &&
+      const daLista = itensMochila().filter(({ item }) => item && Number(item.count) > 0 && Number.isInteger(item.index) &&
         !equipados.has(item.index) && nomes.has(nomeBase(item.name)));
-      if (!guardar.length) return 0;
+      const guardar = temLista ? daLista.filter(({ item }) => aceita.has(item.index)) : daLista;
+      if (!guardar.length) {
+        if (daLista.length) log('Bolsa ALT+B: a bolsa nao aceita ' + daLista.map(({ item }) => item.name).join(', ') + ' (item nao admitido ou sem slot livre)');
+        return 0;
+      }
+      const antes = new Map(guardar.map(({ item }) => [item.name, naBolsa(w, item.name)]));
       for (const { item } of guardar) {
         w.__elragEngine.depositIntoConsumablePouch(item.index, Number(item.count));
-        await esperar(350);
+        await esperar(450);
       }
-      await esperar(600);
+      await esperar(700);
+      await pedirBolsa(w);
       await lerMochila(w);
+      const entrou = guardar.map(({ item }) => ({ nome: item.name, n: naBolsa(w, item.name) - (antes.get(item.name) || 0) }));
+      const ok = entrou.filter((e) => e.n > 0);
+      const nao = entrou.filter((e) => e.n <= 0).map((e) => e.nome);
+      if (!ok.length) { log('Bolsa ALT+B: a bolsa recusou ' + nao.join(', ') + ' (sem slot livre, slot cheio ou item nao admitido)'); return 0; }
       const sobrou = guardar.filter(({ item }) => quantosNaMochila(item.name) > 0).map(({ item }) => item.name);
-      log('Bolsa ALT+B: guardei ' + guardar.map(({ item }) => item.name + ' x' + item.count).join(', ') +
+      log('Bolsa ALT+B: guardei ' + ok.map((e) => e.nome + ' +' + e.n).join(', ') +
+        (nao.length ? '; recusou ' + nao.join(', ') : '') +
         (sobrou.length ? ' (parte ficou na mochila: slot cheio ou travado: ' + sobrou.join(', ') + ')' : ''));
       return guardar.length;
     } catch (e) { log('Bolsa ALT+B: falhou ao guardar: ' + String(e?.message || e).slice(0, 80)); return 0; }
@@ -958,7 +973,7 @@
       };
       for (const c of faltas) {
         const id = Number(idDoItem(c.nome));
-        if (!id || !(admitidos instanceof Set) || !admitidos.has(id)) continue;
+        if (!id || typeof admitidos?.has !== 'function' || !admitidos.has(id)) continue;
         const antes = naBolsa(w, c.nome);
         w.__elragEngine.buyIntoConsumablePouch(id, c.qtd);
         await esperar(rapido ? 500 : 900);
