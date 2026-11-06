@@ -15,7 +15,7 @@ function setup(options = {}) {
   const button = (label, action, disabled = false) => ({ textContent: label, disabled, click: action });
   const buttons = [button('Comprar', () => calls.push('BUY_FORBIDDEN')),
     button('Fechar', () => { calls.push('close'); open = false; })];
-  if (!options.noPass) buttons.push(button(options.duo ? 'Voltar para a dupla' : 'Entrar', () => {
+  if (!options.noPass) buttons.push(button(options.duo ? 'Voltar para a dupla' : options.entryLabel || 'Entrar no 4º andar', () => {
     calls.push('enter');
     if (!options.noArrival) { current = { mapa: 'lhz_dun04', x: 100, y: 100 }; open = false; }
   }, options.disabled));
@@ -86,6 +86,8 @@ function setup(options = {}) {
   assert.deepEqual(t.calls, [['walk', 167, 181], 'npc', 'enter', 'economy']);
   assert.equal(t.position().mapa, 'lhz_dun04');
   assert.equal(t.ctx.cfg.retornoPendente, undefined);
+  t = setup({ entryLabel: 'Entrar' });
+  assert.equal(await t.ctx.api.entrarBio4(t.game), true, 'Older short label remains supported');
   t = setup({ noPass: true });
   assert.equal(await t.ctx.api.entrarBio4(t.game), false);
   assert.ok(t.calls.includes('npc') && t.calls.includes('close'));
