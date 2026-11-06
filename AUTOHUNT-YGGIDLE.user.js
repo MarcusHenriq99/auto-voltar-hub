@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.67
+// @version      1.68
 // @description  Complementa o autopilot do jogo: quando ele fica sem alvo, fixa o monstro visivel mais proximo ou anda explorando o mapa ate aparecer um. v1.54: clique completo no canvas e nos paineis.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -487,7 +487,7 @@
   const AUTOPILOT_PARADO = new Set([0, 1]);
   const lerJson = (k, p) => { try { return JSON.parse(localStorage.getItem(k)) ?? p; } catch { return p; } };
   const gravarJson = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
-  const cfg = Object.assign({ ligado: true, asa: 'auto', cheffeniaTeleporte: false, cheffeniaRecuperar: true }, lerJson(CHAVE_CFG, {}));
+  const cfg = Object.assign({ ligado: true, asa: 'auto', cheffeniaTeleporte: false, cheffeniaRecuperar: true, pacote: 0 }, lerJson(CHAVE_CFG, {}));
   const log = (msg) => {
     const l = lerJson(CHAVE_LOG, []);
     l.push(`${new Date().toLocaleTimeString()} ${msg}`);
@@ -996,6 +996,14 @@
   const FARM_LONGE_MS = 300;
   const FARM_PERTO_MS = 1500;
   const LUTA_MS = 1500;
+  // v1.68 PACOTE: com cfg.pacote = N, o autopilot segue soltando a skill de area
+  // (ex.: Magnus Exorcismus); o script so teleporta quando houver MENOS de N
+  // monstros a ate PACOTE_RAIO celulas por PACOTE_MS, fora de conjuracao.
+  const PACOTE_RAIO = 7;
+  const PACOTE_MS = 1200;
+  const PACOTES = [0, 2, 3, 4, 5, 6];
+  let pacoteFracoDesde = 0;
+  let conjurandoAgora = false;
   const ANDANDO_MS = 500;
   const OCIOSO_FIXAR_MS = 300;
   const FIXAR_ESPERA_MS = 1500;
@@ -1377,6 +1385,7 @@
       if (eu) {
         const c = eu.cast;
         const conjurando = c && c.delay > 0 && agora < c.tick + c.delay + 300;
+        conjurandoAgora = Boolean(conjurando);
         let nomeAcao = '';
         if (eu.ACTION) for (const k in eu.ACTION) if (eu.ACTION[k] === eu.action) { nomeAcao = k; break; }
         const emAcao = /^(ATTACK[0-9]?|SKILL)$/.test(nomeAcao);
@@ -1389,6 +1398,18 @@
     if (pinoGid && !radar.some((m) => m.gid === pinoGid)) { pinoGid = 0; try { e.setAutopilotPinnedTarget(0); } catch {} }
     if (fixado && fixado.gid !== pinoGid) fixado = null;
     if (fixado && meuAlvoGid === fixado.gid && lutando) fixado = null;
+    // v1.68: pacote minimo (so com monstros no radar; radar vazio segue a regra antiga).
+    if (cfg.pacote > 0 && vivos.length && !pinoGid && !fixado && !conjurandoAgora) {
+      const pertos = vivos.filter((m) => Number(m.distance) >= 0 && Number(m.distance) <= PACOTE_RAIO).length;
+      if (pertos < cfg.pacote) {
+        if (!pacoteFracoDesde) pacoteFracoDesde = agora;
+        if (agora - pacoteFracoDesde >= PACOTE_MS && usarAsa(w, e, agora) && ultimaAsaEm >= agora) {
+          log('pacote: ' + pertos + ' monstro(s) a ate ' + PACOTE_RAIO + ' (minimo ' + cfg.pacote + ') -> asa' + retrato(w));
+          pacoteFracoDesde = 0; ociosoDesde = 0; radarVazioDesde = 0;
+          return;
+        }
+      } else pacoteFracoDesde = 0;
+    } else pacoteFracoDesde = 0;
     if (!vivos.length) {
       ociosoDesde = 0;
       if (andando) { radarVazioDesde = 0; return; }
@@ -1469,7 +1490,7 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const cartao = fznCartaoYgg('Auto-hunt', 'v1.67', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
+      const cartao = fznCartaoYgg('Auto-hunt', 'v1.68', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
         cfg.ligado = !cfg.ligado;
@@ -1497,6 +1518,20 @@
       });
       botaoAsa.textContent = NOMES_ASA[cfg.asa] || NOMES_ASA.auto;
       if (cfg.asa === 'off') botaoAsa.className = 'fzn-ygg--off';
+      const botaoPacote = document.createElement('button');
+      const pintarPacote = () => {
+        botaoPacote.textContent = cfg.pacote > 0 ? 'Pacote: ' + cfg.pacote + '+' : 'Pacote: OFF';
+        botaoPacote.className = cfg.pacote > 0 ? 'fzn-ygg--on' : 'fzn-ygg--off';
+      };
+      botaoPacote.title = 'Para skill de area (ex.: Magnus Exorcismus do Sacerdote): o autopilot solta a skill; o Auto Hunt teleporta logo que houver MENOS que este numero de monstros a ate ' + PACOTE_RAIO + ' celulas (fora de conjuracao). OFF: comportamento normal.';
+      botaoPacote.addEventListener('click', () => {
+        const i = PACOTES.indexOf(Number(cfg.pacote) || 0);
+        cfg.pacote = PACOTES[(i + 1) % PACOTES.length];
+        gravarJson(CHAVE_CFG, cfg);
+        log('pacote minimo: ' + (cfg.pacote || 'OFF'));
+        pintarPacote();
+      });
+      pintarPacote();
       const botaoMvp = document.createElement('button');
       botaoMvp.title = 'Chefenia: prioriza o chefe em combate e nao usa asa enquanto o ataca. O teleporte sem chefe e configurado separadamente.';
       const pintarMvp = () => { botaoMvp.textContent = 'Chefenia'; botaoMvp.className = cfg.soMvp ? 'fzn-ygg--on' : 'fzn-ygg--off'; };
@@ -1538,7 +1573,7 @@
       selClasse.addEventListener('change', () => { cfg.classe = selClasse.value; gravarJson(CHAVE_CFG, cfg); log('classe: ' + (cfg.classe || '?')); pintarFurt(); });
       botaoFurt.addEventListener('click', () => { cfg.furtividade = !cfg.furtividade; gravarJson(CHAVE_CFG, cfg); log('furtividade F5 ' + (cfg.furtividade ? 'ligada' : 'desligada')); pintarFurt(); });
       pintarFurt();
-      gv.grupo('Opcoes', botaoNoks, botaoMvp, botaoTeleporte, botaoRecuperar, botaoBio4, botaoPneuma, botaoAsa);
+      gv.grupo('Opcoes', botaoNoks, botaoMvp, botaoTeleporte, botaoRecuperar, botaoBio4, botaoPneuma, botaoAsa, botaoPacote);
       gv.grupo('Classe', selClasse, botaoFurt);
       cartao.caixa.style.maxWidth = 'min(420px, 95vw)';
       linhaStatus = gv.status;
