@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.16
+// @version      3.17
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.16'); } catch { return '3.16'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.17'); } catch { return '3.17'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -5249,7 +5249,9 @@
     }
     const destinoAtual = mapaDoConteudo() || cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
     const texto = painel.querySelector('[data-status]');
+    const espacosStatus = estadoLoja.mochila && Date.now() - estadoLoja.mochilaEm < 20000 ? pilhasReais() : null;
     if (texto) texto.textContent = andamento.etapa + ' · Peso ' + (peso ? peso.pct.toFixed(0) + '%' : '?') +
+      ' · Mochila ' + (espacosStatus === null ? '?' : espacosStatus + '/' + capacidadeMochila) +
       (destinoAtual ? ' · Farm: ' + destinoAtual : '') +
       (mapaAtual && destinoAtual && mapaAtual !== destinoAtual ? ' · Fora: ' + mapaAtual : '') +
       (cfg.rifa?.ligado && rifaEstado.etapa && rifaEstado.etapa !== 'Aguardando' ? ' · Rifa: ' + rifaEstado.etapa : '') +
