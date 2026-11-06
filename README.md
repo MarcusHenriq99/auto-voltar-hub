@@ -4,7 +4,7 @@ Script de automação do Yggidle usado no FZN Idle Hub. Esta pasta contém a ver
 
 ## Arquivos
 
-- `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 3.07.
+- `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 3.09.
 - `AUTOLOGIN-YGGIDLE.user.js`: login automático e recuperação de conexão, versão 1.26.
 - `ABATES-YGGIDLE.user.js`: contador independente de abates por dia, monstro e hora.
 - `AUTOHUNT-YGGIDLE.user.js`: complemento do Autopilot, versão 1.64; asa da Cheffenia opcional, proteção contra teleporte durante combate com MVP, retorno pelo Arauto após morte com Poder Infernal e retomada da caça no Covil.
@@ -13,6 +13,10 @@ Script de automação do Yggidle usado no FZN Idle Hub. Esta pasta contém a ver
 ## Comportamento principal
 
 O Auto-voltar acompanha peso, espaços da mochila, morte e mapa de farm. Conforme as opções de cada conta, usa Cartão Kafra/Loja de Bolso no mapa ou volta à cidade para guardar, desmantelar, vender e retornar. Itens travados não são destravados pelo script. A opção **Rotina por limite** permite continuar farmando mesmo acima dos limites quando desligada.
+
+Na versão 3.09, o retorno de Bio 4 caminha por coordenadas de mapa até o lado direito de Prontera, conversa com a entidade do Porteiro (170,184) e aceita a janela nova de entrada ou retorno à dupla. A caminhada não depende de foco, câmera ou resolução. Depois de o servidor mandar o personagem para Prontera (inclusive após três mortes rápidas), a recuperação usa o conteúdo marcado nesta conta e confirma `lhz_dun04` antes de retomar a caça. O saldo do passe é confirmado pelo NPC: o relógio estimado não bloqueia o retorno, pois o passe só corre dentro do andar. Sem acesso disponível, fecha a janela e aguarda; não compra passe nem gasta limite diário automaticamente.
+
+Validação de 06/11/2026: na conta 1, StarManny caminhou de Prontera 155,183 até 168,181, abriu o Porteiro e fechou a janela sem compra (126.996.866 zeny preservados; NPC sem passe). A entrada paga não foi testada, por decisão do usuário. Testes locais verificam a caminhada por coordenadas sem câmera, interação com a entidade, janela nova/dupla, confirmação de chegada, ausência de passe e recuperação após retorno forçado. A versão publicada e a instalada no Hub são etapas separadas.
 
 Na versão 3.07, o monitor captura a consulta dos itens mesmo quando o painel da mochila ainda não registrou seu receptor. A capacidade é consultada no motor do jogo sem abrir a janela. Aos 95/100 ou 190/200 espaços, novos drops não reiniciam a confirmação, e a conferência final aceita o limite de slots mesmo sem leitura de peso. Testes locais cobrem mochila fechada, receptor ausente/substituído, peso baixo/indisponível e liberação dos slots antes da viagem; a atualização ainda requer validação na conta pelo Hub.
 
@@ -53,4 +57,5 @@ node .\tests\test-mvp-combat.cjs
 No FZN Idle Hub, em **Scripts**, selecione **GitHub** e use o arquivo [AUTOVOLTAR-YGGIDLE.user.js](https://github.com/MarcusHenriq99/auto-voltar-hub/blob/main/AUTOVOLTAR-YGGIDLE.user.js) da branch `main`. O cartão **Auto voltar GitHub** está ligado para todas as contas; a antiga cópia colada no Hub deve permanecer desligada para evitar duas execuções.
 
 Depois de publicar uma mudança na `main`, clique **Verificar agora** no cartão do script. O Hub consulta o GitHub nesse momento; confirme a nova versão no cartão e no painel do Auto-voltar. Mantenha **Manter jogo em segundo plano** ligado caso queira que o Hub continue rodando ao trocar de janela.
+
 

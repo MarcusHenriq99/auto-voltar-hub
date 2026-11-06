@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.08
+// @version      3.09
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.08'); } catch { return '3.08'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.09'); } catch { return '3.09'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -2762,6 +2762,9 @@
     }
   };
   const tempoConteudoEsgotado = () => {
+    // O passe de Bio 4 so corre dentro do andar. O relogio salvo e apenas
+    // informativo: depois de uma expulsao, o Porteiro confirma o saldo real.
+    if (cfg.conteudo.modo === 'bio4') return false;
     const expira = Number(cfg.conteudo.expiraEm || 0);
     return Boolean(mapaDoConteudo() && expira && Date.now() >= expira);
   };
@@ -2772,12 +2775,30 @@
     // Nao sobrescrever o backup de IndexedDB antes da recuperacao inicial.
     if (cfgLocal || cfgSessao) salvarCfg();
   }
-  const porteiroAberto = (w) => /Porteiro do Biolaborat/i.test(w.document.body.innerText || '');
+  const janelaPorteiro = (w) => {
+    const janela = w.document.querySelector('[data-hud-window="porteiro"]');
+    return janela && visivel(janela) ? janela : null;
+  };
+  const porteiroAberto = (w) => Boolean(janelaPorteiro(w)) || /Porteiro do Biolaborat/i.test(w.document.body.innerText || '');
+  const carregarCaminhadaBio4 = async (w) => {
+    if (typeof w.__fznBio4Caminhada?.andar === 'function') return w.__fznBio4Caminhada;
+    if (!w.__fznBio4Caminhada?.carregando) {
+      w.__fznBio4Caminhada = { carregando: true };
+      const script = w.document.createElement('script'); script.type = 'module';
+      // Mesmo pacote REQUEST_MOVE usado por sendWalkRequest no MapEngine.
+      // Coordenadas do mapa dispensam foco, camera e cliques de tela.
+      script.textContent = "Promise.all([import('Network/NetworkManager.js'),import('Network/PacketStructure.js'),import('Network/PacketVerManager.js')]).then(([n,p,v])=>{window.__fznBio4Caminhada={andar:(x,y)=>{if(!Number.isInteger(x)||!Number.isInteger(y)||x<0||y<0||x>1023||y>1023)return false;const C=v.default.value>=20180307?p.default.CZ.REQUEST_MOVE2:p.default.CZ.REQUEST_MOVE;if(typeof C!=='function')return false;const pkt=new C();pkt.dest[0]=x;pkt.dest[1]=y;n.default.sendPacket(pkt);return true;}};}).catch(e=>{window.__fznBio4Caminhada={erro:String(e)};});";
+      w.document.head.appendChild(script);
+    }
+    const ponte = await esperarAte(() => !w.__fznBio4Caminhada?.carregando && w.__fznBio4Caminhada, 4000);
+    return typeof ponte?.andar === 'function' ? ponte : null;
+  };
 
   const falarComPorteiro = async (w) => {
+    if (!cfg.ligado || cancelando()) return false;
     if (porteiroAberto(w)) return true;
-    const canvas = canvasDoJogo(w);
-    if (!canvas) return false;
+    const partida = posicao(w);
+    if (!partida || partida.mapa !== 'prontera' || Math.hypot(partida.x - PORTEIRO_BIO4[0], partida.y - PORTEIRO_BIO4[1]) > 5) return false;
     const manager = await carregarEntidadesNpc(w);
     if (!manager) return false;
     const [x, y] = PORTEIRO_BIO4;
@@ -2792,7 +2813,13 @@
       return npc; 
     }, 3000);
 
+    if (!cfg.ligado || cancelando() || posicao(w)?.mapa !== 'prontera') return false;
     if (alvo) {
+      // Interacao da propria entidade funciona tambem em segundo plano.
+      if (typeof alvo.onMouseDown === 'function') {
+        try { alvo.onMouseDown(); } catch (e) { log('Bio 4: interacao com Porteiro falhou: ' + String(e).slice(0, 80)); }
+        if (await esperarAte(() => porteiroAberto(w), 2500)) return true;
+      }
       try {
         const camera = w.__elragEngine.renderer?.camera || w.__elragEngine.camera;
         if (camera && camera.worldToScreen) {
@@ -2802,60 +2829,81 @@
       } catch (e) {}
     }
     if (sx !== null && sy !== null) {
+      const canvas = canvasDoJogo(w);
+      if (!canvas) return false;
       const r = canvas.getBoundingClientRect();
       await clicarNoCanvas(w, canvas, r.left + sx, r.top + sy);
       return Boolean(await esperarAte(() => porteiroAberto(w), 3500));
     }
-    log('Bio4: Porteiro nao tem clique mapeado (worldToScreen falhou)');
+    log('Bio 4: Porteiro ainda sem resposta; verificarei a aproximacao');
     return false;
   };
 
   const aproximarPorteiro = async (w) => {
-    const canvas = canvasDoJogo(w), p = posicao(w);
-    if (!canvas || !p || p.mapa !== 'prontera') return false;
-    const camera = w.__elragEngine.renderer?.camera || w.__elragEngine.camera;
-    const destino = camera?.worldToScreen?.(...PORTEIRO_BIO4, 0);
-    if (!destino || destino.length < 2) return false;
-    const r = canvas.getBoundingClientRect();
-    const x = Math.min(r.width - 25, Math.max(25, destino[0]));
-    const y = Math.min(r.height - 25, Math.max(25, destino[1]));
-    log('Bio 4: aproximando do Porteiro em Prontera (170,184)');
-    await clicarNoCanvas(w, canvas, r.left + x, r.top + y);
+    if (!cfg.ligado || cancelando()) return false;
+    const p = posicao(w);
+    if (!p || p.mapa !== 'prontera') return false;
+    const ponte = await carregarCaminhadaBio4(w);
+    if (!cfg.ligado || cancelando() || posicao(w)?.mapa !== 'prontera') return false;
+    if (!ponte) { log('Bio 4: caminhada do motor indisponivel'); return false; }
+    // Chao livre observado no teste da conta 1: 168,181, junto ao NPC 170,184.
+    // Limitar cada trecho evita pedir um percurso longo de outro canto da cidade.
+    const alvo = [168, 181], distancia = Math.max(Math.abs(alvo[0] - p.x), Math.abs(alvo[1] - p.y));
+    if (distancia <= 1) return true;
+    const escala = Math.min(1, 12 / distancia);
+    const x = Math.round(p.x + (alvo[0] - p.x) * escala), y = Math.round(p.y + (alvo[1] - p.y) * escala);
+    log('Bio 4: caminhando de ' + p.x + ',' + p.y + ' para ' + x + ',' + y + ' junto ao Porteiro');
+    if (!ponte.andar(x, y)) return false;
+    // Mover um unico passo nao comprova chegada. Espere o fim do trecho.
     return Boolean(await esperarAte(() => {
-      const atual = posicao(w);
-      return atual && (atual.x !== p.x || atual.y !== p.y);
-    }, 4500, 250));
+      const q = posicao(w);
+      return q && q.mapa === 'prontera' && Math.max(Math.abs(q.x - x), Math.abs(q.y - y)) <= 1;
+    }, 8000, 250));
   };
 
   const entrarBio4 = async (w) => {
+    if (!cfg.ligado || cancelando()) return false;
     etapa('8/8 Voltando ao mapa', 'Porteiro do Biolaboratorio (lhz_dun04)');
     let abriu = await falarComPorteiro(w);
     if (!abriu) {
       const partida = posicao(w);
       const ponto = partida && cfg.caminhoBio4[chaveCelula(partida)];
       const canvas = canvasDoJogo(w);
-      if (!canvas) return segurarRetorno(w, 'canvas do jogo nao encontrado para andar ate o Porteiro');
-      if (ponto) {
+      // A calibracao antiga continua como recurso para clientes sem a ponte.
+      if (ponto && canvas && !await carregarCaminhadaBio4(w)) {
         const r = canvas.getBoundingClientRect();
         log('Bio4: andando pelo clique calibrado (' + ponto.dx + ',' + ponto.dy + ') a partir de ' + chaveCelula(partida));
         await clicarNoCanvas(w, canvas, r.left + r.width / 2 + ponto.dx, r.top + r.height / 2 + ponto.dy);
         await esperarAte(() => { const q = posicao(w); return q && chaveCelula(q) !== chaveCelula(partida); }, 4000, 200);
       }
-      for (let i = 0; i < 6 && !abriu; i++) {
+      for (let i = 0; i < 6 && !abriu && cfg.ligado && !cancelando(); i++) {
         abriu = await falarComPorteiro(w);
         if (!abriu) await aproximarPorteiro(w);
       }
     }
-    if (!abriu) return segurarRetorno(w, 'conversa com o Porteiro do Biolaboratorio nao abriu; calibre o Caminho Bio4 se o acesso mudou');
-    const entrar4 = await esperarAte(() => botaoPorTexto(w.document, (t) => /^Entrar no 4.? andar agora/i.test(t)), 3000);
-    if (!entrar4) {
-      try { w.__elragEngine.cancelNpcDialog?.(); } catch {}
-      return segurarRetorno(w, 'Porteiro sem "Entrar no 4o andar agora" (passe vencido?); nao compro passe sozinho');
+    if (!cfg.ligado || cancelando()) return false;
+    if (!abriu) return segurarRetorno(w, 'conversa com o Porteiro do Biolaboratorio nao abriu depois da caminhada; verifique o acesso em Prontera');
+    const janela = janelaPorteiro(w);
+    if (janela) {
+      const entrar = [...janela.querySelectorAll('button')].find(b => visivel(b) && !b.disabled &&
+        /^(?:Entrar(?: no 4[ºo°.\s]*andar(?: agora)?)?|Voltar para a dupla)$/i.test(textoDe(b)));
+      if (!entrar) {
+        const fechar = [...janela.querySelectorAll('button')].find(b => visivel(b) && !b.disabled && /^Fechar$/i.test(textoDe(b)));
+        if (fechar) { fechar.click(); await esperarAte(() => !janelaPorteiro(w), 2000); }
+        return segurarRetorno(w, 'Bio 4 sem acesso disponivel no Porteiro; nao compro passe nem consumo limite diario automaticamente');
+      }
+      entrar.click();
+    } else {
+      const entrar4 = await esperarAte(() => botaoPorTexto(w.document, (t) => /^Entrar no 4.? andar agora/i.test(t)), 3000);
+      if (!entrar4) {
+        try { w.__elragEngine.cancelNpcDialog?.(); } catch {}
+        return segurarRetorno(w, 'Porteiro sem "Entrar no 4o andar agora" (passe vencido?); nao compro passe sozinho');
+      }
+      entrar4.click();
+      const entrar = await esperarAte(() => botaoPorTexto(w.document, (t) => /^Entrar$/i.test(t)), 3000);
+      if (!entrar) return segurarRetorno(w, 'botao Entrar do Porteiro nao apareceu');
+      entrar.click();
     }
-    entrar4.click();
-    const entrar = await esperarAte(() => botaoPorTexto(w.document, (t) => /^Entrar$/i.test(t)), 3000);
-    if (!entrar) return segurarRetorno(w, 'botao Entrar do Porteiro nao apareceu');
-    entrar.click();
     const chegou = await esperarAte(() => /^lhz_dun04/.test(String(posicao(w)?.mapa || '')), 20000, 250);
     if (!chegou) return segurarRetorno(w, 'entrada na lhz_dun04 sem confirmacao');
     if (!validarChegadaFarm(w)) return false;
@@ -3522,7 +3570,7 @@
     ocupado = true;
     try {
       r.tentativas++;
-      const destino = cfg.destinoFarm?.mapa;
+      const destino = mapaDoConteudo() || cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
       if (destino && (p.mapa === destino || mapaConfereConteudo(p.mapa))) {
         log('Recuperando (' + r.tentativas + '): ja estou no mapa de farm; religando a cacada');
         recuperacao = null;
@@ -3998,7 +4046,7 @@
     if (!cidadeSemRotinaDesde) { cidadeSemRotinaDesde = Date.now(); return false; }
     if (Date.now() - cidadeSemRotinaDesde < (mapaDoConteudo() ? 1000 : 5000)) return false;
     cidadeSemRotinaDesde = 0;
-    log('Prontera sem rotina ativa por 5 s; retomando o retorno a ' + destino);
+    log('Prontera sem rotina ativa; retomando o retorno a ' + destino);
     etapa('Recuperando', 'Em Prontera com Auto-voltar ON; retomando Kafra, venda e retorno a ' + destino);
     recuperacao = { motivo: 'parado na cidade', desde: Date.now(), ultimaEm: Date.now() - 60000, tentativas: 0, retomarAutopilot: true };
     return true;
@@ -5844,4 +5892,5 @@
   setInterval(verificarSeguro, 500);
   }
 })();
+
 

@@ -27,7 +27,9 @@ assert.equal(cfg.conteudo.expiraEm, now + 40 * 60000, 'Visor em minutos recebe m
 map = 'prontera'; now += 39 * 60000;
 assert.equal(context.api.tempoConteudoEsgotado(), false, 'Retorno segue permitido dentro do tempo pago');
 now += 60001;
-assert.equal(context.api.tempoConteudoEsgotado(), true, 'Nao entra novamente quando o tempo acaba');
+assert.equal(context.api.tempoConteudoEsgotado(), false, 'Bio 4 pausa fora do andar: Porteiro decide saldo, nao o relogio local');
+cfg.conteudo.modo = 'cheffenia';
+assert.equal(context.api.tempoConteudoEsgotado(), true, 'Outros conteudos conservam a verificacao de tempo');
 
 let conversa = false, entrada = 0, cliqueNpc = 0;
 map = 'prontera';
@@ -57,3 +59,4 @@ context.entrarCheffenia(w).then(ok => {
   assert.equal(map, 'mid_volinf', 'Confirma chegada ao mapa real da Cheffenia');
   console.log('OK: timer da Bio 4 e entrada pelo Arauto da Cheffenia.');
 }).catch(error => { console.error(error); process.exitCode = 1; });
+
