@@ -14,6 +14,8 @@ Script de automação do Yggidle usado no FZN Idle Hub. Esta pasta contém a ver
 
 A v3.18 corrige também a ocupação real: conta a união por índice da mochila e `equipment.all`, como a HUD do jogo. Pede os dois snapshots com a mochila fechada; 82 itens na mochila mais 18 equipados agora são 100/100, sem duplicar itens presentes nas duas listas.
 
+Validação ao vivo da v3.18 em 06/11/2026: cartão do Hub confirmou `dc17cca`; painel da conta 2 confirmou v3.18, ON, farm `dic_dun02`. A mochila do jogo mostrou 31/200; após fechá-la, o painel do macro também mostrou 31/200 e continuou recebendo dados no farm. Não foi provocada nova lotação nem expirado outro passe para validar transações: os casos 100/100, drops contínuos e encerramento dos três conteúdos foram verificados em testes locais. O histórico anterior confirmou retirada de 991 Asas de Mosca da ALT+B às 14:27:55 e venda de 757 às 16:21:10, antes desta proteção.
+
 Retirada indevida de Asa de Mosca: o histórico confirmou que o Auto-voltar retirava lotes da ALT+B para o Auto Hunt e depois permitia a venda. Removidas as retiradas automáticas de asas, tanto no monitor quanto durante depósito na Bolsa. Asa de Mosca e variantes recebem proteção fixa de venda por nome e pelo ID 601, inclusive se a mochila ainda não foi lida. O Auto Hunt continua usando asas disponíveis na mochila; esta revisão não retira asas da ALT+B para ele.
 
 A v3.17 também mostra `Mochila usados/capacidade` no status com dados recentes, mesmo com o inventário fechado; `?` indica que falta uma leitura recente.
