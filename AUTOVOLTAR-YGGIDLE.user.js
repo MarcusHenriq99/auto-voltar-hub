@@ -4087,7 +4087,9 @@
     if (Date.now() - cidadeSemRotinaDesde < (mapaDoConteudo() ? 1000 : 5000)) return false;
     cidadeSemRotinaDesde = 0;
     log('Prontera sem rotina ativa; retomando o retorno a ' + destino);
-    etapa('Recuperando', 'Em Prontera com Auto-voltar ON; retomando Kafra, venda e retorno a ' + destino);
+    etapa('Recuperando', cfg.conteudo?.modo === 'bio4'
+      ? 'Em Prontera; retorno direto ao Porteiro de Bio 4, sem storage/venda'
+      : 'Em Prontera com Auto-voltar ON; retomando Kafra, venda e retorno a ' + destino);
     recuperacao = { motivo: 'parado na cidade', desde: Date.now(), ultimaEm: Date.now() - 60000, tentativas: 0, retomarAutopilot: true };
     return true;
   };
