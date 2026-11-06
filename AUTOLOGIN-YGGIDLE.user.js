@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — entrar sozinho com o personagem escolhido
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.25
+// @version      1.26
 // @description  Entra com o personagem escolhido, recupera avisos de conexao e aguarda 10 minutos se o servidor fechar.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -367,6 +367,17 @@
 
   const cards = (doc) => {
     const saida = [];
+    // HUD nova: o cartao seleciona pelo nome; Jogar fica no aside separado.
+    const raiz = doc.querySelector('#elrag-pregame') || doc;
+    for (const card of consultar(raiz, '[role="button"][aria-pressed]')) {
+      if (!visivel(card)) continue;
+      const nomeEl = card.querySelector('[title]');
+      const nome = texto(nomeEl);
+      if (!nome || !/\bNv\.\s*\d+/i.test(texto(card))) continue;
+      const nivel = texto(card).match(/\bNv\.\s*\d+/i)?.[0] || '';
+      saida.push({ nome, nivel, selecionar: nomeEl, card, novo: true });
+    }
+    if (saida.length) return saida;
     const vistos = new Set();
     for (const b of candidatosEntrar(doc)) {
       if (vistos.has(b)) continue;
@@ -382,6 +393,39 @@
       if (nome && !/Tier\s*\d/i.test(nome) && !/^entrar$/i.test(nome)) saida.push({ nome, nivel: (linhas[iNivel] || '').replace(/\s+/g, ' '), botao: b });
     }
     return saida;
+  };
+
+  const mesmoNome = (a, b) => String(a || '').trim().replace(/\s+/g, ' ').toLowerCase() === String(b || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const jogarDoPersonagem = (doc, nome) => {
+    const raiz = doc.querySelector('#elrag-pregame') || doc;
+    const selecionado = cards(doc).find((c) => c.novo && mesmoNome(c.nome, nome) && c.card.getAttribute('aria-pressed') === 'true');
+    if (!selecionado) return null;
+    for (const painel of consultar(raiz, 'aside')) {
+      const titulo = painel.querySelector('h2');
+      if (!visivel(painel) || !mesmoNome(texto(titulo), nome)) continue;
+      const jogar = [...painel.querySelectorAll('button')].find((b) => visivel(b) && !b.disabled && b.getAttribute('aria-disabled') !== 'true' && /^Jogar$/i.test(texto(b)));
+      if (jogar) return jogar;
+    }
+    return null;
+  };
+
+  const selecionarEJogar = async (w, alvo) => {
+    const perfil = identidade, nomeSalvo = cfg.personagem;
+    const autorizado = () => cfg.ligado && !pausadoPeloServidor() && identidade === perfil && mesmoNome(cfg.personagem, nomeSalvo) && Date.now() >= pedidoManualAte;
+    if (!autorizado() || !clicarBotao(w, alvo.selecionar)) return false;
+    log(`Selecionando ${alvo.nome}; aguardando o painel Jogar`);
+    // O React pode substituir o painel e o botao depois do clique no nome.
+    for (let tentativa = 0; tentativa < 15; tentativa++) {
+      await esperar(200);
+      if (!autorizado() || !telaDePersonagens(w.document)) return false;
+      const jogar = jogarDoPersonagem(w.document, alvo.nome);
+      if (jogar) {
+        log(`Selecao confirmada: ${alvo.nome}; clicando Jogar`);
+        return clicarBotao(w, jogar);
+      }
+    }
+    log(`Nao confirmei ${alvo.nome} no painel: nao cliquei em Jogar; tentarei novamente`);
+    return false;
   };
 
   let pedidoManualAte = 0;
@@ -406,7 +450,7 @@
   const tentarEnterPeloMotor = (w, nome) => {
     try {
       const e = w.__elragEngine;
-      if (!e) return false;
+      if (typeof e?.pregameEnter !== 'function') return false;
       const pregame = e.getPregameSnapshot?.();
       const chars = pregame?.characters || pregame?.chars || [];
       if (!chars.length) return false;
@@ -439,20 +483,24 @@
       if (Date.now() < pedidoManualAte) { if (!avisouManual) { log('Selecao aberta por voce: espero 30 s antes de entrar sozinho'); avisouManual = true; } return; }
       avisouManual = false;
       if (!cfg.personagem) { if (ultimoDiag !== 'sem-personagem') { ultimoDiag = 'sem-personagem'; log('Nenhum personagem escolhido no menu; nao entrei'); } return; }
-      const norm = (t) => String(t || '').trim().toLowerCase();
-      const alvo = lista.find((c) => norm(c.nome) === norm(cfg.personagem))
-        || lista.find((c) => norm(c.nome).includes(norm(cfg.personagem)))
-        || lista.find((c) => norm(texto(c.botao.parentElement?.parentElement || c.botao)).includes(norm(cfg.personagem)));
+      const alvo = lista.find((c) => mesmoNome(c.nome, cfg.personagem));
       if (!alvo) { log(`"${cfg.personagem}" nao esta na lista (${nomes.join(', ')}); nao entrei com outro`); travaAte = Date.now() + 3_000; return; }
       if (Date.now() < travaAte) return;
       travaAte = Date.now() + 8_000;
       log(`Entrando com ${alvo.nome} (${alvo.nivel})...`);
-      clicarBotao(w, alvo.botao);
+      if (alvo.novo) {
+        if (!await selecionarEJogar(w, alvo)) return;
+      } else clicarBotao(w, alvo.botao);
       await esperar(1500);
       if (telaDePersonagens(w.document) && cards(w.document).length) {
-        log('A tela nao mudou: tentando plano B (pregameEnter)');
-        if (tentarEnterPeloMotor(w, alvo.nome)) await esperar(1500);
-        else log('Plano B indisponivel (getPregameSnapshot sem lista de personagens).');
+        // A HUD nova tem trava propria de entrada. Nunca envie um segundo
+        // pedido pelo motor enquanto o primeiro Jogar ainda pode carregar.
+        if (alvo.novo) log('Jogar enviado; aguardando a entrada sem repetir pelo motor');
+        else {
+          log('A tela nao mudou: tentando plano B (pregameEnter)');
+          if (tentarEnterPeloMotor(w, alvo.nome)) await esperar(1500);
+          else log('Plano B indisponivel (getPregameSnapshot sem lista de personagens).');
+        }
       }
       if (cfg.religarAutopilot || cfg.voltarParaCaca) await religarAutopilot(w);
     } finally { ocupado = false; }
@@ -770,7 +818,7 @@
   function pintar() {
     if (!document.body) return;
     if (!painel) {
-      cartaoLogin = fznCartaoYgg('Auto-login', 'v1.25', 'fzn-autologin-ygg-posicao-v4', { right: '12px', bottom: '156px' }, 'fzn-encolhido-autologin-ygg-v4').caixa;
+      cartaoLogin = fznCartaoYgg('Auto-login', 'v1.26', 'fzn-autologin-ygg-posicao-v4', { right: '12px', bottom: '156px' }, 'fzn-encolhido-autologin-ygg-v4').caixa;
       painel = document.createElement('button');
       painel.className = 'fzn-ygg__liga';
       painel.addEventListener('click', () => { cfg.ligado = !cfg.ligado; salvar(); log('Auto-login ' + (cfg.ligado ? 'ligado' : 'desligado')); pintar(); });
@@ -792,3 +840,4 @@
 
   log('v1.24: recupera avisos de conexao e nova versao; pausa 10 min para servidor fechado');
 })();
+
