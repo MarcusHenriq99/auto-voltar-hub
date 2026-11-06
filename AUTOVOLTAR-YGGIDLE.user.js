@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.07
+// @version      3.08
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.07'); } catch { return '3.07'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.08'); } catch { return '3.08'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -899,11 +899,38 @@
     await esperarAte(() => w.__elragEngine.getConsumablePouchSnapshot?.() !== antes, 2500, 150);
     return w.__elragEngine.getConsumablePouchSnapshot?.() || antes;
   };
+  // v3.07: asa na Bolsa e asa que o Auto Hunt nao ve. Confere a cada 30 s e
+  // devolve para a mochila (fora de rotina, sem pausar nada).
+  let asasConferidasEm = 0;
+  const devolverAsasDaBolsa = (w) => {
+    if (ocupado || Date.now() - asasConferidasEm < 30000) return;
+    asasConferidasEm = Date.now();
+    try {
+      const slots = w.__elragEngine?.getConsumablePouchSnapshot?.()?.slots || [];
+      let n = 0;
+      slots.forEach((sl, i) => {
+        if (sl && sl.itemId && sl.amount > 0 && (Number(sl.itemId) === 601 || /asas? de mosca/.test(normalizar(sl.name)))) {
+          w.__elragEngine.withdrawFromConsumablePouch?.(i, sl.amount); n += sl.amount;
+        }
+      });
+      if (n) log("Bolsa ALT+B: devolvi " + n + " Asa de Mosca para a mochila (o Auto Hunt teleporta com a asa da mochila)");
+    } catch {}
+  };
   const guardarNaBolsa = async (w) => {
     if (!cfg.usarBolsa) return 0;
     if (typeof w?.__elragEngine?.depositIntoConsumablePouch !== 'function') { log('Bolsa ALT+B: o jogo nao expos a funcao de guardar; nada guardado'); return 0; }
     try {
-      const snap = await pedirBolsa(w);
+      let snap = await pedirBolsa(w);
+      // v3.07: Asa de Mosca NUNCA fica na Bolsa -- o Auto Hunt teleporta usando a
+      // asa da MOCHILA (useInventoryItem); na Bolsa ela some para ele e o
+      // teleporte atrasa/falha (conta 2, 06/11). As que ja estao la voltam.
+      const ehAsa = (nome, id) => Number(id) === 601 || /\basas? de mosca\b|\bfly wings?\b/.test(normalizar(nome));
+      const asasNaBolsa = (snap?.slots || []).map((sl, i) => ({ ...sl, i })).filter((sl) => sl.itemId && sl.amount > 0 && ehAsa(sl.name, sl.itemId));
+      if (asasNaBolsa.length && typeof w.__elragEngine.withdrawFromConsumablePouch === 'function') {
+        for (const sl of asasNaBolsa) { w.__elragEngine.withdrawFromConsumablePouch(sl.i, sl.amount); await esperar(400); }
+        snap = await pedirBolsa(w);
+        log('Bolsa ALT+B: devolvi Asa de Mosca para a mochila (o Auto Hunt teleporta com a asa da mochila)');
+      }
       // v3.01: o Set vem do iframe do jogo (outro "realm"): `instanceof Set` da
       // falso aqui fora. Testar pelo metodo. Sem lista, tenta assim mesmo -- a
       // regra de admissao e do servidor, que recusa o que nao puder.
@@ -913,7 +940,7 @@
       const equipados = (await lerEquipados(w)) || new Set();
       const nomes = new Set((cfg.compras || []).filter((c) => c && c.nome).map((c) => normalizar(c.nome)));
       const daLista = itensMochila().filter(({ item }) => item && Number(item.count) > 0 && Number.isInteger(item.index) &&
-        !equipados.has(item.index) && nomes.has(nomeBase(item.name)));
+        !equipados.has(item.index) && nomes.has(nomeBase(item.name)) && !ehAsa(item.name, item.itemId));
       const guardar = temLista ? daLista.filter(({ item }) => aceita.has(item.index)) : daLista;
       if (!guardar.length) {
         if (daLista.length) log('Bolsa ALT+B: a bolsa nao aceita ' + daLista.map(({ item }) => item.name).join(', ') + ' (item nao admitido ou sem slot livre)');
@@ -4825,6 +4852,7 @@
       aoMorrer(w, salvar); return;
     }
     avisarJanelaOculta(w);
+    devolverAsasDaBolsa(w);
     conferirMapaFarm(w);
     vigiarCidadeSemRotina(w);
     if ((chegadaAtrasada || vigia) && /Economia de energia/.test(w.document.body.innerText || '')) { sairDaEconomia(w); return; }
