@@ -6,7 +6,7 @@ function setup(minutes=60,options={}){
  const cfg={ligado:true,conteudo:{modo:'lhz'},retornoPendente:{}}, logs=[];
  const button={textContent:'Ir para a cidade tomada',click(){enters++;if(!options.noArrival){p={mapa:'lhz_inv',x:100,y:100};t={fonte:2,secondsLeft:3600,runningUntil:3700,recebidoEm:100};}}};
  const panel={textContent:`[Invasao de LHZ] Voce ainda tem ${minutes} min la dentro hoje.`,querySelectorAll(){return [button];}};
- const w={document:{querySelectorAll(){return open?[panel]:[];}},location:{reload(){reloads++;}},__elragEngine:{getTempoEvento(){return t;}}};
+ const w={document:{querySelectorAll(){return open?[panel]:[];}},location:{reload(){throw Error('Never reload api.html alone');}},top:{location:{reload(){reloads++;}}},__elragEngine:{getTempoEvento(){return t;}}};
  const npc={constructor:{TYPE_NPC:7},objecttype:7,GID:42,name:'Invasao de LHZ',position:[138,189],onMouseDown(){assert.ok(Math.hypot(p.x-138,p.y-189)<=5);open=true;}};
  const ctx={cfg,Date:{now:()=>now},recuperacao:{},vigia:{},chegadaAtrasada:{},salvarCfg(){},etapa(){},log:s=>logs.push(s),
   posicao:()=>p,cancelando:()=>false,normalizar:s=>s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase(),visivel:()=>true,textoDe:e=>e.textContent,

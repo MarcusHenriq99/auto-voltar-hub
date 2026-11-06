@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.12
+// @version      3.13
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.12'); } catch { return '3.12'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.13'); } catch { return '3.13'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -2805,7 +2805,8 @@
     cfg.conteudo.cidadeRevalidada = true; salvarCfg();
     log(nomeConteudo() + ': atualizando o jogo uma vez em Prontera antes do retorno, para evitar a sessão do limbo');
     etapa('Revalidando Prontera', 'Atualizando o jogo antes de caminhar ao NPC');
-    w.location.reload();
+    // O api.html interno não inicializa sozinho: reiniciar a aplicação completa.
+    (w.top || w).location.reload();
     return false;
   };
   const PORTEIRO_BIO4 = [170, 184];
