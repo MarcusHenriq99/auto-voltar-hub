@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.09
+// @version      3.10
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.09'); } catch { return '3.09'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.10'); } catch { return '3.10'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -2003,6 +2003,7 @@
     setTimeout(() => log('Religado: a versao anterior tinha se desligado sozinha; recuperando'), 0);
   }
   const pesoSeguroParaVoltar = async (w) => {
+    if (cfg.conteudo?.modo === 'bio4') return true;
     if (cfg.rotinaLimites === false) return true;
     await lerMochila(w);
     await esperar(500);
@@ -2140,6 +2141,7 @@
   };
 
   const precisaVender = (w) => {
+    if (cfg.conteudo?.modo === 'bio4') return false;
     if (cfg.rotinaLimites === false) return false;
     if ((cfg.armazem.ligado || cfg.ferreiro || cfg.venda.ligado) && Date.now() >= espacoTeimosoAte) {
       const cheia = mochilaCheiaConfirmada(w);
@@ -2426,6 +2428,12 @@
   };
   const viagemDeVenda = async (w, manual = false, retomarForcado = false) => {
     if (ocupado) return false;
+    if (cfg.conteudo?.modo === 'bio4') {
+      if (!manual) return false;
+      ocupado = true;
+      try { return await rotinaDaCidade(w, true); }
+      finally { ocupado = false; }
+    }
     const atual = posicao(w);
     const ferreiroPorEspaco = irAoFerreiroPorEspaco(w);
     const processarNoMapa = guardarNoMapa() && !ferreiroPorEspaco;
@@ -2777,7 +2785,12 @@
   }
   const janelaPorteiro = (w) => {
     const janela = w.document.querySelector('[data-hud-window="porteiro"]');
-    return janela && visivel(janela) ? janela : null;
+    if (janela && visivel(janela)) return janela;
+    // HudPanel e um portal no body; windowId nao vira data-hud-window.
+    // Na HUD real a moldura usa data-hud-presentation (active/idle/tela-cheia).
+    return [...w.document.querySelectorAll('[data-hud-presentation]')].find(painel =>
+      visivel(painel) && /Porteiro do Biolaborat[oó]rio/i.test(textoDe(painel)) &&
+      /Tempo de passe|O que o Porteiro oferece/i.test(textoDe(painel))) || null;
   };
   const porteiroAberto = (w) => Boolean(janelaPorteiro(w)) || /Porteiro do Biolaborat/i.test(w.document.body.innerText || '');
   const carregarCaminhadaBio4 = async (w) => {
@@ -3133,6 +3146,20 @@
   };
 
   const voltarAoMapa = async (w) => {
+    // Bio 4 tem retorno proprio. Nao passe por peso, slots, Kafra, armazem,
+    // Ferreiro, vendedor ou suprimentos antes de procurar o Porteiro.
+    if (cfg.conteudo?.modo === 'bio4') {
+      if (!cfg.ligado || cancelando()) return false;
+      cfg.destinoFarm = { ...cfg.destinoFarm, mapa: 'lhz_dun04', nome: 'Bio 4' };
+      salvarCfg();
+      if (/^lhz_dun04/.test(String(posicao(w)?.mapa || ''))) return validarChegadaFarm(w);
+      await sairDaEconomia(w);
+      if (posicao(w)?.mapa !== 'prontera' && !await sairParaRifa(w))
+        return segurarRetorno(w, 'Bio 4: nao consegui chegar a Prontera para retornar pelo Porteiro');
+      if (!cfg.ligado || cancelando()) return false;
+      if (!await pausarCacada(w)) return segurarRetorno(w, 'Bio 4: nao consegui pausar a cacada antes do Porteiro');
+      return entrarBio4(w);
+    }
     const semMuni = typeof semMunicaoParaCacar === 'function' ? semMunicaoParaCacar(w) : null;
     if (semMuni && normalizar(posicao(w)?.mapa) === 'prontera') {
       if (Date.now() - semMunicaoAvisoEm > 10 * 60 * 1000) {
@@ -3481,6 +3508,12 @@
   const rotinaDaCidade = async (w, retomarAutopilot = false, viagemPorPeso = false) => {
     const retomar = retomarAutopilot || autopilotLigado(w) || !!botaoHunt(w, true);
     retomadaPlanejada.set(w, retomar);
+    if (cfg.conteudo?.modo === 'bio4') {
+      log('Bio 4: retorno direto pelo Porteiro; storage, venda e demais servicos da cidade ignorados');
+      const voltou = await voltarAoMapa(w);
+      if (voltou && retomar && cfg.ligado) await retomarCacada(w);
+      return voltou;
+    }
     if (!await pausarCacada(w)) return segurarRetorno(w, 'nao consegui pausar a cacada na cidade');
     let ultimaCelula = '', amostras = 0;
     if (!await esperarAte(() => {
@@ -3570,6 +3603,13 @@
     ocupado = true;
     try {
       r.tentativas++;
+      if (cfg.conteudo?.modo === 'bio4') {
+        recuperacao = null;
+        const voltou = await voltarAoMapa(w);
+        if (voltou) { if (r.retomarAutopilot && cfg.ligado) await retomarCacada(w); }
+        else if (!recuperacao) recuperacao = { ...r, ultimaEm: Date.now() };
+        return;
+      }
       const destino = mapaDoConteudo() || cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
       if (destino && (p.mapa === destino || mapaConfereConteudo(p.mapa))) {
         log('Recuperando (' + r.tentativas + '): ja estou no mapa de farm; religando a cacada');
@@ -4907,7 +4947,7 @@
     if (chegadaAtrasada) { conferirChegadaAtrasada(w); return; }
     if (recuperacao) { rondaDaRecuperacao(w); return; }
     if (vigia) { rondaDaVigia(w); return; }
-    if (cfg.rotinaLimites !== false && (cfg.venda.ligado || guardarTudo() || cfg.ferreiro || cfg.armazem.ligado) && Date.now() - pesoLidoEm > 3000) {
+    if (cfg.conteudo?.modo !== 'bio4' && cfg.rotinaLimites !== false && (cfg.venda.ligado || guardarTudo() || cfg.ferreiro || cfg.armazem.ligado) && Date.now() - pesoLidoEm > 3000) {
       pesoLidoEm = Date.now();
       const espacoCritico = Date.now() >= espacoTeimosoAte && Boolean(mochilaCheiaConfirmada(w));
       const peso = lerPeso(w);
@@ -4923,7 +4963,7 @@
           void (async () => {
             try {
               const atualizou = await lerMochila(w);
-              if (!cfg.ligado || ocupado || cfg.rotinaLimites === false) return;
+              if (!cfg.ligado || ocupado || cfg.rotinaLimites === false || cfg.conteudo?.modo === 'bio4') return;
               const limiteAtual = limiteAtualConfirmado(w);
               if (!limiteAtual.atingido) return;
               if (limiteAtual.espacos || precisaVender(w)) {

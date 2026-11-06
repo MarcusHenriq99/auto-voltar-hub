@@ -19,9 +19,12 @@ function setup(options = {}) {
     calls.push('enter');
     if (!options.noArrival) { current = { mapa: 'lhz_dun04', x: 100, y: 100 }; open = false; }
   }, options.disabled));
-  const panel = { querySelectorAll: () => buttons };
+  const panel = { textContent: 'Porteiro do Biolaboratório Tempo de passe O que o Porteiro oferece', querySelectorAll: () => buttons };
   const document = {
-    querySelector: selector => selector === '[data-hud-window="porteiro"]' && open ? panel : null,
+    // Actual HudPanel is portaled to body with data-hud-presentation.
+    // It does NOT expose windowId as data-hud-window (v3.09 regression).
+    querySelector: () => null,
+    querySelectorAll: selector => selector === '[data-hud-presentation]' && open ? [panel] : [],
     body: { get innerText() { return open ? 'Porteiro do Biolaboratório Sem passe' : ''; } },
   };
   const game = { document, __elragEngine: {}, __fznBio4Caminhada: { andar(x, y) {
