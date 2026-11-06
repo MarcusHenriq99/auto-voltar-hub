@@ -4,15 +4,17 @@ Script de automação do Yggidle usado no FZN Idle Hub. Esta pasta contém a ver
 
 ## Arquivos
 
-- `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 3.10.
+- `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 3.11.
 - `AUTOLOGIN-YGGIDLE.user.js`: login automático e recuperação de conexão, versão 1.26.
 - `ABATES-YGGIDLE.user.js`: contador independente de abates por dia, monstro e hora.
-- `AUTOHUNT-YGGIDLE.user.js`: complemento do Autopilot, versão 1.64; asa da Cheffenia opcional, proteção contra teleporte durante combate com MVP, retorno pelo Arauto após morte com Poder Infernal e retomada da caça no Covil.
+- `AUTOHUNT-YGGIDLE.user.js`: complemento do Autopilot, versão 1.70; asa da Cheffenia opcional, proteção contra teleporte durante combate com MVP, retorno pelo Arauto após mudança real para Prontera e retomada da caça no Covil.
 - `tests/`: verificações locais dos fluxos de aviso diário, Loja de Cash, evento, mochila e limites.
 
 ## Comportamento principal
 
 O Auto-voltar acompanha peso, espaços da mochila, morte e mapa de farm. Conforme as opções de cada conta, usa Cartão Kafra/Loja de Bolso no mapa ou volta à cidade para guardar, desmantelar, vender e retornar. Itens travados não são destravados pelo script. A opção **Rotina por limite** permite continuar farmando mesmo acima dos limites quando desligada.
+
+Na versão 3.11, morrer em Bio 4/Cheffenia **não autoriza voltar ao salvamento**. O histórico ao vivo da conta 1 confirmou o defeito da v3.10 às 12:16:49: ela desistia após 3 segundos sem botão liberado e clicava em salvamento. Essa alternativa foi removida dos mapas com renascimento próprio. O script abre o menu, captura `updateEscapeSnapshot` e espera o prazo do servidor (`reviveAvailableAt`) e a Folha (`hasLeaf`); usa `reviveNow` ou um único evento no botão habilitado. Só retoma a caça após confirmar vida no mesmo mapa. Sem Folha/botão, espera no conteúdo; não usa salvamento nem recarga. Se o mapa realmente mudar para Prontera por uma expulsão, segue o retorno pelo NPC. O Auto Hunt 1.70 também não usa salvamento por Poder Infernal e deixa o renascimento com o Auto-voltar quando ele está ativo, evitando duas rotinas sobre a mesma Folha. Nenhuma configuração nova de LHZ foi criada nesta alteração.
 
 Na versão 3.10, **Bio 4 marcado ignora storage, venda e os demais serviços de cidade**, inclusive após morte, expulsão, tentativa de retorno que falhou ou execução manual. Não dispara viagens por peso/slots nesse modo e não consulta peso/inventário antes de voltar pelo Porteiro. As configurações de venda e armazém da conta ficam preservadas para os outros modos. Corrigida a identificação da janela real do Porteiro: `HudPanel` usa `data-hud-presentation`, não publica `windowId` como `data-hud-window`. O histórico da conta 1 confirmou que a v3.09 caía na conversa antiga e aguardava o botão errado. Os testes agora reproduzem o portal real sem aquele atributo inexistente e impedem qualquer chamada de storage/venda durante o retorno de Bio 4.
 
@@ -61,5 +63,6 @@ node .\tests\test-mvp-combat.cjs
 No FZN Idle Hub, em **Scripts**, selecione **GitHub** e use o arquivo [AUTOVOLTAR-YGGIDLE.user.js](https://github.com/MarcusHenriq99/auto-voltar-hub/blob/main/AUTOVOLTAR-YGGIDLE.user.js) da branch `main`. O cartão **Auto voltar GitHub** está ligado para todas as contas; a antiga cópia colada no Hub deve permanecer desligada para evitar duas execuções.
 
 Depois de publicar uma mudança na `main`, clique **Verificar agora** no cartão do script. O Hub consulta o GitHub nesse momento; confirme a nova versão no cartão e no painel do Auto-voltar. Mantenha **Manter jogo em segundo plano** ligado caso queira que o Hub continue rodando ao trocar de janela.
+
 
 

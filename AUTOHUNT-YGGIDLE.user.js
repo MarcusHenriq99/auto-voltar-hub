@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.69
+// @version      1.70
 // @description  Complementa o autopilot do jogo: quando ele fica sem alvo, fixa o monstro visivel mais proximo ou anda explorando o mapa ate aparecer um. v1.54: clique completo no canvas e nos paineis.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -562,6 +562,12 @@
     try {
       const dono = window.top.__fznAutoVoltarInstancia;
       return /@tower$/i.test(mapa) && dono?.ativa === true && dono.controlaCovil?.(mapa) === true;
+    } catch { return false; }
+  };
+  const renascimentoControladoPeloVoltar = (mapa) => {
+    try {
+      const dono = window.top.__fznAutoVoltarInstancia;
+      return dono?.ativa === true && dono.controlaRenascimento?.(mapa) === true;
     } catch { return false; }
   };
   const temJanelaAberta = (w) => pausadoPelaRifa() || personagemMorto(w) || /Bem-vindo aos servicos Kafra|Voltar para /
@@ -1160,7 +1166,7 @@
         else if (agora - ocupadoDesde > 30000) { ocupado = false; ocupadoDesde = 0; log('ocupado preso ha 30 s -> liberado'); }
       } else ocupadoDesde = 0;
       const texto = w.document.body?.innerText || '';
-      if (covilControladoPeloVoltar(mapa)) return;
+      if (covilControladoPeloVoltar(mapa) || renascimentoControladoPeloVoltar(mapa)) return;
       if (personagemMorto(w) && /Renascer agora/.test(texto) && mapaDeRenascer(mapa) && agora - renascerEm > 3000) {
         const b = [...w.document.querySelectorAll('button')].find((x) => /^Renascer agora/i.test((x.textContent || '').trim()) && !x.disabled);
         if (b) {
@@ -1172,7 +1178,7 @@
       }
     } catch {}
   }, 1000);
-  const mapaCheffenia = (mapa) => /^moro_vol|cheffenia|chefenia/i.test(String(mapa || ''));
+  const mapaCheffenia = (mapa) => /^(?:moro_vol|mid_vol)|cheffenia|chefenia/i.test(String(mapa || ''));
   let hudCheffeniaEm = 0, hudCheffeniaAtivo = false;
   const sessaoCheffenia = (w, e) => {
     const mapa = String(posicao(e)?.mapa || '');
@@ -1221,17 +1227,23 @@
     log('Cheffenia: conversa do Arauto nao abriu'); return false;
   };
   const recuperarCheffenia = async (w) => {
+    // Morte dentro do conteudo pede Folha, nunca salvamento. O vigia de
+    // renascimento (ou o Auto-voltar) continua tratando a morte no proprio mapa.
+    if (mapaCheffenia(posicao(w.__elragEngine)?.mapa) && personagemMorto(w)) {
+      recuperacaoCheffPendente = false;
+      window.top.__FZN_CHEFF_RECOVERY__ = { active: false };
+      return;
+    }
+    if (renascimentoControladoPeloVoltar('moro_vol')) {
+      recuperacaoCheffPendente = false;
+      window.top.__FZN_CHEFF_RECOVERY__ = { active: false };
+      return;
+    }
     if (recuperacaoCheffOcupada || Date.now() - ultimaTentativaCheff < 8000) return;
     recuperacaoCheffOcupada = true; ultimaTentativaCheff = Date.now();
     window.top.__FZN_CHEFF_RECOVERY__ = { active: true, desde: Date.now() };
     try {
       const e = w.__elragEngine;
-      if (botaoCheff(w, /^Voltar ao ponto de salvamento$/i)) {
-        log('Poder Infernal: voltando ao ponto de salvamento');
-        botaoCheff(w, /^Voltar ao ponto de salvamento$/i).click();
-        const saiu = await esperarCheff(() => posicao(e)?.mapa === 'prontera', 30000);
-        if (!saiu) { log('Poder Infernal: nao chegou a Prontera; aguardando'); return; }
-      }
       if (mapaCheffenia(posicao(e)?.mapa)) {
         try { e.setAutopilotRunning(true); } catch {}
         const ligado = await esperarCheff(() => { try { return !AUTOPILOT_PARADO.has(e.getAutopilotSnapshot()?.runtimeState); } catch { return false; } }, 4000);
@@ -1262,6 +1274,7 @@
     catch (err) { log('Cheffenia: nao consegui ligar Autopilot: ' + String(err).slice(0, 80)); }
     return true;
   };
+  let cheffeniaVistaParaRetorno = false;
   const ciclo = async () => {
     if (pausadoPelaRifa()) return;
     if (!cfg.ligado || (ocupado && !cfg.soMvp)) return;
@@ -1272,11 +1285,11 @@
     if (cfg.cheffeniaRecuperar !== false) {
       const mapaAtual = posicao(e)?.mapa;
       if (mapaCheffenia(mapaAtual)) {
+        cheffeniaVistaParaRetorno = true;
         try { ganchoEfeitos(w); } catch {}
-        if (botaoCheff(w, /^Voltar ao ponto de salvamento$/i) && poderInfernalAtivo(w)) {
-          recuperacaoCheffPendente = true;
-          window.top.__FZN_CHEFF_RECOVERY__ = { active: true, desde: Date.now() };
-        }
+      } else if (mapaAtual === 'prontera' && cheffeniaVistaParaRetorno) {
+        cheffeniaVistaParaRetorno = false;
+        recuperacaoCheffPendente = true;
       }
       if (recuperacaoCheffPendente) { await recuperarCheffenia(w); return; }
     }
@@ -1494,7 +1507,7 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const cartao = fznCartaoYgg('Auto-hunt', 'v1.69', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
+      const cartao = fznCartaoYgg('Auto-hunt', 'v1.70', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
         cfg.ligado = !cfg.ligado;
@@ -1547,7 +1560,7 @@
       botaoTeleporte.addEventListener('click', () => { cfg.cheffeniaTeleporte = !cfg.cheffeniaTeleporte; gravarJson(CHAVE_CFG, cfg); log('asa Cheffenia ' + (cfg.cheffeniaTeleporte ? 'ligada' : 'desligada')); pintarTeleporte(); });
       pintarTeleporte();
       const botaoRecuperar = document.createElement('button');
-      botaoRecuperar.title = 'Quando morrer com Poder Infernal na Cheffenia, volta ao ponto de salvamento, entra pelo Arauto em Prontera e religa o Autopilot.';
+      botaoRecuperar.title = 'Se o servidor devolver a Prontera apos sair da Cheffenia, retorna pelo Arauto. Morte dentro do mapa usa Folha; nunca clica no ponto de salvamento.';
       const pintarRecuperar = () => { botaoRecuperar.textContent = 'Poder Infernal'; botaoRecuperar.className = cfg.cheffeniaRecuperar !== false ? 'fzn-ygg--on' : 'fzn-ygg--off'; };
       botaoRecuperar.addEventListener('click', () => { cfg.cheffeniaRecuperar = cfg.cheffeniaRecuperar === false; if (!cfg.cheffeniaRecuperar) { recuperacaoCheffPendente = false; window.top.__FZN_CHEFF_RECOVERY__ = { active: false }; } gravarJson(CHAVE_CFG, cfg); log('recuperacao Poder Infernal ' + (cfg.cheffeniaRecuperar ? 'ligada' : 'desligada')); pintarRecuperar(); });
       pintarRecuperar();
@@ -1596,3 +1609,4 @@
   setInterval(() => { ciclo().catch((err) => log(`erro: ${String(err).slice(0, 100)}`)); }, 100);
   } catch (err) { mostrarErro('inicio', err); }
 })();
+

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.10
+// @version      3.11
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.10'); } catch { return '3.10'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.11'); } catch { return '3.11'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -3345,7 +3345,25 @@
 
   const mapaDeRenascer = (p) => {
     const mapa = normalizar(p?.mapa || ''), nome = normalizar(p?.nome || '');
-    return /^lhz_dun04(\.|$)/.test(mapa) || /chef/.test(mapa) || mapaCheffenia(mapa) || mapa.includes('@') || /inv$/.test(mapa) || /chefenia|instancia|covil|invas|maldicao/.test(nome);
+    return /^lhz_dun04/.test(mapa) || /chef/.test(mapa) || mapaCheffenia(mapa) || mapa.includes('@') || /inv$/.test(mapa) || /chefenia|instancia|covil|invas|maldicao/.test(nome);
+  };
+  instanciaAutoVoltar.controlaRenascimento = (mapa) => cfg.ligado && mapaDeRenascer({ mapa });
+  const estadosRenascer = new WeakMap();
+  const prepararRenascer = (w) => {
+    const ui = w.__elragUI;
+    if (ui && ui.updateEscapeSnapshot?.__fznRenascer !== instanciaAutoVoltar) {
+      const original = ui.updateEscapeSnapshot;
+      const gancho = function (snapshot) {
+        estadosRenascer.set(w, snapshot);
+        return typeof original === 'function' ? original.apply(this, arguments) : undefined;
+      };
+      gancho.__fznRenascer = instanciaAutoVoltar;
+      ui.updateEscapeSnapshot = gancho;
+    }
+    // openEscape republica o snapshot com hasLeaf e o prazo real do servidor.
+    // Nao troca de mapa nem recarrega a sessao.
+    try { w.__elragEngine.openEscape?.(); } catch {}
+    return estadosRenascer.get(w);
   };
   const renascerNoLugar = async (w) => {
     if (!morteConfirmada(w)) return;
@@ -3353,45 +3371,34 @@
     ocupado = true;
     try {
       const p = posicao(w);
-      const retomar = autopilotLigado(w) || !!botaoHunt(w, true) || huntsPausados.has(w);
       await sairDaEconomia(w);
-      const achar = () => botaoPorTexto(w.document, (t) => /^Renascer agora/i.test(t));
-      let renascer = await esperarAte(achar, mapaConfereConteudo(p?.mapa) ? 3000 : 10000, 250);
-      if (!renascer && mapaConfereConteudo(p?.mapa)) {
-        const salvar = botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento');
-        if (salvar) {
-          log('Renascer agora indisponivel; voltando ao salvamento para retornar pelo NPC');
-          await aoMorrer(w, salvar);
+      const fim = Date.now() + 120000;
+      let ultimoPedido = 0, aviso = '';
+      while (cfg.ligado && !cancelando() && Date.now() < fim && posicao(w)?.mapa === p?.mapa) {
+        if (!morteConfirmada(w)) {
+          await retomarCacada(w);
+          log('Renascer: vida confirmada e cacada retomada no mesmo mapa ' + p.mapa);
           return;
         }
-      }
-      if (!renascer) log('Renascer: nao apareceu em 10 s; retentando a cada 1 s');
-      for (let i = 0; !renascer && i < 110; i++) {
-        if (!/Renascer agora|Voltar ao ponto de salvamento/.test(w.document.body.innerText || '')) { log('Renascer: a tela de morte fechou sozinha'); return; }
-        await esperar(1000);
-        renascer = achar();
-      }
-      if (!renascer) {
-        const pista = [...w.document.querySelectorAll('button')].filter((b) => visivel(b) && /renasc|ressusc|reviv|salvamento/i.test(textoDe(b))).map((b) => '"' + textoDe(b).slice(0, 40) + '"' + (b.disabled ? ' (desabilitado)' : '')).join(', ');
-        log('Morreu em ' + (p?.mapa || '?') + ': Renascer agora nao liberou em 2 min. Botoes: ' + (pista || 'nenhum'));
-        const salvar = botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento');
-        if (/^lhz_dun04/.test(String(p?.mapa || '')) && salvar) {
-          log('Bio4: sem Renascer; volto pelo ponto de salvamento e entro de novo pelo Porteiro');
-          await aoMorrer(w, salvar);
+        const estado = prepararRenascer(w);
+        const botao = botaoPorTexto(w.document, (t) => /^Renascer agora/i.test(t));
+        const liberado = estado?.isDead === true && estado.hasLeaf === true &&
+          Number(estado.reviveAvailableAt) > 0 && Number(estado.reviveAvailableAt) <= Date.now();
+        if ((botao || liberado) && Date.now() - ultimoPedido >= 1500) {
+          ultimoPedido = Date.now();
+          log('Morreu em ' + p.mapa + ': usando Folha para Renascer agora, sem sair do mapa');
+          if (liberado && typeof w.__elragEngine.reviveNow === 'function') w.__elragEngine.reviveNow();
+          else if (botao) botao.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true, composed: true, view: w }));
+          await esperarAte(() => posicao(w)?.mapa !== p.mapa || !morteConfirmada(w), 6000, 200);
+          continue;
         }
-        return;
+        const motivo = estado?.hasLeaf === false ? 'Aguardando Folha/reconhecimento do servidor' : 'Aguardando liberar Renascer agora';
+        if (aviso !== motivo) { aviso = motivo; etapa('Renascer no mapa', motivo + '; nao volto ao ponto de salvamento'); }
+        await esperar(250);
       }
-      log('Morreu em ' + (p?.nome || p?.mapa || '?') + ' (' + (p?.mapa || '?') + '): Renascer agora (sem voltar ao salvamento)');
-      renascer.click();
-      let vivo = await esperarAte(() => !/Renascer agora/.test(w.document.body.innerText || ''), 1000, 200);
-      for (let i = 0; !vivo && i < 10; i++) { const b = achar(); if (b) b.click(); vivo = await esperarAte(() => !/Renascer agora/.test(w.document.body.innerText || ''), 1000, 200); }
-      if (!vivo) { log('Renascer: a tela de morte continuou; tento de novo no proximo ciclo'); return; }
-      if (retomar || (cfg.covil.ligado && emInstancia(posicao(w))) || mapaCovil(posicao(w))) {
-        if (huntsPausados.has(w)) { botaoHunt(w, false)?.click(); huntsPausados.delete(w); }
-        else if (botaoHunt(w, false)) botaoHunt(w, false).click();
-        const ok = await esperarAte(() => { if (autopilotLigado(w)) return true; ligarAutopilot(w, true); return false; }, 6000, 300);
-        log(ok ? 'Renascer: cacada religada no mesmo mapa' : 'Renascer: ' + motivoAutopilotParado(w));
-      } else log('Renascer: retomada pulada porque Hunt e Autopilot estavam desligados quando a rotina começou');
+      log(posicao(w)?.mapa !== p?.mapa
+        ? 'Renascer: mapa mudou de ' + p?.mapa + ' para ' + posicao(w)?.mapa + '; retorno pelo NPC se necessario'
+        : 'Renascer ainda indisponivel em ' + p?.mapa + '; continuo no mapa, sem salvamento nem recarga');
     } catch (e) {
       log('Renascer: erro ' + String(e?.message || e).slice(0, 100));
     } finally {
@@ -3405,6 +3412,7 @@
       if (!ocupado) await renascerNoCovil(w);
       return;
     }
+    if (mapaDeRenascer(posicao(w))) return renascerNoLugar(w);
     ocupado = true;
     try {
       const retomar = autopilotLigado(w) || !!botaoHunt(w, true);
@@ -3462,6 +3470,7 @@
     return hpMortal(w);
   };
   const recuperarMorteSemDialogo = (w) => {
+    if (mapaDeRenascer(posicao(w))) { if (!ocupado) void renascerNoLugar(w); return; }
     if (morteSemDialogoJanela !== w) { morteSemDialogoJanela = w; morteSemDialogoDesde = 0; }
     if (!morteSemDialogoDesde) morteSemDialogoDesde = Date.now();
     if (Date.now() - morteSemDialogoDesde < 8000) { abrirMenuMorte(w); return; }
@@ -4854,7 +4863,6 @@
     atualizarHistoricoRifa();
     fznArrastavel(menu,topo,'fzn-rifa-ygg-pos-v1');
   };
-  let renascimentoImediatoPendente = false, ultimoCliqueRenascer = 0;
   const verificar = () => {
     atualizarPainel();
     const w = jogo();
@@ -4890,21 +4898,10 @@
       covil.morteRegistrada = false;
       covil.mortePendente = false;
     }
-    if (cfg.ligado && mapaDeRenascer(posicao(w)) && !window.top.__FZN_CHEFF_RECOVERY__?.active) {
-      const renascer = botaoPorTexto(w.document, (t) => /^Renascer agora/i.test(t));
-      if (renascer && morteConfirmada(w) && Date.now() - ultimoCliqueRenascer > 1500) {
-        ultimoCliqueRenascer = Date.now(); renascimentoImediatoPendente = true;
-        log('Morte em mapa especial: clicando Renascer agora imediatamente');
-        renascer.click();
-        return;
-      }
-      if (renascimentoImediatoPendente && !morteConfirmada(w) && !ocupado) {
-        renascimentoImediatoPendente = false;
-        void retomarCacada(w);
-        return;
-      }
-      if (renascimentoImediatoPendente && Date.now() - ultimoCliqueRenascer < 2500) return;
-    } else if (!mapaDeRenascer(posicao(w))) renascimentoImediatoPendente = false;
+    if (cfg.ligado && mapaDeRenascer(posicao(w)) && morteConfirmada(w)) {
+      if (!ocupado) void renascerNoLugar(w);
+      return;
+    }
     if (!cfg.ligado || ocupado) return;
     const cheffRecovery = window.top.__FZN_CHEFF_RECOVERY__;
     const mapaCheff = posicao(w)?.mapa || '';
@@ -5934,5 +5931,6 @@
   setInterval(verificarSeguro, 500);
   }
 })();
+
 
 
