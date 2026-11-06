@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.14
+// @version      3.15
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.14'); } catch { return '3.14'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.15'); } catch { return '3.15'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -2958,6 +2958,20 @@
 
   const dialogoLhz = (w) => [...w.document.querySelectorAll('[data-hud-presentation], [role="dialog"]')]
     .find(el => visivel(el) && /\[Invas[aã]o de LHZ\]/i.test(textoDe(el))) || null;
+  // Ceifador validado ao vivo: 140,194. O nome pode ainda não estar disponível
+  // após login/recarga; aproximar pelo chão 142,194 permite carregar a entidade.
+  const localizarNpcLhz = (manager) => {
+    const porNome = [], porPosicao = [];
+    manager.forEach(e => {
+      const c = e?.constructor;
+      if (!c || ![c.TYPE_NPC, c.TYPE_NPC2].some(t => Number.isFinite(t) && t === e.objecttype) ||
+        !(e.GID > 0) || e.remove_tick || !e.position) return;
+      if ([e.display?.name, e.name, e._name, e.entityName].some(n => /^invasao de lhz(?:#.*)?$/.test(normalizar(String(n || ''))))) porNome.push(e);
+      if (Math.abs(e.position[0] - 140) < 0.75 && Math.abs(e.position[1] - 194) < 0.75) porPosicao.push(e);
+    });
+    if (porNome.length > 1) return null;
+    return porNome[0] || (porPosicao.length === 1 ? porPosicao[0] : null);
+  };
   const entrarLhz = async (w) => {
     etapa('Voltando à Invasão de LHZ', 'Caminhando ao NPC à esquerda de Prontera');
     const manager = await carregarEntidadesNpc(w);
@@ -2965,23 +2979,19 @@
     let painel = dialogoLhz(w);
     for (let i = 0; i < 10 && !painel; i++) {
       if (!cfg.ligado || cancelando() || posicao(w)?.mapa !== 'prontera') return false;
-      const encontrados = [];
-      manager.forEach(e => {
-        const c = e?.constructor;
-        if (!c || ![c.TYPE_NPC, c.TYPE_NPC2].some(t => Number.isFinite(t) && t === e.objecttype) ||
-          !(e.GID > 0) || e.remove_tick || !e.position) return;
-        if ([e.display?.name, e.name, e._name, e.entityName].some(n => /^invasao de lhz(?:#.*)?$/.test(normalizar(String(n || ''))))) encontrados.push(e);
-      });
-      if (encontrados.length !== 1) return segurarRetorno(w, 'LHZ: NPC único Invasão de LHZ não encontrado');
-      const npc = encontrados[0], p = posicao(w);
-      if (Math.hypot(p.x - npc.position[0], p.y - npc.position[1]) <= 5) {
+      let npc = localizarNpcLhz(manager);
+      const p = posicao(w), alvo = npc?.position || [140,194];
+      if (Math.hypot(p.x - alvo[0], p.y - alvo[1]) <= 5) {
+        if (!npc) npc = await esperarAte(() => localizarNpcLhz(manager), 5000, 200);
+        if (!cfg.ligado || cancelando() || posicao(w)?.mapa !== 'prontera') return false;
+        if (!npc) return segurarRetorno(w, 'LHZ: cheguei junto ao ceifador, mas a entidade NPC ainda não carregou');
         npc.onMouseDown?.();
         painel = await esperarAte(() => dialogoLhz(w), 3000, 200);
       } else {
         const ponte = await carregarCaminhadaBio4(w);
         if (!ponte) return segurarRetorno(w, 'LHZ: caminhada do motor indisponível');
         // Parar duas células em frente ao NPC, sem tentar ocupar sua célula.
-        const dx = npc.position[0] + 2 - p.x, dy = npc.position[1] - p.y;
+        const dx = alvo[0] + 2 - p.x, dy = alvo[1] - p.y;
         const escala = Math.min(1, 10 / Math.max(Math.abs(dx), Math.abs(dy)));
         const x = Math.round(p.x + dx * escala), y = Math.round(p.y + dy * escala);
         log('LHZ: caminhando de ' + p.x + ',' + p.y + ' para ' + x + ',' + y);

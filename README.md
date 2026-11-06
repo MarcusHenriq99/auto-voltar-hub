@@ -4,13 +4,15 @@ Script de automação do Yggidle usado no FZN Idle Hub. Esta pasta contém a ver
 
 ## Arquivos
 
-- `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 3.14.
+- `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 3.15.
 - `AUTOLOGIN-YGGIDLE.user.js`: login automático e recuperação de conexão, versão 1.26.
 - `ABATES-YGGIDLE.user.js`: contador independente de abates por dia, monstro e hora.
 - `AUTOHUNT-YGGIDLE.user.js`: complemento do Autopilot, versão 1.70; asa da Cheffenia opcional, proteção contra teleporte durante combate com MVP, retorno pelo Arauto após mudança real para Prontera e retomada da caça no Covil.
 - `tests/`: verificações locais dos fluxos de aviso diário, Loja de Cash, evento, mochila e limites.
 
 ## Comportamento principal
+
+A v3.15 corrige o retorno após reinício/recarga: o histórico da conta 1 mostrou o modo LHZ preservado, mas a v3.14 recusava prosseguir por não localizar o NPC pelo nome. A nova aproximação usa o ceifador validado em 140,194 e para no chão 142,194 mesmo quando a entidade ainda está fora da área carregada. Aceita a entidade NPC nessa posição sem exigir o nome; continua exigindo diálogo de LHZ, saldo positivo, opção exata, fechamento da fala e confirmação do mapa/contador. Teste local reproduz login sem nome e sem entidade antes da aproximação. A conta já tinha voltado manualmente quando o diagnóstico foi feito; o farm atual foi preservado.
 
 A v3.14 acrescenta o modo **Invasão LHZ**: caminha até a entidade do NPC à esquerda de Prontera, lê os minutos restantes e escolhe somente **Ir para a cidade tomada** e fecha a fala do NPC para concluir o teleporte. Confirma o novo mapa junto ao contador de rede de LHZ antes de retomar a caça. Bio 4 e LHZ fazem uma atualização simples por passagem por Prontera antes de retornar, com marca persistida antes da recarga para impedir loops; isso é prevenção contra o limbo, não uma detecção pela quantidade de jogadores. Os dois modos ignoram serviços de cidade e usam Folha no próprio conteúdo. Sem acesso oferecido no Porteiro de Bio 4, ou sem tempo em LHZ/contador do servidor, o retorno fica suspenso; não compra acesso e não tenta indefinidamente. Após renovar, desligue e ligue o modo para liberar nova tentativa. Configurações individuais são preservadas.
 
