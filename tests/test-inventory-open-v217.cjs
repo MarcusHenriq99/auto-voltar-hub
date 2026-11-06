@@ -2,7 +2,7 @@ const fs = require('fs');
 const vm = require('vm');
 const assert = require('assert');
 
-let source = fs.readFileSync(require('path').join(__dirname, '..', 'AUTOVOLTAR-YGGIDLE.user.js'), 'utf8');
+let source = fs.readFileSync(require('path').join(__dirname, '..', 'AUTOVOLTAR-YGGIDLE.user.js'), 'utf8').replace(/\r\n/g, '\n');
 source = source.replace(
   '  fznBypassIsTrusted(window);\n  fznHackClick(window);\n  fznInjetar();\n  setInterval(fznInjetar, 500);',
   ''
@@ -62,7 +62,7 @@ assert.strictEqual(mochilaCheiaConfirmada(game).usados, 95, '95/100 dispara sem 
 assert.strictEqual(precisaVender(game), true, 'Rotina por slots deve iniciar com a mochila fechada');
 estadoLoja.mochila = snapshot(100);
 estadoLoja.mochilaEm = now - 1000;
-assert.strictEqual(mochilaCheiaConfirmada(game), null, 'Mudanca de ocupacao requer nova confirmacao');
+assert.strictEqual(mochilaCheiaConfirmada(game).usados, 100, 'Novos drops acima do limite conservam a confirmacao');
 now += 1100;
 assert.strictEqual(mochilaCheiaConfirmada(game).usados, 100, '100/100 tambem dispara com a mochila fechada');
 
@@ -77,3 +77,4 @@ assert.strictEqual(mochilaCheiaConfirmada(game).usados, 190, '95% real e estavel
 visible = false;
 assert.strictEqual(lerEspacos(game).max, 200, 'Capacidade expandida persiste com a mochila fechada');
 console.log('OK: 95/100 e 100/100 fechados disparam; 200 slots aprendidos e mantidos sem janela.');
+

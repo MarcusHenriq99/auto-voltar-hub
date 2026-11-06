@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.06
+// @version      3.07
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.06'); } catch { return '3.06'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.07'); } catch { return '3.07'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -678,7 +678,10 @@
     if (!ui) return;
     for (const [metodo, chave] of [['updateInventorySnapshot', 'mochila'], ['updateEquipmentSnapshot', 'equipamento'], ['updateStorageSnapshot', 'armazem'], ['updatePouchShopAdmission', 'admissaoBolsa']]) {
       const original = ui[metodo];
-      if (typeof original !== 'function' || original.__fznAutovoltar === donoGancho) continue;
+      if (original?.__fznAutovoltar === donoGancho) continue;
+      // O painel React pode ainda nao ter registrado o receptor da mochila.
+      // requestInventorySnapshot publica mesmo fechado; capture essa resposta.
+      if (typeof original !== 'function' && chave !== 'mochila') continue;
       const gancho = function (snap) {
         if (estadoLoja.janela === w) {
           estadoLoja[chave] = snap;
@@ -692,7 +695,7 @@
             estadoLoja.mochilaEm = agora;
           }
         }
-        return original.apply(this, arguments);
+        return typeof original === 'function' ? original.apply(this, arguments) : undefined;
       };
       gancho.__fznAutovoltar = donoGancho;
       ui[metodo] = gancho;
@@ -2045,6 +2048,12 @@
 
   const lerEspacos = (w) => {
     const atual = Date.now();
+    instalarGanchos(w);
+    // A capacidade vem do motor (pacote do servidor), sem abrir a mochila.
+    try {
+      const capacidade = w.__elragEngine.getInventoryCapacity?.();
+      if (capacidadeValida(capacidade)) definirCapacidadeMochila(capacidade, 'motor do jogo');
+    } catch {}
     if (capacidadeValida(cfg.capacidadeMochila) && Number(cfg.capacidadeMochila) !== capacidadeMochila)
       capacidadeMochila = Number(cfg.capacidadeMochila);
     const pilhas = atual - estadoLoja.mochilaEm < 15_000 ? pilhasReais() : null;
@@ -2090,11 +2099,18 @@
   const mochilaCheiaConfirmada = (w) => {
     const e = mochilaCheia(w);
     if (!e) { espacoCriticoVisto = null; return null; }
-    const chave = e.usados + '/' + e.max;
+    // Novos drops acima do limite nao devem reiniciar a confirmacao.
+    const chave = String(e.max);
     if (espacoCriticoVisto?.chave !== chave) { espacoCriticoVisto = { chave, desde: Date.now() }; return null; }
     return Date.now() - espacoCriticoVisto.desde >= 1000 ? e : null;
   };
   const irAoFerreiroPorEspaco = (w) => Boolean(cfg.ferreiro && mochilaCheia(w));
+  // Usado depois da confirmacao inicial e da releitura da mochila. Slots
+  // criticos independem de haver um contador de peso visivel no painel.
+  const limiteAtualConfirmado = (w) => {
+    const peso = lerPeso(w), espacos = mochilaCheia(w);
+    return { peso, espacos, atingido: Boolean(espacos || peso && peso.pct >= limiteSeguro()) };
+  };
 
   const precisaVender = (w) => {
     if (cfg.rotinaLimites === false) return false;
@@ -4832,11 +4848,12 @@
             try {
               const atualizou = await lerMochila(w);
               if (!cfg.ligado || ocupado || cfg.rotinaLimites === false) return;
-              const pesoAtual = lerPeso(w);
-              if (!pesoAtual || (pesoAtual.pct < limiteSeguro() && !mochilaCheiaConfirmada(w))) return;
-              if (precisaVender(w)) {
+              const limiteAtual = limiteAtualConfirmado(w);
+              if (!limiteAtual.atingido) return;
+              if (limiteAtual.espacos || precisaVender(w)) {
                 log('Limite confirmado com mochila ' + (atualizou ? 'atualizada' : 'sem resposta') +
-                  ': peso ' + pesoAtual.pct.toFixed(1) + '%; iniciando rotina automatica');
+                  ': peso ' + (limiteAtual.peso ? limiteAtual.peso.pct.toFixed(1) + '%' : 'indisponivel') +
+                  (limiteAtual.espacos ? '; espacos ' + limiteAtual.espacos.usados + '/' + limiteAtual.espacos.max : '') + '; iniciando rotina automatica');
                 await viagemDeVenda(w);
               }
             } catch (e) {
@@ -5799,3 +5816,4 @@
   setInterval(verificarSeguro, 500);
   }
 })();
+
