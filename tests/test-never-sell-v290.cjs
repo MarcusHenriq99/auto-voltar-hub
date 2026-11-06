@@ -35,6 +35,8 @@ assert.match(a.nuncaVenderNome('+7 Carta Ascensão de LHZ [1]'), /item raro/);
 for (const name of a.premios) assert.match(a.nuncaVender({ name }), /rifa/);
 assert.match(a.nuncaVender({ name: 'Equipamento', rarity: { tier: 5 } }), /lendario/);
 assert.match(a.protecaoDaLinha('Aço'), /lista desta conta/, 'Protege linha mesmo sem mochila lida');
+for(const name of ['Asa de Mosca','Asa de Mosca Infinita','Asa de Mosca Gigante','Fly Wing']) assert.ok(a.protecaoDaLinha(name),'Wing is protected even before inventory is loaded');
+assert.ok(a.nuncaVender({itemId:601,name:'Item sem nome'}));
 assert.equal(a.nuncaVenderNome('Sacola'), null);
 assert.equal(a.nuncaVenderNome('Pedaço'), null);
 assert.equal(a.nuncaVenderNome('Osso'), null);
@@ -73,3 +75,6 @@ a.abrirMenuVenda(true);
 a.menu().listeners.click({ target: { dataset: { a: 'fechar' } } });
 assert.equal(a.menu(), null, 'Fechar Nunca vender não abre Venda');
 console.log('OK: proteção por conta e janelas distintas de Venda e Nunca vender, sem controles duplicados.');
+
+assert.doesNotMatch(source,/devolverAsasDaBolsa|asasNaBolsa/, 'No automatic bulk wing withdrawal from ALT+B');
+

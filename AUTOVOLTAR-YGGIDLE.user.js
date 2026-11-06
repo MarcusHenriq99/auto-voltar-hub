@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.17
+// @version      3.18
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.17'); } catch { return '3.17'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.18'); } catch { return '3.18'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -681,7 +681,7 @@
       if (original?.__fznAutovoltar === donoGancho) continue;
       // O painel React pode ainda nao ter registrado o receptor da mochila.
       // requestInventorySnapshot publica mesmo fechado; capture essa resposta.
-      if (typeof original !== 'function' && chave !== 'mochila') continue;
+      if (typeof original !== 'function' && !['mochila', 'equipamento'].includes(chave)) continue;
       const gancho = function (snap) {
         if (estadoLoja.janela === w) {
           estadoLoja[chave] = snap;
@@ -899,38 +899,13 @@
     await esperarAte(() => w.__elragEngine.getConsumablePouchSnapshot?.() !== antes, 2500, 150);
     return w.__elragEngine.getConsumablePouchSnapshot?.() || antes;
   };
-  // v3.07: asa na Bolsa e asa que o Auto Hunt nao ve. Confere a cada 30 s e
-  // devolve para a mochila (fora de rotina, sem pausar nada).
-  let asasConferidasEm = 0;
-  const devolverAsasDaBolsa = (w) => {
-    if (ocupado || Date.now() - asasConferidasEm < 30000) return;
-    asasConferidasEm = Date.now();
-    try {
-      const slots = w.__elragEngine?.getConsumablePouchSnapshot?.()?.slots || [];
-      let n = 0;
-      slots.forEach((sl, i) => {
-        if (sl && sl.itemId && sl.amount > 0 && (Number(sl.itemId) === 601 || /asas? de mosca/.test(normalizar(sl.name)))) {
-          w.__elragEngine.withdrawFromConsumablePouch?.(i, sl.amount); n += sl.amount;
-        }
-      });
-      if (n) log("Bolsa ALT+B: devolvi " + n + " Asa de Mosca para a mochila (o Auto Hunt teleporta com a asa da mochila)");
-    } catch {}
-  };
   const guardarNaBolsa = async (w) => {
     if (!cfg.usarBolsa) return 0;
     if (typeof w?.__elragEngine?.depositIntoConsumablePouch !== 'function') { log('Bolsa ALT+B: o jogo nao expos a funcao de guardar; nada guardado'); return 0; }
     try {
       let snap = await pedirBolsa(w);
-      // v3.07: Asa de Mosca NUNCA fica na Bolsa -- o Auto Hunt teleporta usando a
-      // asa da MOCHILA (useInventoryItem); na Bolsa ela some para ele e o
-      // teleporte atrasa/falha (conta 2, 06/11). As que ja estao la voltam.
+      // Preservar as asas já guardadas na ALT+B; não retirar durante depósito.
       const ehAsa = (nome, id) => Number(id) === 601 || /\basas? de mosca\b|\bfly wings?\b/.test(normalizar(nome));
-      const asasNaBolsa = (snap?.slots || []).map((sl, i) => ({ ...sl, i })).filter((sl) => sl.itemId && sl.amount > 0 && ehAsa(sl.name, sl.itemId));
-      if (asasNaBolsa.length && typeof w.__elragEngine.withdrawFromConsumablePouch === 'function') {
-        for (const sl of asasNaBolsa) { w.__elragEngine.withdrawFromConsumablePouch(sl.i, sl.amount); await esperar(400); }
-        snap = await pedirBolsa(w);
-        log('Bolsa ALT+B: devolvi Asa de Mosca para a mochila (o Auto Hunt teleporta com a asa da mochila)');
-      }
       // v3.01: o Set vem do iframe do jogo (outro "realm"): `instanceof Set` da
       // falso aqui fora. Testar pelo metodo. Sem lista, tenta assim mesmo -- a
       // regra de admissao e do servidor, que recusa o que nao puder.
@@ -1758,6 +1733,7 @@
   const nuncaVenderNome = (nome) => {
     const n = nomeBase(nome);
     if (!n) return null;
+    if (/\basas? de mosca\b|\bfly wings?\b/.test(n)) return 'NUNCA VENDER (Asa de Mosca reservada para o farm)';
     if (NUNCA_VENDER_FIXO.some((x) => n.includes(normalizar(x)))) return 'NUNCA VENDER (item raro)';
     if (PREMIOS_RIFA.some((x) => n.includes(normalizar(x)))) return 'NUNCA VENDER (premio da rifa)';
     const pessoal = nomeProtegidoDaConta(nome);
@@ -1765,6 +1741,7 @@
     return null;
   };
   const nuncaVender = (item) => {
+    if (Number(item?.itemId) === 601) return 'NUNCA VENDER (Asa de Mosca reservada para o farm)';
     const porNome = nuncaVenderNome(item?.name);
     if (porNome) return porNome;
     // tier do jogo (src-ui/itemRarity.ts): 5 = Lendario (fundo dourado), 6 = Mitico
@@ -2071,8 +2048,18 @@
     return null;
   };
 
-  const pilhasReais = () => estadoLoja.mochila && Object.values(estadoLoja.mochila).reduce((n, itens) =>
-    n + (Array.isArray(itens) ? itens.filter(item => item && Number(item.itemId) > 0).length : 0), 0);
+  const pilhasReais = () => {
+    if (!estadoLoja.mochila) return null;
+    // Mesma regra de countUsedInventorySlots da HUD: união por índice da
+    // mochila e equipamento.all. Equipados ocupam vagas e não podem ser omitidos.
+    const indices = new Set();
+    const adicionar = item => {
+      if (item && Number(item.itemId) > 0) indices.add(Number.isInteger(item.index) ? 'i:' + item.index : item);
+    };
+    for (const itens of Object.values(estadoLoja.mochila)) if (Array.isArray(itens)) itens.forEach(adicionar);
+    if (Array.isArray(estadoLoja.equipamento?.all)) estadoLoja.equipamento.all.forEach(adicionar);
+    return indices.size;
+  };
 
   const lerEspacos = (w) => {
     const atual = Date.now();
@@ -2108,6 +2095,7 @@
     if (Date.now() - snapshotEspacosEm > 10_000) {
       snapshotEspacosEm = Date.now();
       try { instalarGanchos(w); w.__elragEngine.requestInventorySnapshot(); } catch {}
+      try { w.__elragEngine.requestEquipmentSnapshot?.(); } catch {}
     }
     if (!estadoLoja.mochila || Date.now() - estadoLoja.mochilaEm > 20_000) return null;
     // Cada callback traz a lista COMPLETA, publicada atomicamente pelo motor.
@@ -5092,7 +5080,6 @@
       aoMorrer(w, salvar); return;
     }
     avisarJanelaOculta(w);
-    devolverAsasDaBolsa(w);
     conferirMapaFarm(w);
     vigiarCidadeSemRotina(w);
     if ((chegadaAtrasada || vigia) && /Economia de energia/.test(w.document.body.innerText || '')) { sairDaEconomia(w); return; }

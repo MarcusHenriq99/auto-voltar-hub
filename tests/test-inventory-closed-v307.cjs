@@ -60,6 +60,14 @@ used=100;ctx.cfg.rotinaLimites=true;
 for(let i=0;i<12;i++){now+=200;game.__elragUI.updateInventorySnapshot({equip:Array.from({length:100},(_,index)=>({itemId:index+1,index,count:1}))});a.precisaVender(game);}
 assert.equal(a.precisaVender(game),true,'100/100 with drops every 200ms must trigger while inventory is closed');
 assert.equal(a.lerEspacos(game).usados,100);
+used=82;capacity=100;now+=11000;
+game.__elragEngine.requestInventorySnapshot=()=>{requests++;game.__elragUI.updateInventorySnapshot({equip:Array.from({length:used},(_,index)=>({itemId:index+1,index,count:1}))});};
+game.__elragEngine.requestInventorySnapshot();
+game.__elragEngine.requestEquipmentSnapshot=()=>game.__elragUI.updateEquipmentSnapshot({all:Array.from({length:18},(_,i)=>({itemId:900+i,index:82+i}))});
+a.instalarGanchos(game);game.__elragEngine.requestEquipmentSnapshot();
+assert.equal(a.lerEspacos(game).usados,100,'82 in backpack plus 18 equipped equals the real 100/100');
+game.__elragUI.updateEquipmentSnapshot({all:[{itemId:1,index:0},{itemId:900,index:82}]});
+assert.equal(a.lerEspacos(game).usados,83,'Same index in backpack/equipment only counts once');
 assert.ok(requests >= 3);
 console.log('OK: closed inventory, absent/late React receiver, 100/200 slots, ongoing drops, no/low weight, OFF and stale data.');
 

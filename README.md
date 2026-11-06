@@ -4,13 +4,17 @@ Script de automação do Yggidle usado no FZN Idle Hub. Esta pasta contém a ver
 
 ## Arquivos
 
-- `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 3.17.
+- `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 3.18.
 - `AUTOLOGIN-YGGIDLE.user.js`: login automático e recuperação de conexão, versão 1.26.
 - `ABATES-YGGIDLE.user.js`: contador independente de abates por dia, monstro e hora.
 - `AUTOHUNT-YGGIDLE.user.js`: complemento do Autopilot, versão 1.70; asa da Cheffenia opcional, proteção contra teleporte durante combate com MVP, retorno pelo Arauto após mudança real para Prontera e retomada da caça no Covil.
 - `tests/`: verificações locais dos fluxos de aviso diário, Loja de Cash, evento, mochila e limites.
 
 ## Comportamento principal
+
+A v3.18 corrige também a ocupação real: conta a união por índice da mochila e `equipment.all`, como a HUD do jogo. Pede os dois snapshots com a mochila fechada; 82 itens na mochila mais 18 equipados agora são 100/100, sem duplicar itens presentes nas duas listas.
+
+Retirada indevida de Asa de Mosca: o histórico confirmou que o Auto-voltar retirava lotes da ALT+B para o Auto Hunt e depois permitia a venda. Removidas as retiradas automáticas de asas, tanto no monitor quanto durante depósito na Bolsa. Asa de Mosca e variantes recebem proteção fixa de venda por nome e pelo ID 601, inclusive se a mochila ainda não foi lida. O Auto Hunt continua usando asas disponíveis na mochila; esta revisão não retira asas da ALT+B para ele.
 
 A v3.17 também mostra `Mochila usados/capacidade` no status com dados recentes, mesmo com o inventário fechado; `?` indica que falta uma leitura recente.
 
