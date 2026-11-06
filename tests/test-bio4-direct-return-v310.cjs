@@ -20,7 +20,7 @@ function setup() {
     recuperacao: { tentativas: 0, ultimaEm: 0, retomarAutopilot: true },
     retomadaPlanejada: new Map(),
     posicao: () => ({ mapa: map, x: 155, y: 183 }),
-    normalizar: s => s.toLowerCase(), cancelando: () => false,
+    normalizar: s => s.toLowerCase(), cancelando: () => false, mapaDoConteudo:()=> 'lhz_dun04', nomeConteudo:()=> 'Bio 4', mapaConfereConteudo: m=>m==='lhz_dun04', tempoConteudoEsgotado:()=>false, revalidarProntera:()=>true,
     log() {}, etapa() {}, salvarCfg() {}, atualizarPainel() {},
     autopilotLigado: () => true, botaoHunt: () => null,
     pausarCacada: async () => { calls.push('pause'); return true; },
@@ -72,4 +72,5 @@ function setup() {
   assert.deepEqual(t.calls, ['wake', 'pause', 'porteiro', 'wake', 'pause', 'porteiro', 'resume'], 'Failed entry never falls back to storage/sale');
   console.log('OK: Bio 4 bypasses storage, sale, blacksmith, supplies, weight and slots across recovery, death/city and manual execution; retries only the NPC.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
+
 

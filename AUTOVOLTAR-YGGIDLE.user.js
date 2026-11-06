@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.11
+// @version      3.12
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.11'); } catch { return '3.11'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.12'); } catch { return '3.12'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -272,7 +272,7 @@
     ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
   if (!cfg.backupId) cfg.backupId = novoIdBackup();
   cfg.conteudo = { modo: 'normal', expiraEm: 0, ...(cfg.conteudo || {}) };
-  if (!['normal', 'bio4', 'cheffenia', 'expedicao'].includes(cfg.conteudo.modo)) cfg.conteudo.modo = 'normal';
+  if (!['normal', 'bio4', 'lhz', 'cheffenia', 'expedicao'].includes(cfg.conteudo.modo)) cfg.conteudo.modo = 'normal';
   cfg.expedicaoFase = ['Calabouço I', 'Calabouço II', 'Portal do Abismo'].includes(cfg.expedicaoFase)
     ? cfg.expedicaoFase : 'Portal do Abismo';
   cfg.lucky = Array.isArray(cfg.lucky) ? cfg.lucky.filter((s) => typeof s === 'string' && s.trim()) : ['Ovo da La Voisin'];
@@ -2003,7 +2003,7 @@
     setTimeout(() => log('Religado: a versao anterior tinha se desligado sozinha; recuperando'), 0);
   }
   const pesoSeguroParaVoltar = async (w) => {
-    if (cfg.conteudo?.modo === 'bio4') return true;
+    if (cfg.conteudo?.modo === 'bio4' || cfg.conteudo?.modo === 'lhz') return true;
     if (cfg.rotinaLimites === false) return true;
     await lerMochila(w);
     await esperar(500);
@@ -2141,7 +2141,7 @@
   };
 
   const precisaVender = (w) => {
-    if (cfg.conteudo?.modo === 'bio4') return false;
+    if (cfg.conteudo?.modo === 'bio4' || cfg.conteudo?.modo === 'lhz') return false;
     if (cfg.rotinaLimites === false) return false;
     if ((cfg.armazem.ligado || cfg.ferreiro || cfg.venda.ligado) && Date.now() >= espacoTeimosoAte) {
       const cheia = mochilaCheiaConfirmada(w);
@@ -2428,7 +2428,7 @@
   };
   const viagemDeVenda = async (w, manual = false, retomarForcado = false) => {
     if (ocupado) return false;
-    if (cfg.conteudo?.modo === 'bio4') {
+    if (cfg.conteudo?.modo === 'bio4' || cfg.conteudo?.modo === 'lhz') {
       if (!manual) return false;
       ocupado = true;
       try { return await rotinaDaCidade(w, true); }
@@ -2732,7 +2732,10 @@
   };
 
   const mapaCheffenia = (mapa) => /^(?:moro_vol|mid_vol)/i.test(String(mapa || ''));
+  const conteudoDireto = () => ['bio4', 'lhz'].includes(cfg.conteudo?.modo);
+  const nomeConteudo = () => cfg.conteudo.modo === 'lhz' ? 'Invasão de LHZ' : 'Bio 4';
   const mapaDoConteudo = () => cfg.conteudo.modo === 'bio4' ? 'lhz_dun04'
+    : cfg.conteudo.modo === 'lhz' ? (cfg.conteudo.mapa || 'invasao_lhz')
     : cfg.conteudo.modo === 'cheffenia' ? 'moro_vol'
     : cfg.conteudo.modo === 'expedicao' ? (cfg.conteudo.mapa || 'expedicao') : null;
   const mapaConfereConteudo = (mapa) => {
@@ -2745,10 +2748,22 @@
   let ultimoTimerConteudo = 0, timerVencidoLogado = false;
   const vigiarTempoConteudo = (w) => {
     const alvo = mapaDoConteudo();
+    if (conteudoDireto() && mapaConfereConteudo(posicao(w)?.mapa)) {
+      if (cfg.conteudo.cidadeRevalidada) {
+        cfg.conteudo.cidadeRevalidada = false; delete cfg.conteudo.esgotado; salvarCfg();
+      }
+      const t = w.__elragEngine?.getTempoEvento?.();
+      const fonte = cfg.conteudo.modo === 'bio4' ? 1 : 2;
+      if (t?.fonte === fonte && Number.isInteger(t.secondsLeft) && t.secondsLeft >= 0) {
+        // Usar o instante de RECEPÇÃO, não o relógio local do servidor.
+        const resto = t.runningUntil > 0 ? Math.max(0, t.secondsLeft - (Date.now()/1000 - t.recebidoEm)) : t.secondsLeft;
+        if (resto === 0) { encerrarAcessoConteudo(nomeConteudo() + ': tempo esgotado confirmado pelo servidor'); return; }
+      }
+    }
     if (!alvo || cfg.conteudo.modo === 'expedicao' || Date.now() - ultimoTimerConteudo < 3000) return;
     ultimoTimerConteudo = Date.now();
     if (!mapaConfereConteudo(posicao(w)?.mapa)) return;
-    const pista = cfg.conteudo.modo === 'bio4' ? /bio\s*4/i : /cheffenia|chefenia/i;
+    const pista = cfg.conteudo.modo === 'bio4' ? /bio\s*4/i : cfg.conteudo.modo === 'lhz' ? /invas[aã]o|lhz/i : /cheffenia|chefenia/i;
     for (const el of w.document.querySelectorAll('div, span')) {
       if (!visivel(el) || el.closest?.('[data-fzn-auto-voltar]')) continue;
       const s = (el.innerText || el.textContent || '').trim();
@@ -2763,18 +2778,35 @@
       const expira = Date.now() + resto * 1000 + (seg ? 0 : 60000);
       if (Math.abs(expira - Number(cfg.conteudo.expiraEm || 0)) > 60000) {
         cfg.conteudo.expiraEm = expira; salvarCfg();
-        log((cfg.conteudo.modo === 'bio4' ? 'Bio 4' : 'Cheffenia') + ': tempo restante ' + Math.ceil(resto / 60) + ' min');
+        log((cfg.conteudo.modo === 'lhz' ? 'Invasão de LHZ' : cfg.conteudo.modo === 'bio4' ? 'Bio 4' : 'Cheffenia') + ': tempo restante ' + Math.ceil(resto / 60) + ' min');
       }
       timerVencidoLogado = false;
       return;
     }
   };
   const tempoConteudoEsgotado = () => {
-    // O passe de Bio 4 so corre dentro do andar. O relogio salvo e apenas
-    // informativo: depois de uma expulsao, o Porteiro confirma o saldo real.
-    if (cfg.conteudo.modo === 'bio4') return false;
+    if (conteudoDireto()) return Boolean(cfg.conteudo.esgotado);
     const expira = Number(cfg.conteudo.expiraEm || 0);
     return Boolean(mapaDoConteudo() && expira && Date.now() >= expira);
+  };
+  const encerrarAcessoConteudo = (motivo) => {
+    if (cfg.conteudo.esgotado) return false;
+    cfg.conteudo.esgotado = motivo;
+    recuperacao = null; vigia = null; chegadaAtrasada = null;
+    delete cfg.retornoPendente; salvarCfg();
+    etapa('Acesso encerrado', motivo + '; ative o modo novamente após renovar o acesso');
+    log(motivo + '; retorno automático suspenso, sem comprar acesso');
+    return false;
+  };
+  // Uma recarga por passagem pela cidade. Persistir ANTES da recarga evita
+  // loops após login/reaplicação. Não deduzir limbo pela quantidade de pessoas.
+  const revalidarProntera = (w) => {
+    if (!conteudoDireto() || posicao(w)?.mapa !== 'prontera' || cfg.conteudo.cidadeRevalidada) return true;
+    cfg.conteudo.cidadeRevalidada = true; salvarCfg();
+    log(nomeConteudo() + ': atualizando o jogo uma vez em Prontera antes do retorno, para evitar a sessão do limbo');
+    etapa('Revalidando Prontera', 'Atualizando o jogo antes de caminhar ao NPC');
+    w.location.reload();
+    return false;
   };
   const PORTEIRO_BIO4 = [170, 184];
   cfg.caminhoBio4 = cfg.caminhoBio4 && typeof cfg.caminhoBio4 === 'object' ? cfg.caminhoBio4 : {};
@@ -2903,14 +2935,14 @@
       if (!entrar) {
         const fechar = [...janela.querySelectorAll('button')].find(b => visivel(b) && !b.disabled && /^Fechar$/i.test(textoDe(b)));
         if (fechar) { fechar.click(); await esperarAte(() => !janelaPorteiro(w), 2000); }
-        return segurarRetorno(w, 'Bio 4 sem acesso disponivel no Porteiro; nao compro passe nem consumo limite diario automaticamente');
+        return encerrarAcessoConteudo('Bio 4: Porteiro sem entrada disponível (sem passe/tempo/acesso)');
       }
       entrar.click();
     } else {
       const entrar4 = await esperarAte(() => botaoPorTexto(w.document, (t) => /^Entrar no 4.? andar agora/i.test(t)), 3000);
       if (!entrar4) {
         try { w.__elragEngine.cancelNpcDialog?.(); } catch {}
-        return segurarRetorno(w, 'Porteiro sem "Entrar no 4o andar agora" (passe vencido?); nao compro passe sozinho');
+        return encerrarAcessoConteudo('Bio 4: Porteiro sem entrada disponível');
       }
       entrar4.click();
       const entrar = await esperarAte(() => botaoPorTexto(w.document, (t) => /^Entrar$/i.test(t)), 3000);
@@ -2921,6 +2953,63 @@
     if (!chegou) return segurarRetorno(w, 'entrada na lhz_dun04 sem confirmacao');
     if (!validarChegadaFarm(w)) return false;
     delete cfg.retornoPendente; salvarCfg(); log('Retorno confirmado: lhz_dun04 pelo Porteiro'); await religarEconomia(w); return true;
+  };
+
+  const dialogoLhz = (w) => [...w.document.querySelectorAll('[data-hud-presentation], [role="dialog"]')]
+    .find(el => visivel(el) && /\[Invas[aã]o de LHZ\]/i.test(textoDe(el))) || null;
+  const entrarLhz = async (w) => {
+    etapa('Voltando à Invasão de LHZ', 'Caminhando ao NPC à esquerda de Prontera');
+    const manager = await carregarEntidadesNpc(w);
+    if (!manager) return segurarRetorno(w, 'LHZ: entidades ainda indisponíveis');
+    let painel = dialogoLhz(w);
+    for (let i = 0; i < 10 && !painel; i++) {
+      if (!cfg.ligado || cancelando() || posicao(w)?.mapa !== 'prontera') return false;
+      const encontrados = [];
+      manager.forEach(e => {
+        const c = e?.constructor;
+        if (!c || ![c.TYPE_NPC, c.TYPE_NPC2].some(t => Number.isFinite(t) && t === e.objecttype) ||
+          !(e.GID > 0) || e.remove_tick || !e.position) return;
+        if ([e.display?.name, e.name, e._name, e.entityName].some(n => /^invasao de lhz(?:#.*)?$/.test(normalizar(String(n || ''))))) encontrados.push(e);
+      });
+      if (encontrados.length !== 1) return segurarRetorno(w, 'LHZ: NPC único Invasão de LHZ não encontrado');
+      const npc = encontrados[0], p = posicao(w);
+      if (Math.hypot(p.x - npc.position[0], p.y - npc.position[1]) <= 5) {
+        npc.onMouseDown?.();
+        painel = await esperarAte(() => dialogoLhz(w), 3000, 200);
+      } else {
+        const ponte = await carregarCaminhadaBio4(w);
+        if (!ponte) return segurarRetorno(w, 'LHZ: caminhada do motor indisponível');
+        // Parar duas células em frente ao NPC, sem tentar ocupar sua célula.
+        const dx = npc.position[0] + 2 - p.x, dy = npc.position[1] - p.y;
+        const escala = Math.min(1, 10 / Math.max(Math.abs(dx), Math.abs(dy)));
+        const x = Math.round(p.x + dx * escala), y = Math.round(p.y + dy * escala);
+        log('LHZ: caminhando de ' + p.x + ',' + p.y + ' para ' + x + ',' + y);
+        if (!cfg.ligado || cancelando() || !ponte.andar(x,y)) return false;
+        if (!await esperarAte(() => { const q = posicao(w); return q?.mapa === 'prontera' && Math.max(Math.abs(q.x-x), Math.abs(q.y-y)) <= 1; }, 8000, 250))
+          return segurarRetorno(w, 'LHZ: caminhada sem chegada confirmada');
+      }
+    }
+    if (!painel) return segurarRetorno(w, 'LHZ: diálogo não abriu após caminhada');
+    const texto = normalizar(textoDe(painel));
+    const saldo = /(?:ainda tem|restam?)\s+(\d+)\s*min/.exec(texto);
+    if (saldo && Number(saldo[1]) === 0 || /tempo.*(?:esgot|acab)|limite.*(?:atingid|esgot)|nao.*(?:tem|possui).*tempo/.test(texto))
+      return encerrarAcessoConteudo('Invasão de LHZ: tempo diário esgotado');
+    if (!saldo || Number(saldo[1]) <= 0) return segurarRetorno(w, 'LHZ: saldo de minutos não confirmado pelo NPC');
+    const entrar = [...painel.querySelectorAll('button, [role="button"]')].find(b => visivel(b) && !b.disabled && /^ir para a cidade tomada$/.test(normalizar(textoDe(b))));
+    if (!entrar) return segurarRetorno(w, 'LHZ: opção Ir para a cidade tomada indisponível');
+    if (!cfg.ligado || cancelando()) return false;
+    entrar.click();
+    const chegou = await esperarAte(() => {
+      const p = posicao(w), t = w.__elragEngine?.getTempoEvento?.();
+      return p?.mapa && p.mapa !== 'prontera' && t?.fonte === 2 && t.secondsLeft > 0 ? p : null;
+    }, 20000, 250);
+    if (!chegou) return segurarRetorno(w, 'LHZ: mapa e contador do servidor não confirmaram entrada');
+    cfg.conteudo.mapa = chegou.mapa; cfg.conteudo.cidadeRevalidada = false;
+    cfg.mapaFarmManual = chegou.mapa; cfg.destinoFarm = { mapa: chegou.mapa, nome: 'Invasão de LHZ' };
+    delete cfg.retornoPendente; delete cfg.conteudo.esgotado; salvarCfg();
+    log('Invasão de LHZ: chegada confirmada em ' + chegou.mapa + ' com tempo ativo');
+    await religarEconomia(w);
+    return validarChegadaFarm(w);
   };
 
   const entrarCheffenia = async (w) => {
@@ -3148,17 +3237,19 @@
   const voltarAoMapa = async (w) => {
     // Bio 4 tem retorno proprio. Nao passe por peso, slots, Kafra, armazem,
     // Ferreiro, vendedor ou suprimentos antes de procurar o Porteiro.
-    if (cfg.conteudo?.modo === 'bio4') {
+    if (cfg.conteudo?.modo === 'bio4' || cfg.conteudo?.modo === 'lhz') {
       if (!cfg.ligado || cancelando()) return false;
-      cfg.destinoFarm = { ...cfg.destinoFarm, mapa: 'lhz_dun04', nome: 'Bio 4' };
+      cfg.destinoFarm = { ...cfg.destinoFarm, mapa: mapaDoConteudo(), nome: nomeConteudo() };
       salvarCfg();
-      if (/^lhz_dun04/.test(String(posicao(w)?.mapa || ''))) return validarChegadaFarm(w);
+      if (mapaConfereConteudo(posicao(w)?.mapa)) return validarChegadaFarm(w);
+      if (tempoConteudoEsgotado()) return false;
       await sairDaEconomia(w);
       if (posicao(w)?.mapa !== 'prontera' && !await sairParaRifa(w))
         return segurarRetorno(w, 'Bio 4: nao consegui chegar a Prontera para retornar pelo Porteiro');
       if (!cfg.ligado || cancelando()) return false;
       if (!await pausarCacada(w)) return segurarRetorno(w, 'Bio 4: nao consegui pausar a cacada antes do Porteiro');
-      return entrarBio4(w);
+      if (!revalidarProntera(w)) return false;
+      return cfg.conteudo.modo === 'lhz' ? entrarLhz(w) : entrarBio4(w);
     }
     const semMuni = typeof semMunicaoParaCacar === 'function' ? semMunicaoParaCacar(w) : null;
     if (semMuni && normalizar(posicao(w)?.mapa) === 'prontera') {
@@ -3345,7 +3436,7 @@
 
   const mapaDeRenascer = (p) => {
     const mapa = normalizar(p?.mapa || ''), nome = normalizar(p?.nome || '');
-    return /^lhz_dun04/.test(mapa) || /chef/.test(mapa) || mapaCheffenia(mapa) || mapa.includes('@') || /inv$/.test(mapa) || /chefenia|instancia|covil|invas|maldicao/.test(nome);
+    return (cfg.conteudo?.modo === 'lhz' && mapaConfereConteudo(mapa)) || /^lhz_dun04/.test(mapa) || /chef/.test(mapa) || mapaCheffenia(mapa) || mapa.includes('@') || /inv$/.test(mapa) || /chefenia|instancia|covil|invas|maldicao/.test(nome);
   };
   instanciaAutoVoltar.controlaRenascimento = (mapa) => cfg.ligado && mapaDeRenascer({ mapa });
   const estadosRenascer = new WeakMap();
@@ -3517,8 +3608,8 @@
   const rotinaDaCidade = async (w, retomarAutopilot = false, viagemPorPeso = false) => {
     const retomar = retomarAutopilot || autopilotLigado(w) || !!botaoHunt(w, true);
     retomadaPlanejada.set(w, retomar);
-    if (cfg.conteudo?.modo === 'bio4') {
-      log('Bio 4: retorno direto pelo Porteiro; storage, venda e demais servicos da cidade ignorados');
+    if (cfg.conteudo?.modo === 'bio4' || cfg.conteudo?.modo === 'lhz') {
+      log(nomeConteudo() + ': retorno direto pelo NPC; storage, venda e demais servicos da cidade ignorados');
       const voltou = await voltarAoMapa(w);
       if (voltou && retomar && cfg.ligado) await retomarCacada(w);
       return voltou;
@@ -3603,6 +3694,7 @@
   const CHEGADA_MAX_MS = 90 * 1000;
 
   const rondaDaRecuperacao = async (w) => {
+    if (tempoConteudoEsgotado()) { recuperacao = null; return; }
     const r = recuperacao;
     const espera = r.tentativas < 5 ? 20000 : 120000;
     if (Date.now() - r.ultimaEm < espera) return;
@@ -3612,11 +3704,11 @@
     ocupado = true;
     try {
       r.tentativas++;
-      if (cfg.conteudo?.modo === 'bio4') {
+      if (cfg.conteudo?.modo === 'bio4' || cfg.conteudo?.modo === 'lhz') {
         recuperacao = null;
         const voltou = await voltarAoMapa(w);
         if (voltou) { if (r.retomarAutopilot && cfg.ligado) await retomarCacada(w); }
-        else if (!recuperacao) recuperacao = { ...r, ultimaEm: Date.now() };
+        else if (!recuperacao && !tempoConteudoEsgotado()) recuperacao = { ...r, ultimaEm: Date.now() };
         return;
       }
       const destino = mapaDoConteudo() || cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
@@ -3664,7 +3756,7 @@
       recuperacao = null;
       const voltou = await voltarAoMapa(w);
       if (voltou) { if (r.retomarAutopilot) await retomarCacada(w); }
-      else if (!recuperacao) recuperacao = { ...r, ultimaEm: Date.now() };
+      else if (!recuperacao && !tempoConteudoEsgotado()) recuperacao = { ...r, ultimaEm: Date.now() };
     } catch (e) {
       log('erro na recuperacao: ' + String(e?.message || e).slice(0, 120));
       if (!recuperacao) recuperacao = { ...r, ultimaEm: Date.now() };
@@ -4085,6 +4177,7 @@
 
   let cidadeSemRotinaDesde = 0;
   const vigiarCidadeSemRotina = (w) => {
+    if (tempoConteudoEsgotado()) return false;
     const p = posicao(w);
     const naCidade = normalizar(p?.mapa || '') === 'prontera';
     const destino = mapaDoConteudo() || cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
@@ -4104,6 +4197,7 @@
   };
   let foraFarmDesde = 0, ultimaConferenciaFarmEm = 0;
   const conferirMapaFarm = (w) => {
+    if (tempoConteudoEsgotado()) return;
     const agora = Date.now();
     if (agora - ultimaConferenciaFarmEm < 5000) return;
     ultimaConferenciaFarmEm = agora;
@@ -4921,7 +5015,7 @@
       if (p0?.mapa) {
         posicaoInicialVista = true;
         const destino = mapaDoConteudo() || cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
-        if (normalizar(p0.mapa) === 'prontera' && (destino || cfg.retornoEvento) && !recuperacao) {
+        if (normalizar(p0.mapa) === 'prontera' && (destino || cfg.retornoEvento) && !recuperacao && !tempoConteudoEsgotado()) {
           log('Carreguei em Prontera; retorno ' + (cfg.retornoEvento ? 'pelo Gerente de Eventos' : 'ao mapa de farm ' + destino) + ': iniciando em instantes');
           recuperacao = { motivo: 'carregou na cidade', desde: Date.now(), ultimaEm: Date.now() - 15000, tentativas: 0, retomarAutopilot: true };
         }
@@ -4946,7 +5040,7 @@
     if (chegadaAtrasada) { conferirChegadaAtrasada(w); return; }
     if (recuperacao) { rondaDaRecuperacao(w); return; }
     if (vigia) { rondaDaVigia(w); return; }
-    if (cfg.conteudo?.modo !== 'bio4' && cfg.rotinaLimites !== false && (cfg.venda.ligado || guardarTudo() || cfg.ferreiro || cfg.armazem.ligado) && Date.now() - pesoLidoEm > 3000) {
+    if (!conteudoDireto() && cfg.rotinaLimites !== false && (cfg.venda.ligado || guardarTudo() || cfg.ferreiro || cfg.armazem.ligado) && Date.now() - pesoLidoEm > 3000) {
       pesoLidoEm = Date.now();
       const espacoCritico = Date.now() >= espacoTeimosoAte && Boolean(mochilaCheiaConfirmada(w));
       const peso = lerPeso(w);
@@ -4962,7 +5056,7 @@
           void (async () => {
             try {
               const atualizou = await lerMochila(w);
-              if (!cfg.ligado || ocupado || cfg.rotinaLimites === false || cfg.conteudo?.modo === 'bio4') return;
+              if (!cfg.ligado || ocupado || cfg.rotinaLimites === false || conteudoDireto()) return;
               const limiteAtual = limiteAtualConfirmado(w);
               if (!limiteAtual.atingido) return;
               if (limiteAtual.espacos || precisaVender(w)) {
@@ -5120,13 +5214,13 @@
     if (modo) { modo.textContent = guardarTudo() ? 'Guardar tudo' : 'Vender permitidos'; modo.disabled = ocupado; modo.className = ''; }
     const evento = painel.querySelector('[data-evento]');
     if (evento) { evento.textContent = 'Evento'; evento.disabled = ocupado; evento.className = cfg.retornoEvento ? 'fzn-av--on' : 'fzn-av--off'; evento.setAttribute('aria-pressed', String(Boolean(cfg.retornoEvento))); }
-    for (const modo of ['bio4', 'cheffenia', 'expedicao']) {
+    for (const modo of ['bio4', 'lhz', 'cheffenia', 'expedicao']) {
       const botao = painel.querySelector('[data-conteudo="' + modo + '"]');
       if (!botao) continue;
       const ligado = cfg.conteudo.modo === modo;
       const minutos = ligado && cfg.conteudo.expiraEm > Date.now()
         ? ' · ' + Math.ceil((cfg.conteudo.expiraEm - Date.now()) / 60000) + 'min' : '';
-      botao.textContent = (modo === 'bio4' ? 'Bio 4' : modo === 'cheffenia' ? 'Cheffenia' : 'Expedição') + minutos;
+      botao.textContent = (modo === 'bio4' ? 'Bio 4' : modo === 'lhz' ? 'Invasão LHZ' : modo === 'cheffenia' ? 'Cheffenia' : 'Expedição') + (ligado && cfg.conteudo.esgotado ? ' · sem acesso' : minutos);
       botao.className = ligado ? 'fzn-av--on' : 'fzn-av--off';
       botao.disabled = ocupado;
       botao.setAttribute('aria-pressed', String(ligado));
@@ -5157,7 +5251,7 @@
     if (historico) { historico.style.display = detalhesProcesso ? 'block' : 'none'; historico.textContent =
       (cfg.rotinaLimites === false ? 'Rotina por limite OFF: peso e espacos nao iniciam viagens automaticas. Executar agora continua disponivel; morte e falta de suprimentos seguem suas rotinas.\n' : 'Rotina por limite ON: peso inicia em 70%; espacos em 95/100 ou 190/200. Com Ferreiro ON, vai a Prontera para desmantelar antes de guardar e vender.\n') +
       (cfg.retornoEvento ? 'Evento ON: depois da rotina na cidade, fala com o Gerente de Premios e escolhe Ir para o evento. Se falhar, aguarda em Prontera sem usar o mapa-mundi.\n' : '') +
-      (mapaDoConteudo() ? (cfg.conteudo.modo === 'bio4' ? 'Bio 4 ON: tempo acompanhado; retorno pelo Porteiro do Biolaboratorio em Prontera.\n' : cfg.conteudo.modo === 'cheffenia' ? 'Cheffenia ON: tempo acompanhado; retorno pelo Arauto em Prontera.\n' : 'Expedição ON: ' + cfg.expedicaoFase + '; retorno somente pelo NPC Expedições de Yggdrasil em Prontera.\n') : '') +
+      (mapaDoConteudo() ? (cfg.conteudo.modo === 'bio4' ? 'Bio 4 ON: tempo acompanhado; retorno pelo Porteiro do Biolaboratorio em Prontera.\n' : cfg.conteudo.modo === 'lhz' ? 'Invasão LHZ ON: retorno pelo NPC à esquerda; confirma tempo e revalida Prontera.\n' : cfg.conteudo.modo === 'cheffenia' ? 'Cheffenia ON: tempo acompanhado; retorno pelo Arauto em Prontera.\n' : 'Expedição ON: ' + cfg.expedicaoFase + '; retorno somente pelo NPC Expedições de Yggdrasil em Prontera.\n') : '') +
       (guardarNoMapa() ? 'Passos: pausar cacada → cartao → guardar tudo no maximo → fechar armazem → conferir peso → cacar no mesmo mapa.\n\n' : venderNoMapa() ? 'Passos: pausar cacada → cartao/guardar protegidos → fechar armazem → Loja de Bolso/vender permitidos → conferir peso → cacar no mesmo mapa.\n\n' : guardarTudo() ? 'Passos: pausar cacada → Prontera/Kafra → guardar tudo no maximo → conferir peso → voltar e cacar.\n\n' : 'Passos: pausar cacada → guardar protegidos → Prontera/Kafra → vender permitidos → comprar → conferir peso → voltar e cacar.\n\n') + (abaHistorico === 'problemas' ? (problemasLog().slice(-60).map(linhaHist).join('\n') || 'Nenhum problema registrado.') : historicoLog().slice(-60).map(linhaHist).join('\n')); }
   };
 
@@ -5812,18 +5906,26 @@
           const mapaExpedicao = modo === 'expedicao' && p?.mapa !== 'prontera' &&
             faseExpedicaoNoTexto(p?.nome || '', cfg.expedicaoFase) ? p.mapa : '';
           cfg.conteudo = { modo, expiraEm: 0, anterior, ...(modo === 'expedicao' ? { mapa: mapaExpedicao } : {}) };
-          cfg.mapaFarmManual = modo === 'bio4' ? 'lhz_dun04' : modo === 'cheffenia' ? 'moro_vol' : (mapaExpedicao || 'expedicao');
-          cfg.destinoFarm = { mapa: cfg.mapaFarmManual, nome: modo === 'bio4' ? 'Bio 4' : modo === 'cheffenia' ? 'Cheffenia' : cfg.expedicaoFase };
+          cfg.mapaFarmManual = modo === 'bio4' ? 'lhz_dun04' : modo === 'lhz' ? 'invasao_lhz' : modo === 'cheffenia' ? 'moro_vol' : (mapaExpedicao || 'expedicao');
+          cfg.destinoFarm = { mapa: cfg.mapaFarmManual, nome: modo === 'bio4' ? 'Bio 4' : modo === 'lhz' ? 'Invasão LHZ' : modo === 'cheffenia' ? 'Cheffenia' : cfg.expedicaoFase };
+          const tempoLhz = modo === 'lhz' && jogo()?.__elragEngine?.getTempoEvento?.();
+          if (modo === 'lhz' && p?.mapa && p.mapa !== 'prontera' && tempoLhz?.fonte === 2 && tempoLhz.secondsLeft > 0) {
+            cfg.conteudo.mapa = p.mapa; cfg.mapaFarmManual = p.mapa;
+            cfg.destinoFarm = { mapa: p.mapa, nome: 'Invasão de LHZ' };
+          }
           cfg.retornoEvento = false;
           cfg.ligado = true;
           recuperacao = null; vigia = null; chegadaAtrasada = null;
-          log('Modo ' + (modo === 'bio4' ? 'Bio 4' : modo === 'cheffenia' ? 'Cheffenia' : 'Expedição · ' + cfg.expedicaoFase) + ' ligado: retorno pelo NPC de Prontera');
+          log('Modo ' + (modo === 'bio4' ? 'Bio 4' : modo === 'lhz' ? 'Invasão LHZ' : modo === 'cheffenia' ? 'Cheffenia' : 'Expedição · ' + cfg.expedicaoFase) + ' ligado: retorno pelo NPC de Prontera');
         }
         salvarCfg(); atualizarPainel();
       };
       const bio4 = document.createElement('button'); estilo(bio4); bio4.dataset.conteudo = 'bio4';
       bio4.title = 'Retorna pelo Porteiro do Biolaboratorio enquanto o tempo da Bio 4 estiver ativo. Caminho pode ser calibrado em Calibrar.';
       bio4.addEventListener('click', () => alternarConteudo('bio4'));
+      const lhz = document.createElement('button'); estilo(lhz); lhz.dataset.conteudo = 'lhz';
+      lhz.title = 'Retorna pelo NPC Invasão de LHZ à esquerda, somente com tempo diário; revalida Prontera antes de entrar.';
+      lhz.addEventListener('click', () => alternarConteudo('lhz'));
       const cheffenia = document.createElement('button'); estilo(cheffenia); cheffenia.dataset.conteudo = 'cheffenia';
       cheffenia.title = 'Retorna pelo Arauto da Cheffenia enquanto o tempo estiver ativo.';
       cheffenia.addEventListener('click', () => alternarConteudo('cheffenia'));
@@ -5866,7 +5968,7 @@
       const gaveta = document.createElement('div'); gaveta.className = 'fzn-av__gaveta'; gaveta.dataset.gaveta = '1';
       gaveta.append(
         grupo('Rotina', limites, modoInventario, cartaoFarm, bolso, ferreiro, evento),
-        grupo('Extras', bio4, cheffenia, expedicao, faseExpedicao, covilBtn, rifaLiga, lucky),
+        grupo('Extras', bio4, lhz, cheffenia, expedicao, faseExpedicao, covilBtn, rifaLiga, lucky),
         grupo('Configurar', mapaFarm, compras, venda, nuncaVenderBtn, rifaBtn, calibrar, importar));
       conteudo.append(barra, status, gaveta, linhaHistorico, abasHist, historico);
       abrir.addEventListener('click', () => { controlesAbertos = !controlesAbertos; atualizarStatus(); });
@@ -5931,6 +6033,7 @@
   setInterval(verificarSeguro, 500);
   }
 })();
+
 
 
 

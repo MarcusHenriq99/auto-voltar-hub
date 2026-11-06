@@ -14,7 +14,7 @@ const logs = [];
 const context = {
   Date: { now: () => now },
   cfg: { mapaFarmManual: 'mag_dun02', destinoFarm: { mapa: 'mag_dun02' }, covil: { ligado: false } },
-  rifaRodando: false, recuperacao: null, vigia: null, chegadaAtrasada: null, ocupado: false,
+  tempoConteudoEsgotado:()=>false, rifaRodando: false, recuperacao: null, vigia: null, chegadaAtrasada: null, ocupado: false,
   posicao: () => position, mapaDeRenascer: () => false,
   mapaDoConteudo: () => context.cfg.conteudo?.modo === 'bio4' ? 'lhz_dun04' : null,
   mapaConfereConteudo: mapa => context.cfg.conteudo?.modo === 'bio4' && String(mapa).startsWith('lhz_dun04'),
@@ -56,3 +56,4 @@ now = 65000;
 context.conferir({});
 assert.equal(context.recuperacao?.motivo, 'fora do mapa de farm', 'Bio 4 inicia retorno rapidamente');
 console.log('OK: vigia confirma o desvio, inicia recuperacao e respeita a rifa.');
+

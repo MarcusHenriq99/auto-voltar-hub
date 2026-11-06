@@ -52,6 +52,7 @@ function setup(options = {}) {
       }
       return null;
     },
+    encerrarAcessoConteudo: reason => { cfg.conteudo.esgotado=reason; blocks.push(reason); return false; },
     segurarRetorno: (_w, reason) => { blocks.push(reason); return false; },
     validarChegadaFarm: () => current.mapa === 'lhz_dun04',
     religarEconomia: async () => calls.push('economy'),
@@ -95,7 +96,7 @@ function setup(options = {}) {
   assert.equal(await t.ctx.api.entrarBio4(t.game), false);
   assert.ok(t.calls.includes('npc') && t.calls.includes('close'));
   assert.ok(!t.calls.includes('BUY_FORBIDDEN') && !t.calls.includes('enter'));
-  assert.match(t.blocks[0], /nao compro passe/);
+  assert.ok(t.ctx.cfg.conteudo.esgotado, 'No access is terminal, never a purchase or transient retry');
   t = setup({ duo: true });
   assert.equal(await t.ctx.api.entrarBio4(t.game), true, 'Active duo reentry is recognized');
   t = setup({ disabled: true });
@@ -116,7 +117,7 @@ function setup(options = {}) {
   const ctx = {
     Date: { now: () => now }, cfg: { conteudo: { modo: 'bio4' } },
     posicao: () => ({ mapa: map }), normalizar: s => s.toLowerCase(),
-    mapaDoConteudo: () => 'lhz_dun04', recuperacao: null, vigia: null,
+    tempoConteudoEsgotado:()=>false, mapaDoConteudo: () => 'lhz_dun04', recuperacao: null, vigia: null,
     chegadaAtrasada: null, log() {}, etapa() {},
   };
   vm.createContext(ctx);
@@ -127,4 +128,5 @@ function setup(options = {}) {
   assert.equal(ctx.cfg.conteudo.modo, 'bio4', 'Selected content is retained');
   console.log('OK: Bio 4 walks without screen/camera, confirms NPC and map; supports new window/duo, no-pass and OFF; recovers after forced Prontera return.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
+
 
