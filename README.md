@@ -4,13 +4,17 @@ Script de automação do Yggidle usado no FZN Idle Hub. Esta pasta contém a ver
 
 ## Arquivos
 
-- `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 3.15.
+- `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 3.16.
 - `AUTOLOGIN-YGGIDLE.user.js`: login automático e recuperação de conexão, versão 1.26.
 - `ABATES-YGGIDLE.user.js`: contador independente de abates por dia, monstro e hora.
 - `AUTOHUNT-YGGIDLE.user.js`: complemento do Autopilot, versão 1.70; asa da Cheffenia opcional, proteção contra teleporte durante combate com MVP, retorno pelo Arauto após mudança real para Prontera e retomada da caça no Covil.
 - `tests/`: verificações locais dos fluxos de aviso diário, Loja de Cash, evento, mochila e limites.
 
 ## Comportamento principal
+
+A v3.16 desmarca LHZ/Bio 4/Cheffenia ao confirmar o fim do tempo por aviso novo do servidor, contador zerado ou bloqueio já salvo. Restaura o destino normal que estava salvo antes de ativar o conteúdo e mantém a intenção de retorno em disco até confirmar chegada. Se o servidor ainda não retirou o personagem do conteúdo, usa a saída antes de retomar a rotina normal. Não usa um relógio antigo de Cheffenia fora do mapa como prova de tempo esgotado, nem reage a avisos históricos já visíveis ao relogar. Sem destino anterior configurado, informa a falta e não inventa outro mapa.
+
+Também corrige a contagem da mochila fechada durante drops contínuos: cada `updateInventorySnapshot` já contém a lista completa, então não exige 700 ms sem atualização para aceitar o número de slots. O limite de 95% continua sendo confirmado antes da rotina; preserva capacidade 100/200, itens protegidos e opções de venda/armazém de cada conta. Testes reproduzem 100/100 com atualizações a cada 200 ms, restauração de destino por conteúdo, migração do bloqueio antigo e anúncios antigos/de outro conteúdo.
 
 A v3.15 corrige o retorno após reinício/recarga: o histórico da conta 1 mostrou o modo LHZ preservado, mas a v3.14 recusava prosseguir por não localizar o NPC pelo nome. A nova aproximação usa o ceifador validado em 140,194 e para no chão 142,194 mesmo quando a entidade ainda está fora da área carregada. Aceita a entidade NPC nessa posição sem exigir o nome; continua exigindo diálogo de LHZ, saldo positivo, opção exata, fechamento da fala e confirmação do mapa/contador. Teste local reproduz login sem nome e sem entidade antes da aproximação. A conta já tinha voltado manualmente quando o diagnóstico foi feito; o farm atual foi preservado.
 

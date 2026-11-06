@@ -29,7 +29,7 @@ assert.equal(context.api.tempoConteudoEsgotado(), false, 'Retorno segue permitid
 now += 60001;
 assert.equal(context.api.tempoConteudoEsgotado(), false, 'Bio 4 pausa fora do andar: Porteiro decide saldo, nao o relogio local');
 cfg.conteudo.modo = 'cheffenia';
-assert.equal(context.api.tempoConteudoEsgotado(), true, 'Outros conteudos conservam a verificacao de tempo');
+assert.equal(context.api.tempoConteudoEsgotado(), false, 'Cheffenia outside requires server announcement, not a stale local clock');
 
 let conversa = false, entrada = 0, cliqueNpc = 0;
 map = 'prontera';
@@ -59,4 +59,5 @@ context.entrarCheffenia(w).then(ok => {
   assert.equal(map, 'mid_volinf', 'Confirma chegada ao mapa real da Cheffenia');
   console.log('OK: timer da Bio 4 e entrada pelo Arauto da Cheffenia.');
 }).catch(error => { console.error(error); process.exitCode = 1; });
+
 

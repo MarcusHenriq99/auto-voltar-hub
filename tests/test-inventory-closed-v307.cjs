@@ -28,7 +28,7 @@ const game = {
     },
   },
 };
-assert.equal(a.lerEspacos(game), null, 'First response waits for settling');
+assert.equal(a.lerEspacos(game).usados,189,'A complete atomic snapshot can be counted immediately');
 now += 800;
 assert.equal(a.lerEspacos(game).max, 200, 'Capacity read with no visible panel');
 assert.equal(a.precisaVender(game), false, '189/200 does not trigger');
@@ -56,6 +56,11 @@ assert.equal(a.lerEspacos(game), null, 'Expired data is not accepted');
 capacity = 100; used = 95;
 game.__elragUI.updateInventorySnapshot({ equip: Array.from({ length: used }, (_, i) => ({ itemId: i + 1 })) }); now += 800;
 assert.equal(a.lerEspacos(game).max, 100, 'Server capacity replaces stale 200-slot setting');
+used=100;ctx.cfg.rotinaLimites=true;
+for(let i=0;i<12;i++){now+=200;game.__elragUI.updateInventorySnapshot({equip:Array.from({length:100},(_,index)=>({itemId:index+1,index,count:1}))});a.precisaVender(game);}
+assert.equal(a.precisaVender(game),true,'100/100 with drops every 200ms must trigger while inventory is closed');
+assert.equal(a.lerEspacos(game).usados,100);
 assert.ok(requests >= 3);
 console.log('OK: closed inventory, absent/late React receiver, 100/200 slots, ongoing drops, no/low weight, OFF and stale data.');
+
 

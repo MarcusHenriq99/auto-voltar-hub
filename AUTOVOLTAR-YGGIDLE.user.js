@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.15
+// @version      3.16
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.15'); } catch { return '3.15'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.16'); } catch { return '3.16'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -2110,7 +2110,9 @@
       try { instalarGanchos(w); w.__elragEngine.requestInventorySnapshot(); } catch {}
     }
     if (!estadoLoja.mochila || Date.now() - estadoLoja.mochilaEm > 20_000) return null;
-    if (Date.now() - estadoLoja.mochilaEm < 700) return null;
+    // Cada callback traz a lista COMPLETA, publicada atomicamente pelo motor.
+    // Drops/ícones podem atualizá-la continuamente: não esperar silêncio para
+    // contar slots, pois isso impedia disparar a rotina com a mochila fechada.
     // O contador de vagas do jogo inclui equipamentos na mochila, mesmo quando equipados.
     const usados = pilhasReais();
     if (usados > capacidadeMochila) {
@@ -2654,7 +2656,7 @@
   
   const sincronizarMapaAtual = (w) => {
     const p = posicao(w);
-    if (!p?.mapa || normalizar(p.mapa) === 'prontera' || ocupado) return false;
+    if (!p?.mapa || normalizar(p.mapa) === 'prontera' || ocupado || cfg.fimConteudoPendente) return false;
     // Saidas temporarias de Bio 4/Cheffenia nao mudam o destino da sessao paga.
     if (cfg.conteudo?.modo && cfg.conteudo.modo !== 'normal') return false;
     if (String(p.mapa).includes('@') || /^mid_vol/i.test(String(p.mapa))) return false;
@@ -2710,6 +2712,7 @@
     if (!destino?.mapa || !atual?.mapa ||
         (atual.mapa !== destino.mapa && !mapaConfereConteudo(atual.mapa)))
       return segurarRetorno(w, 'mapa de chegada ' + (atual?.mapa || '?') + '; esperado ' + (destino?.mapa || '?'));
+    if (cfg.fimConteudoPendente) { delete cfg.fimConteudoPendente; salvarCfg(); }
     return true;
   };
   const entradaDoMapaPesquisado = (w,codigo) => {
@@ -2772,7 +2775,8 @@
       const m = Number(/(\d+)\s*min\b/i.exec(s)?.[1] || 0);
       const seg = Number(/(\d+)\s*s\b/i.exec(s)?.[1] || 0);
       const resto = h * 3600 + m * 60 + seg;
-      if (resto <= 0 || resto > 86400) continue;
+      if (resto > 86400) continue;
+      if (resto === 0) { encerrarAcessoConteudo('Tempo de ' + cfg.conteudo.modo + ' esgotado no contador do jogo'); return; }
       // O visor arredonda para minutos; a margem evita encerrar a sessao
       // quase um minuto antes de o jogo liberar a ultima entrada.
       const expira = Date.now() + resto * 1000 + (seg ? 0 : 60000);
@@ -2785,18 +2789,43 @@
     }
   };
   const tempoConteudoEsgotado = () => {
-    if (conteudoDireto()) return Boolean(cfg.conteudo.esgotado);
+    if (conteudoDireto() || cfg.conteudo.modo === 'cheffenia') return Boolean(cfg.conteudo.esgotado);
     const expira = Number(cfg.conteudo.expiraEm || 0);
     return Boolean(mapaDoConteudo() && expira && Date.now() >= expira);
   };
   const encerrarAcessoConteudo = (motivo) => {
-    if (cfg.conteudo.esgotado) return false;
-    cfg.conteudo.esgotado = motivo;
+    if (!['bio4', 'cheffenia', 'lhz'].includes(cfg.conteudo.modo)) return false;
+    const modo = cfg.conteudo.modo, anterior = cfg.conteudo.anterior;
+    cfg.conteudo = { modo: 'normal', expiraEm: 0 };
+    cfg.mapaFarmManual = anterior?.mapaFarmManual || anterior?.destinoFarm?.mapa || '';
+    cfg.destinoFarm = anterior?.destinoFarm || (cfg.mapaFarmManual ? { mapa: cfg.mapaFarmManual, nome: cfg.mapaFarmManual } : null);
+    cfg.retornoEvento = Boolean(anterior?.retornoEvento);
     recuperacao = null; vigia = null; chegadaAtrasada = null;
-    delete cfg.retornoPendente; salvarCfg();
-    etapa('Acesso encerrado', motivo + '; ative o modo novamente após renovar o acesso');
-    log(motivo + '; retorno automático suspenso, sem comprar acesso');
+    delete cfg.retornoPendente; delete cfg.destinoPendente;
+    cfg.fimConteudoPendente = { modo, motivo };
+    if (cfg.ligado && (cfg.mapaFarmManual || cfg.retornoEvento))
+      recuperacao = { motivo, fimConteudo: true, desde: Date.now(), ultimaEm: Date.now()-60000, tentativas: 0, retomarAutopilot: true };
+    salvarCfg();
+    etapa('Voltando ao farm padrão', motivo + '; conteúdo desmarcado; destino ' + (cfg.mapaFarmManual || 'não configurado'));
+    log(motivo + '; modo ' + modo + ' desligado, mapa anterior restaurado nesta conta');
     return false;
+  };
+  const avisosTempoVistos = new WeakMap();
+  const conferirFimConteudo = (w) => {
+    if (cfg.conteudo.esgotado) { encerrarAcessoConteudo(cfg.conteudo.esgotado); return; }
+    // Registrar o histórico já visível evita reagir a avisos antigos ao relogar.
+    let vistos = avisosTempoVistos.get(w.document);
+    const primeiraLeitura = !vistos;
+    if (!vistos) { vistos = new Set(); avisosTempoVistos.set(w.document, vistos); }
+    const modo = cfg.conteudo.modo;
+    for (const el of w.document.querySelectorAll('div, span')) {
+      const t = normalizar(el.textContent || '');
+      if (t.length > 220 || !/(?:sua hora|seu tempo|tempo|passe).*(?:acabou|esgotado|terminou)/.test(t)) continue;
+      const conteudo = /invasao de lhz/.test(t) ? 'lhz' : /bio\s*4|biolaboratorio/.test(t) ? 'bio4' : /cheffenia|chefenia/.test(t) ? 'cheffenia' : null;
+      if (!conteudo || vistos.has(t)) continue;
+      vistos.add(t);
+      if (!primeiraLeitura && cfg.ligado && conteudo === modo) { encerrarAcessoConteudo('Aviso do servidor: ' + t); return; }
+    }
   };
   // Uma recarga por passagem pela cidade. Persistir ANTES da recarga evita
   // loops após login/reaplicação. Não deduzir limbo pela quantidade de pessoas.
@@ -3726,6 +3755,13 @@
     ocupado = true;
     try {
       r.tentativas++;
+      if (r.fimConteudo && mapaDeRenascer(p)) {
+        // A saída pode chegar depois do contador zero; não rearmar o conteúdo.
+        if (!await sairParaRifa(w)) return;
+        recuperacao = null;
+        await rotinaDaCidade(w, r.retomarAutopilot);
+        return;
+      }
       if (cfg.conteudo?.modo === 'bio4' || cfg.conteudo?.modo === 'lhz') {
         recuperacao = null;
         const voltou = await voltarAoMapa(w);
@@ -4994,6 +5030,7 @@
     ligarCalibracao(w);
     instalarGanchos(w);
     vigiarLucky();
+    conferirFimConteudo(w);
     vigiarTempoConteudo(w);
     if (!cfg.covil?.ligado && !mapaCovil(posicao(w)) && !covil.mortePendente) vigiarRifa(w);
     if (rifaRodando) return;
@@ -5037,9 +5074,9 @@
       if (p0?.mapa) {
         posicaoInicialVista = true;
         const destino = mapaDoConteudo() || cfg.mapaFarmManual || cfg.destinoFarm?.mapa;
-        if (normalizar(p0.mapa) === 'prontera' && (destino || cfg.retornoEvento) && !recuperacao && !tempoConteudoEsgotado()) {
+        if ((normalizar(p0.mapa) === 'prontera' || cfg.fimConteudoPendente) && (destino || cfg.retornoEvento) && !recuperacao && !tempoConteudoEsgotado()) {
           log('Carreguei em Prontera; retorno ' + (cfg.retornoEvento ? 'pelo Gerente de Eventos' : 'ao mapa de farm ' + destino) + ': iniciando em instantes');
-          recuperacao = { motivo: 'carregou na cidade', desde: Date.now(), ultimaEm: Date.now() - 15000, tentativas: 0, retomarAutopilot: true };
+          recuperacao = { motivo: 'carregou na cidade', fimConteudo: Boolean(cfg.fimConteudoPendente), desde: Date.now(), ultimaEm: Date.now() - 15000, tentativas: 0, retomarAutopilot: true };
         }
       }
     }
