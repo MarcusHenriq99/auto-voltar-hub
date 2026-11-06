@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.68
+// @version      1.69
 // @description  Complementa o autopilot do jogo: quando ele fica sem alvo, fixa o monstro visivel mais proximo ou anda explorando o mapa ate aparecer um. v1.54: clique completo no canvas e nos paineis.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -1000,7 +1000,9 @@
   // (ex.: Magnus Exorcismus); o script so teleporta quando houver MENOS de N
   // monstros a ate PACOTE_RAIO celulas por PACOTE_MS, fora de conjuracao.
   const PACOTE_RAIO = 7;
-  const PACOTE_MS = 1200;
+  // v1.69: 1200 -> 500 ms. Com 1,2 s o autopilot comecava a conjurar a Magnus
+  // num grupo pequeno e ela ficava soltando skill em 1 monstro (06/11).
+  const PACOTE_MS = 500;
   const PACOTES = [0, 2, 3, 4, 5, 6];
   let pacoteFracoDesde = 0;
   let conjurandoAgora = false;
@@ -1399,7 +1401,9 @@
     if (fixado && fixado.gid !== pinoGid) fixado = null;
     if (fixado && meuAlvoGid === fixado.gid && lutando) fixado = null;
     // v1.68: pacote minimo (so com monstros no radar; radar vazio segue a regra antiga).
-    if (cfg.pacote > 0 && vivos.length && !pinoGid && !fixado && !conjurandoAgora) {
+    // v1.69: conjuracao NAO segura o teleporte quando o grupo e pequeno: cancelar
+    // a skill e sair e o certo. So alvo fixado (MVP etc.) segura.
+    if (cfg.pacote > 0 && vivos.length && !pinoGid && !fixado) {
       const pertos = vivos.filter((m) => Number(m.distance) >= 0 && Number(m.distance) <= PACOTE_RAIO).length;
       if (pertos < cfg.pacote) {
         if (!pacoteFracoDesde) pacoteFracoDesde = agora;
@@ -1490,7 +1494,7 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const cartao = fznCartaoYgg('Auto-hunt', 'v1.68', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
+      const cartao = fznCartaoYgg('Auto-hunt', 'v1.69', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
         cfg.ligado = !cfg.ligado;
