@@ -4,7 +4,7 @@ Script de automação do Yggidle usado no FZN Idle Hub. Esta pasta contém a ver
 
 ## Arquivos
 
-- `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 3.13.
+- `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 3.14.
 - `AUTOLOGIN-YGGIDLE.user.js`: login automático e recuperação de conexão, versão 1.26.
 - `ABATES-YGGIDLE.user.js`: contador independente de abates por dia, monstro e hora.
 - `AUTOHUNT-YGGIDLE.user.js`: complemento do Autopilot, versão 1.70; asa da Cheffenia opcional, proteção contra teleporte durante combate com MVP, retorno pelo Arauto após mudança real para Prontera e retomada da caça no Covil.
@@ -12,9 +12,9 @@ Script de automação do Yggidle usado no FZN Idle Hub. Esta pasta contém a ver
 
 ## Comportamento principal
 
-A v3.13 acrescenta o modo **Invasão LHZ**: caminha até a entidade do NPC à esquerda de Prontera, lê os minutos restantes e escolhe somente **Ir para a cidade tomada**. Confirma o novo mapa junto ao contador de rede de LHZ antes de retomar a caça. Bio 4 e LHZ fazem uma atualização simples por passagem por Prontera antes de retornar, com marca persistida antes da recarga para impedir loops; isso é prevenção contra o limbo, não uma detecção pela quantidade de jogadores. Os dois modos ignoram serviços de cidade e usam Folha no próprio conteúdo. Sem acesso oferecido no Porteiro de Bio 4, ou sem tempo em LHZ/contador do servidor, o retorno fica suspenso; não compra acesso e não tenta indefinidamente. Após renovar, desligue e ligue o modo para liberar nova tentativa. Configurações individuais são preservadas.
+A v3.14 acrescenta o modo **Invasão LHZ**: caminha até a entidade do NPC à esquerda de Prontera, lê os minutos restantes e escolhe somente **Ir para a cidade tomada** e fecha a fala do NPC para concluir o teleporte. Confirma o novo mapa junto ao contador de rede de LHZ antes de retomar a caça. Bio 4 e LHZ fazem uma atualização simples por passagem por Prontera antes de retornar, com marca persistida antes da recarga para impedir loops; isso é prevenção contra o limbo, não uma detecção pela quantidade de jogadores. Os dois modos ignoram serviços de cidade e usam Folha no próprio conteúdo. Sem acesso oferecido no Porteiro de Bio 4, ou sem tempo em LHZ/contador do servidor, o retorno fica suspenso; não compra acesso e não tenta indefinidamente. Após renovar, desligue e ligue o modo para liberar nova tentativa. Configurações individuais são preservadas.
 
-Verificação local: sintaxe e testes de caminhada/NPC/entrada LHZ, saldo zero, recarga única, Bio 4 sem passe, retorno sem serviços e renascimento com prazo do servidor. Validação ao vivo da v3.13 ainda pendente.
+Verificação local: sintaxe e testes de caminhada/NPC/entrada LHZ, saldo zero, recarga única, Bio 4 sem passe, retorno sem serviços e renascimento com prazo do servidor. Validação ao vivo da v3.14 ainda pendente.
 
 O Auto-voltar acompanha peso, espaços da mochila, morte e mapa de farm. Conforme as opções de cada conta, usa Cartão Kafra/Loja de Bolso no mapa ou volta à cidade para guardar, desmantelar, vender e retornar. Itens travados não são destravados pelo script. A opção **Rotina por limite** permite continuar farmando mesmo acima dos limites quando desligada.
 

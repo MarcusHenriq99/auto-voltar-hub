@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.13
+// @version      3.14
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.13'); } catch { return '3.13'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.14'); } catch { return '3.14'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -2997,9 +2997,20 @@
       return encerrarAcessoConteudo('Invasão de LHZ: tempo diário esgotado');
     if (!saldo || Number(saldo[1]) <= 0) return segurarRetorno(w, 'LHZ: saldo de minutos não confirmado pelo NPC');
     const entrar = [...painel.querySelectorAll('button, [role="button"]')].find(b => visivel(b) && !b.disabled && /^ir para a cidade tomada$/.test(normalizar(textoDe(b))));
-    if (!entrar) return segurarRetorno(w, 'LHZ: opção Ir para a cidade tomada indisponível');
     if (!cfg.ligado || cancelando()) return false;
-    entrar.click();
+    const fecharLhz = () => {
+      const painelAtual = dialogoLhz(w);
+      return painelAtual && [...painelAtual.querySelectorAll('button')].find(b => visivel(b) && !b.disabled && /^fechar$/.test(normalizar(textoDe(b))));
+    };
+    // O servidor aguarda fechar a fala após a escolha para executar o warp.
+    // Aceitar também a fala pendente de uma tentativa anterior interrompida.
+    if (entrar) entrar.click();
+    else if (!fecharLhz()) return segurarRetorno(w, 'LHZ: opção Ir para a cidade tomada indisponível');
+    const fechamento = await esperarAte(() => posicao(w)?.mapa !== 'prontera' || fecharLhz(), 4000, 150);
+    if (!cfg.ligado || cancelando()) return false;
+    if (fechamento && typeof fechamento.click === 'function') {
+      log('LHZ: fechando o diálogo para concluir a entrada'); fechamento.click();
+    }
     const chegou = await esperarAte(() => {
       const p = posicao(w), t = w.__elragEngine?.getTempoEvento?.();
       return p?.mapa && p.mapa !== 'prontera' && t?.fonte === 2 && t.secondsLeft > 0 ? p : null;
