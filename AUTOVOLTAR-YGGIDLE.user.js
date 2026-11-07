@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.19
+// @version      3.20
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.19'); } catch { return '3.19'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.20'); } catch { return '3.20'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -4839,8 +4839,7 @@
   };
   const executarRifa = async (w,edicao) => {
     if (cfg.covil?.ligado || covil.mortePendente) return;
-    if (ocupado || rifaRodando || !cfg.rifa.ligado || !cfg.ligado ||
-        !(cfg.rifa.premios||[]).length || !(Number(cfg.rifa.limiteGasto) >= 500000)) return;
+    if (ocupado || rifaRodando || !cfg.rifa.ligado || !cfg.ligado) return;
     rifaRodando = true; ocupado = true;
     if (tentativaEntradaRifa.id !== edicao.id) tentativaEntradaRifa = { id: edicao.id, quantidade: 0, depois: 0 };
     tentativaEntradaRifa.quantidade++;
@@ -4897,6 +4896,7 @@
       rifaFarmPausado = false; rifaRodando = false; ocupado = false; atualizarPainel();
     }
   };
+  let rifaIdaPendente = '';
   const vigiarRifa = (w) => {
     if (cfg.covil?.ligado || mapaCovil(posicao(w)) || covil.mortePendente || covil.renascendo) return;
     encerrarObservacoesRifa();
@@ -4911,30 +4911,28 @@
       rifaStatus(etapa, detalhe);
     };
     if (!cfg.rifa.ligado) { registrar('Ignorada','Rifa desligada nesta conta'); return; }
-    if (!(cfg.rifa.premios||[]).length) { registrar('Ignorada','nenhum prêmio selecionado nesta conta'); return; }
-    if (!(Number(cfg.rifa.limiteGasto) >= 500000)) {
-      registrar('Ignorada','orçamento por edição inferior a 500.000z'); return;
+    // v3.20: com a rifa marcada a ida a cidade e OBRIGATORIA 1 min antes do
+    // inicio, sem depender de premio, anuncio ou orcamento (a compra continua
+    // filtrando premio marcado e gasto maximo). Se outra rotina estiver no meio,
+    // a ida fica pendente e acontece assim que ela terminar.
+    const agoraRifa = Date.now();
+    if (agoraRifa < edicao.inicio - 60000) {
+      registrar('Aguardando último minuto',rifaEstado.premio || 'prêmio ainda não identificado'); return;
     }
-    if (ocupado) { registrar('Aguardando rotina','personagem ocupado com outra rotina; aguardando liberação'); return; }
+    if (agoraRifa > edicao.inicio + 60000 && rifaIdaPendente !== edicao.id) {
+      registrar('Ignorada','fora do horário: só sai do farm 1 minuto antes da rifa'); return;
+    }
+    if (ocupado) {
+      rifaIdaPendente = edicao.id;
+      registrar('Aguardando rotina','personagem ocupado com outra rotina; a ida à rifa é obrigatória e sai assim que ela terminar'); return;
+    }
     if (tentativaEntradaRifa.id === edicao.id) {
       if (tentativaEntradaRifa.quantidade >= 3) {
         registrar('Parada','não cheguei ao NPC após 3 tentativas nesta edição'); return;
       }
       if (Date.now() < tentativaEntradaRifa.depois) return;
     }
-    if (rifaEstado.premio && !premioMarcadoRifa(rifaEstado.premio)) {
-      registrar('Ignorada','prêmio não marcado: '+rifaEstado.premio+'; marque no painel para disputar esta edição'); return;
-    }
-    if (Date.now() > edicao.inicio + 60000) {
-      registrar('Ignorada','fora do horário: só sai do farm 1 minuto antes da rifa'); return;
-    }
-    if (!edicao.abriu && Date.now() < edicao.inicio - 60000) {
-      registrar('Aguardando último minuto',rifaEstado.premio || 'prêmio ainda não identificado');
-      return;
-    }
-    if (!rifaEstado.premio && !edicao.abriu) {
-      registrar('Aguardando anúncio','prêmio ainda não identificado; aguardando abertura para conferir no NPC'); return;
-    }
+    rifaIdaPendente = '';
     if (!cfg.ligado) { cfg.ligado = true; log('Rifa: Auto-voltar ligado automaticamente para disputar e retornar ao farm'); }
     void executarRifa(w,edicao);
   };
