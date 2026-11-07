@@ -1108,7 +1108,7 @@
   const usarAsa = (w, e, agora) => {
     if (pausadoPelaRifa()) return false;
     if (cfg.asa === 'off' || (sessaoCheffenia(w, e) && cfg.cheffeniaTeleporte !== true)) return false;
-    if (mvpEmCombate(snapshotAp(e), agora)) return false;
+    if (modoMvpAtivo(w,e) && mvpEmCombate(snapshotAp(e), agora)) return false;
     ganchoMochila(w);
     if ((asa.index == null || agora - asa.lidaEm > 120000) && agora - asa.pedidaEm > 20000) {
       asa.pedidaEm = agora;
