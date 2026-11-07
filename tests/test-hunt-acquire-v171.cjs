@@ -14,12 +14,12 @@ function setup(options={}){
   asa:{index:null,count:0,aguardando:false},FIXAR_ESPERA_MS:1500,FIXADO_EVITAR_MS:15000,OCIOSO_FIXAR_MS:300,OCIOSO_ASA_MS:3000,
   FARM_LONGE:10,FARM_LONGE_MS:300,LUTA_MS:1500,ANDANDO_MS:500,PASSO_EXPLORAR_MS:3500,ASA_SEM_MOB_MS:600,ASA_CHEGADA_MAX_MS:1500,PACOTE_RAIO:7,PACOTE_MS:500,
   CIDADES_RE:/^prontera$/,pausadoPelaRifa:()=>paused,temJanelaAberta:()=>windowOpen,posicao:()=>position,
-  ignorados:()=>new Set(options.ignored||[]),ehMvp:m=>m.mobId===999,mvpTomado:()=>!!options.taken,
+  ignorados:()=>new Set(options.ignored||[]),ehMvp:m=>m.mobId===999,mvpTomado:()=>!!options.taken,sessaoCheffenia:()=>!!options.cheffenia,
   bio4Evitar:new Map(),ehBio4:()=>false,esperar:async()=>{},log(){},retrato:()=>'',ultimaAsaEm:0,
   usarAsa:()=>{wings.push(now);return false;},e,w,
  };
  vm.createContext(ctx);
- vm.runInContext(part('  const perseguicoesEspeciais =','  const ciclo = async () => {')+
+ vm.runInContext(part('  const modoMvpAtivo =','  const ciclo = async () => {')+
   '\nglobalThis.run=async()=>{const w=globalThis.w,e=globalThis.e,ap={},agora=Date.now();\n'+part('    const posF = posicao(e);','\n  let painel = null, botaoAsa = null;')+'\nglobalThis.walk=explorarNoMotor;globalThis.special=reforcarAlvoParado;',ctx);
  return {ctx,pins,walks,wings,step:async ms=>{now+=ms;await ctx.run();},move:(x,y)=>position={...position,x,y},open:b=>windowOpen=b,pause:b=>paused=b,radar:r=>radar=r};
 }
@@ -28,6 +28,8 @@ function setup(options={}){
  await t.step(200);assert.deepEqual(t.pins,[10],'No focus-command flood');
  await t.step(1400);assert.deepEqual(t.pins,[10,0,20],'Release failed target before trying next');
  t=setup({ignored:[10],noHits:true});await t.step(0);await t.step(350);assert.deepEqual(t.pins,[20],'Ignore/flee policy preserved');
+ t=setup({noHits:true});t.ctx.cfg.soMvp=true;await t.step(0);await t.step(350);assert.deepEqual(t.pins,[10],'Saved Cheffenia checkbox does not ignore normal mobs outside content');
+ t=setup({noHits:true,cheffenia:true});t.ctx.cfg.soMvp=true;await t.step(0);await t.step(350);assert.equal(t.pins.length,0,'Cheffenia still restricts to bosses');
  t=setup({mobs:[{gid:99,mobId:999,name:'MVP',distance:1}],taken:true,noHits:true});await t.step(0);await t.step(350);assert.equal(t.pins.length,0,'NOKS avoids claimed MVP');
  t=setup({noHits:true});t.ctx.meuGolpeEm=100000;await t.step(300);assert.equal(t.pins.length,0,'Do not interrupt real combat');
  t=setup({noHits:true});await t.step(0);await t.step(350);t.move(101,100);await t.step(1300);assert.deepEqual(t.pins,[10],'Walking progress does not blacklist chase');await t.step(600);await t.step(400);assert.deepEqual(t.pins,[10],'Allow target to attack after arrival');

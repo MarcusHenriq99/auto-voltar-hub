@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.71
+// @version      1.72
 // @description  Complementa o Autopilot: adquire alvos próximos sem esperar o primeiro golpe, retoma perseguições paradas e explora pelo motor do jogo, preservando as regras de teleporte.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -1275,6 +1275,7 @@
     return true;
   };
   let cheffeniaVistaParaRetorno = false;
+  const modoMvpAtivo = (w,e) => Boolean(cfg.soMvp && sessaoCheffenia(w,e));
   const perseguicoesEspeciais = new Map();
   const reforcarAlvoParado = (w,e,mob,agora) => {
     const p=posicao(e);
@@ -1337,7 +1338,7 @@
   };
   const ciclo = async () => {
     if (pausadoPelaRifa()) return;
-    if (!cfg.ligado || (ocupado && !cfg.soMvp)) return;
+    if (!cfg.ligado || ocupado) return;
     const w = jogo();
     if (!w) return;
     const e = w.__elragEngine;
@@ -1396,7 +1397,7 @@
       }
       if (eventoFixado) { eventoFixado = null; try { e.setAutopilotPinnedTarget(0); } catch {} log('evento: Stefan saiu do radar'); }
     }
-    if (cfg.soMvp) {
+    if (modoMvpAtivo(w,e)) {
       try { ganchoCatalogo(w); } catch {}
       let radarMvp = [];
       try { radarMvp = e.getAutopilotRadarSnapshot()?.mobs || []; } catch {}
@@ -1453,7 +1454,7 @@
     const ign = ignorados(ap);
     let radar = [];
     try { radar = e.getAutopilotRadarSnapshot()?.mobs || []; } catch {}
-    const vivos = radar.filter((m) => Number(m.gid) > 0 && !ign.has(m.mobId) && (!cfg.soMvp || ehMvp(m)) && (!ehMvp(m) || !mvpTomado(m)))
+    const vivos = radar.filter((m) => Number(m.gid) > 0 && !ign.has(m.mobId) && (!modoMvpAtivo(w,e) || ehMvp(m)) && (!ehMvp(m) || !mvpTomado(m)))
       .sort((a,b) => (Number.isFinite(Number(a.distance)) ? Number(a.distance) : Infinity) - (Number.isFinite(Number(b.distance)) ? Number(b.distance) : Infinity));
     if (cfg.bio4 && radar.some((m) => ehBio4(m) && !bio4Evitar.has(m.gid))) { ociosoDesde = 0; radarVazioDesde = 0; return; }
     try {
@@ -1541,7 +1542,7 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const cartao = fznCartaoYgg('Auto-hunt', 'v1.71', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
+      const cartao = fznCartaoYgg('Auto-hunt', 'v1.72', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
         cfg.ligado = !cfg.ligado;
@@ -1584,7 +1585,7 @@
       });
       pintarPacote();
       const botaoMvp = document.createElement('button');
-      botaoMvp.title = 'Chefenia: prioriza o chefe em combate e nao usa asa enquanto o ataca. O teleporte sem chefe e configurado separadamente.';
+      botaoMvp.title = 'Dentro da Cheffenia, busca somente chefes e protege o combate. Fora dela caça todos os monstros permitidos. A opção fica salva para a próxima sessão; o teleporte da Cheffenia é separado.';
       const pintarMvp = () => { botaoMvp.textContent = 'Chefenia'; botaoMvp.className = cfg.soMvp ? 'fzn-ygg--on' : 'fzn-ygg--off'; };
       botaoMvp.addEventListener('click', () => { cfg.soMvp = !cfg.soMvp; gravarJson(CHAVE_CFG, cfg); log('so MVP ' + (cfg.soMvp ? 'ligado' : 'desligado')); pintarMvp(); });
       pintarMvp();

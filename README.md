@@ -7,10 +7,12 @@ Script de automação do Yggidle usado no FZN Idle Hub. Esta pasta contém a ver
 - `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 3.18.
 - `AUTOLOGIN-YGGIDLE.user.js`: login automático e recuperação de conexão, versão 1.26.
 - `ABATES-YGGIDLE.user.js`: contador independente de abates por dia, monstro e hora.
-- `AUTOHUNT-YGGIDLE.user.js`: complemento do Autopilot, versão 1.71; aquisição do alvo próximo antes do primeiro golpe, retomada de perseguição parada e caminhada pelo motor, com as opções de teleporte e conteúdo preservadas.
+- `AUTOHUNT-YGGIDLE.user.js`: complemento do Autopilot, versão 1.72; aquisição do alvo próximo antes do primeiro golpe, retomada de perseguição parada e caminhada pelo motor, com as opções de teleporte e conteúdo preservadas.
 - `tests/`: verificações locais dos fluxos de aviso diário, Loja de Cash, evento, mochila e limites.
 
 ## Comportamento principal
+
+Auto Hunt 1.72: a opção Chefenia/Só MVP só restringe os alvos durante uma sessão real de Cheffenia. O Hub da conta 1 mostrou essa opção ON em `rockrdg2`; o histórico da 1.70 confirmava teleporte procurando chefe mesmo com monstros comuns no radar. Fora do conteúdo, todos os monstros permitidos voltam a ser elegíveis, sem apagar a configuração salva da Cheffenia. Não executar ciclos concorrentes durante um pedido de caminhada.
 
 Auto Hunt 1.71: remove a dependência de um golpe já observado para iniciar a primeira luta. Tenta o monstro elegível mais próximo após 300 ms de ociosidade, sem inundar o servidor de comandos; uma tentativa sem movimento/golpe é liberada após 1,5 s para tentar outro alvo. Deslocamento real e combate protegem a perseguição em curso. MVP e alvo do evento já selecionados têm o foco reenviado quando ficam de fato parados, sem golpe/conjuração. Sem asa disponível ou após tentativas bloqueadas, explora com `REQUEST_MOVE`, por células do mapa, sem depender de canvas/foco. As janelas, rifa, NOKS, regras Ignorar/Fugir, Somente MVP, Bio 4, pacote mínimo e critérios/intervalos de teleporte continuam sendo respeitados. O radar do cliente já era ordenado; a causa principal era o bloqueio anterior ao primeiro golpe e o fluxo de alvo fixado parado.
 
