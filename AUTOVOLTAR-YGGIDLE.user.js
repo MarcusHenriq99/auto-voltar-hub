@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.20
+// @version      3.21
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.20'); } catch { return '3.20'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.21'); } catch { return '3.21'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -4537,6 +4537,12 @@
     return m ? Number(m[1].replace(/[^\d]/g, '')) : NaN;
   };
   const RIFA_INTERVALO_MS = 600;
+  // v3.21: o servidor aceita 1 compra a cada 500 ms (fixo). A cadencia conta
+  // do clique anterior e nao espera a confirmacao; no maximo 2 compras sem
+  // confirmacao ao mesmo tempo, e o gasto maximo ja conta as pendentes.
+  const RIFA_CADENCIA_MS = 500;
+  const RIFA_MAX_PENDENTES = 2;
+  const RIFA_SEM_RESPOSTA_MS = 23000;
   const comprasRifaEmCurso = new WeakSet();
   // A UI pode tirar o disabled antes de terminar o carregamento. Comprar
   // somente quando o controle estiver visível, disponível e de fato verde.
@@ -4648,6 +4654,9 @@
     comprasRifaEmCurso.add(w);
     try {
     let premio = premioAvisado, semBotaoDesde = 0, semJanelaDesde = 0, semSaldoDesde = null, registro = null;
+    // Compras enviadas e ainda sem comprovante, mais referencias da sessao.
+    const pendentes = [];
+    let sessao = null, ultimoClique = 0;
     const parar = (etapa, detalhe) => {
       registrarMotivoRifa(edicao, premio, etapa, detalhe);
       rifaStatus(etapa, detalhe);
@@ -4708,128 +4717,120 @@
       if (botaoCompraRifaAtivo(comprar) && (!Number.isFinite(preco) || preco <= 0)) {
         parar('Parada','preço do bilhete não identificado no botão'); return;
       }
-      const gastoEfetivo = Math.max(Number(registro.gasto) || 0,
-        Math.max(0, Number(registro.saldoInicial) - saldo));
-      if (Number.isFinite(preco) && gastoEfetivo + preco > limite) {
-        parar('Limite atingido','máximo de '+limite.toLocaleString('pt-BR')+'z nesta edição'); return;
-      }
-      if (Number.isFinite(preco) && saldo < preco) {
-        parar('Sem saldo','menos de '+preco.toLocaleString('pt-BR')+'z para outro bilhete'); return;
-      }
-      if (!botaoCompraRifaAtivo(comprar)) {
+      if (!Number.isFinite(preco) || preco <= 0) {
         if (!semBotaoDesde) semBotaoDesde = Date.now();
         if (!comprar && Date.now() - semBotaoDesde > 10000) {
           rifaStatus('Reabrindo rifa','botão de compra não apareceu');
-          fecharRifa(w);
-          rifaModalAtual = null;
-          semBotaoDesde = 0;
-          await esperar(500);
-          continue;
+          fecharRifa(w); rifaModalAtual = null; semBotaoDesde = 0;
+          await esperar(500); continue;
         }
-        rifaStatus('Aguardando botão verde','compra indisponível há '+(Math.floor((Date.now()-semBotaoDesde)/10000)*10)+' s');
-        await esperar(100); continue;
+        rifaStatus('Aguardando botão verde','preço do bilhete ainda não apareceu');
+        await esperar(20); continue;
       }
-      semBotaoDesde = 0;
-      // O cooldown pode durar mais que a pausa após a compra. Ao habilitar,
-      // aguardar 0,6 s e obter o controle atual, pois a UI pode recriá-lo.
-      await esperar(RIFA_INTERVALO_MS);
-      if (!cfg.rifa.ligado || !cfg.ligado || posicao(w)?.mapa !== 'prontera') {
-        parar('Interrompida','participação interrompida antes do próximo clique'); return;
+      const numerosAgora = numerosCompradosRifa(modal);
+      if (!sessao || sessao.preco !== preco) {
+        sessao = { preco, saldo, numeros: numerosAgora, confirmados: 0 };
       }
-      const modalPronto = janelaRifa(w);
-      comprar = modalPronto && [...modalPronto.querySelectorAll('button')].find(b => /comprar n[uú]mero/i.test(textoDe(b)));
-      if (!botaoCompraRifaAtivo(comprar) || precoBotaoRifa(comprar) !== preco) continue;
-      if (zenyRifa(w) !== saldo) continue; // Refazer orçamento se a carteira mudou.
-      if (rifaEsgotada(modalPronto.innerText || '') || /edi[cç][aã]o encerrada|n[aã]o est[aá] aberta para compras/i.test(modalPronto.innerText || '')) {
-        parar('Encerrada','edição encerrada antes do próximo clique'); return;
-      }
-      const numerosAntes = numerosCompradosRifa(modalPronto);
-      // A lista de bilhetes pode atualizar antes da carteira. Não aceitar o
-      // débito atrasado da compra anterior como comprovante do próximo clique.
-      const saldoReferencia = Math.min(saldo, registro.saldoInicial - registro.gasto);
-      const envioEm = Date.now();
-      if (!clicarCompraRifa(comprar)) { await esperar(RIFA_INTERVALO_MS); continue; }
-      // Só consumir a edição quando uma compra realmente foi enviada.
-      // Falha de leitura antes do clique permite reentrada limitada pelo vigia.
-      cfg.rifa.ultimaEdicao = edicao.id;
-      registro.tentativas++;
-      const auditoria = { em: envioEm, estado: 'enviada', preco, saldoAntes: saldo, numerosAntes,
-        intervaloMs: registro.ultimoCliqueEm ? envioEm - registro.ultimoCliqueEm : null };
-      registro.ultimoCliqueEm = envioEm;
-      registro.auditoriaCompras = [...(registro.auditoriaCompras || []), auditoria].slice(-30);
-      gravarJson(CHAVE_CFG,cfg);
-      const comprovante = () => {
-        const novoSaldo = zenyRifa(w);
-        const novosNumeros = numerosCompradosRifa(janelaRifa(w));
-        if (Number.isFinite(numerosAntes) && Number.isFinite(novosNumeros) &&
-            novosNumeros > numerosAntes) return { saldo: novoSaldo, numeros: novosNumeros };
-        if (Number.isFinite(novoSaldo) && novoSaldo <= saldoReferencia - preco)
-          return { saldo: novoSaldo, numeros: novosNumeros };
-        return null;
-      };
-      // Desde 29/10/2026 o botão compra diretamente. Ainda aceitamos a janela
-      // antiga caso alguma conta receba a interface anterior durante a troca.
-      let confirmado = await esperarAte(() => {
-        const compra = comprovante();
-        if (compra) return { compra };
-        const botao = [...w.document.querySelectorAll('button')]
-          .find(b => visivel(b) && botaoCompraRifaAtivo(b) &&
-            /^comprar\s*[—–-]\s*[\d.,]+\s*z?$/i.test(textoDe(b)) &&
-            /confirmar compra|voc[eê] vai gastar/i.test(b.parentElement?.parentElement?.innerText || ''));
-        return botao ? { botao } : null;
-      },8000,100);
-      if (confirmado?.botao) {
-        const precoConfirmacao = Number((textoDe(confirmado.botao).match(/[\d.,]+/) || [''])[0].replace(/[^\d]/g, ''));
-        if (precoConfirmacao !== preco) { parar('Parada','preço da confirmação difere do botão'); return; }
-        await esperar(RIFA_INTERVALO_MS);
-        if (!cfg.rifa.ligado || !cfg.ligado || posicao(w)?.mapa !== 'prontera') {
-          parar('Interrompida','participação interrompida antes de confirmar a compra'); return;
+      if (!Number.isFinite(sessao.numeros) && Number.isFinite(numerosAgora) && !pendentes.length)
+        sessao.numeros = numerosAgora;
+      // --- conciliacao: quantas das compras enviadas o servidor ja confirmou ---
+      const porNumeros = Number.isFinite(sessao.numeros) && Number.isFinite(numerosAgora)
+        ? numerosAgora - sessao.numeros : 0;
+      const porZeny = Math.floor((sessao.saldo - saldo) / preco);
+      let confirmadosAgora = Math.max(0, porNumeros, porZeny);
+      while (confirmadosAgora > sessao.confirmados) {
+        sessao.confirmados++;
+        const env = pendentes.shift();
+        if (env) {
+          env.auditoria.estado = 'confirmada';
+          env.auditoria.latenciaMs = Date.now() - env.em;
+          env.auditoria.saldoDepois = saldo;
+          env.auditoria.numerosDepois = numerosAgora;
         }
-        if (!clicarCompraRifa(confirmado.botao)) {
-          parar('Parada','confirmação indisponível; confira a compra antes de tentar novamente'); return;
-        }
-        confirmado = await esperarAte(comprovante,8000,100);
-      } else confirmado = confirmado?.compra;
-      if (!confirmado) {
-        // Não repetir o clique enquanto o servidor pode ainda estar processando
-        // a compra: uma segunda chamada poderia gastar além do limite.
-        rifaStatus('Conferindo compra','aguardando saldo ou número atualizar');
-        confirmado = await esperarAte(comprovante,15000,250);
+        registro.confirmados++;
+        registro.gasto += preco;
+        if (!registro.vencedor) registro.resultado = 'Aguardando sorteio';
+        rifaEstado.compras++;
+        if (registro.confirmados % 5 === 0) salvarCfg(); else gravarJson(CHAVE_CFG,cfg);
+        atualizarHistoricoRifa();
+        rifaStatus('Comprando',rifaEstado.compras+' número(s); '+premio);
       }
-      if (!confirmado) {
-        const atual = janelaRifa(w);
-        auditoria.estado = 'sem confirmação';
-        auditoria.latenciaMs = Date.now() - envioEm;
-        auditoria.saldoDepois = zenyRifa(w);
-        auditoria.numerosDepois = numerosCompradosRifa(atual);
-        auditoria.resposta = String(atual?.innerText || 'janela fechada').replace(/\s+/g, ' ').slice(0, 500);
-        if (atual && rifaEsgotada(atual.innerText || '')) {
-          parar('Encerrada','todos os números vendidos'); return;
+      if (pendentes.length && Date.now() - pendentes[0].em > RIFA_SEM_RESPOSTA_MS) {
+        for (const env of pendentes) {
+          env.auditoria.estado = 'sem confirmação';
+          env.auditoria.latenciaMs = Date.now() - env.em;
+          env.auditoria.saldoDepois = saldo;
+          env.auditoria.numerosDepois = numerosAgora;
+          env.auditoria.resposta = String(modal.innerText || '').replace(/\s+/g, ' ').slice(0, 500);
         }
+        gravarJson(CHAVE_CFG,cfg);
         // Sem retorno do servidor, outra tentativa poderia comprar um bilhete
         // duplicado e ultrapassar o limite configurado pelo jogador.
         parar('Parada','compra sem resposta após 23 s; confira saldo e números antes de tentar novamente'); return;
       }
-      const porNumeros = Number.isFinite(numerosAntes) && Number.isFinite(confirmado.numeros)
-        ? confirmado.numeros - numerosAntes : 0;
-      const porZeny = Number.isFinite(confirmado.saldo)
-        ? Math.floor((saldoReferencia - confirmado.saldo) / preco) : 0;
-      const comprados = Math.max(1, porNumeros, porZeny);
-      auditoria.estado = 'confirmada';
-      auditoria.latenciaMs = Date.now() - envioEm;
-      auditoria.saldoDepois = confirmado.saldo;
-      auditoria.numerosDepois = confirmado.numeros;
-      registro.confirmados += comprados;
-      registro.gasto += preco * comprados;
-      if (!registro.vencedor) registro.resultado = 'Aguardando sorteio';
-      if (registro.confirmados % 5 === 0) salvarCfg();
-      else gravarJson(CHAVE_CFG,cfg);
-      atualizarHistoricoRifa();
-      rifaEstado.compras += comprados;
-      rifaStatus('Comprando',rifaEstado.compras+' número(s); '+premio);
-      // O botão pode habilitar antes de o servidor liberar outra compra.
-      // Esperar também após o comprovante impede rajadas de cliques.
-      await esperar(RIFA_INTERVALO_MS);
+      // Janela antiga de confirmacao ("Comprar — 500.000z"), caso volte.
+      const confirmacao = [...w.document.querySelectorAll('button')]
+        .find(b => visivel(b) && botaoCompraRifaAtivo(b) &&
+          /^comprar\s*[—–-]\s*[\d.,]+\s*z?$/i.test(textoDe(b)) &&
+          /confirmar compra|voc[eê] vai gastar/i.test(b.parentElement?.parentElement?.innerText || ''));
+      if (confirmacao && pendentes.length) {
+        const precoConfirmacao = Number((textoDe(confirmacao).match(/[\d.,]+/) || [''])[0].replace(/[^\d]/g, ''));
+        if (precoConfirmacao !== preco) { parar('Parada','preço da confirmação difere do botão'); return; }
+        if (!pendentes[0].confirmouJanela) {
+          pendentes[0].confirmouJanela = true;
+          clicarCompraRifa(confirmacao);
+        }
+        await esperar(20); continue;
+      }
+      // --- orcamento: o que ja foi gasto + o que esta a caminho + o proximo ---
+      const gastoEfetivo = Math.max(Number(registro.gasto) || 0,
+        Math.max(0, Number(registro.saldoInicial) - saldo));
+      const aCaminho = pendentes.length * preco;
+      if (gastoEfetivo + aCaminho + preco > limite) {
+        if (pendentes.length) { rifaStatus('Conferindo compra','aguardando confirmação das últimas compras'); await esperar(20); continue; }
+        parar('Limite atingido','máximo de '+limite.toLocaleString('pt-BR')+'z nesta edição'); return;
+      }
+      const saldoProjetado = Math.min(saldo, sessao.saldo - sessao.confirmados * preco) - aCaminho;
+      if (saldoProjetado < preco) {
+        if (pendentes.length) { await esperar(20); continue; }
+        parar('Sem saldo','menos de '+preco.toLocaleString('pt-BR')+'z para outro bilhete'); return;
+      }
+      if (rifaEsgotada(texto)) {
+        if (pendentes.length) { await esperar(20); continue; }
+        parar('Encerrada','todos os números vendidos'); return;
+      }
+      if (pendentes.length >= RIFA_MAX_PENDENTES) { await esperar(10); continue; }
+      // --- cadencia: 500 ms cravados desde o clique anterior ---
+      const falta = ultimoClique + RIFA_CADENCIA_MS - Date.now();
+      if (falta > 0) { await esperar(Math.min(falta, 50)); continue; }
+      if (!botaoCompraRifaAtivo(comprar)) {
+        if (!semBotaoDesde) semBotaoDesde = Date.now();
+        if (!comprar && Date.now() - semBotaoDesde > 10000) {
+          rifaStatus('Reabrindo rifa','botão de compra não apareceu');
+          fecharRifa(w); rifaModalAtual = null; semBotaoDesde = 0;
+          await esperar(500); continue;
+        }
+        if (!pendentes.length)
+          rifaStatus('Aguardando botão verde','compra indisponível há '+(Math.floor((Date.now()-semBotaoDesde)/10000)*10)+' s');
+        await esperar(10); continue;
+      }
+      semBotaoDesde = 0;
+      if (!cfg.rifa.ligado || !cfg.ligado || posicao(w)?.mapa !== 'prontera') {
+        parar('Interrompida','participação interrompida antes do próximo clique'); return;
+      }
+      const envioEm = Date.now();
+      if (!clicarCompraRifa(comprar)) { await esperar(10); continue; }
+      // Só consumir a edição quando uma compra realmente foi enviada.
+      cfg.rifa.ultimaEdicao = edicao.id;
+      registro.tentativas++;
+      const auditoria = { em: envioEm, estado: 'enviada', preco, saldoAntes: saldo, numerosAntes: numerosAgora,
+        intervaloMs: registro.ultimoCliqueEm ? envioEm - registro.ultimoCliqueEm : null };
+      registro.ultimoCliqueEm = envioEm;
+      registro.auditoriaCompras = [...(registro.auditoriaCompras || []), auditoria].slice(-30);
+      gravarJson(CHAVE_CFG,cfg);
+      pendentes.push({ em: envioEm, auditoria });
+      ultimoClique = envioEm;
+      await esperar(10);
     }
     parar('Interrompida', !cfg.rifa.ligado ? 'Rifa desligada durante a participação' :
       !cfg.ligado ? 'Auto-voltar desligado durante a participação' : 'personagem saiu de Prontera durante a participação');

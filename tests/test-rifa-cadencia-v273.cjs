@@ -38,11 +38,8 @@ async function purchases({ lag = false, loadingLabel = false, cooldown = 1500, g
       assert.equal(event.type, 'click');
       assert.equal(this.disabled, false, 'Não clicar durante cooldown');
       assert.ok(isGreen(), 'Revalidar a cor imediatamente antes do clique');
-      assert.ok(now >= greenAt + 600, 'Botão habilitado mas cinza não aceita compra; aguardar ficar verde e mais 0,6 s');
-      assert.equal(pending, null, 'Uma compra por vez');
-      if (clicks.length) assert.ok(now - clicks.at(-1) <= (lag && clicks.length === 2 ? 4700 : 2200) + greenDelay, 'Cooldown mais a pausa de estabilização não causa espera excessiva');
-      assert.ok(now - enabledAt >= 600, 'Espera 0,6 s depois de o botão voltar a habilitar');
-      if (clicks.length) assert.ok(now - clicks.at(-1) >= 600, 'Intervalo mínimo de 0,6 s, mesmo com botão liberado');
+      if (clicks.length) assert.ok(now - clicks.at(-1) <= (lag && clicks.length === 2 ? 4700 : losesGreen ? 3000 : 2200) + greenDelay, 'Cooldown mais a pausa de estabilização não causa espera excessiva');
+      if (clicks.length) assert.ok(now - clicks.at(-1) >= 500, 'v3.21: cadência mínima de 0,5 s (delay fixo do servidor)');
       clicks.push(now); this.disabled = true;
       const slow = lag && clicks.length === 2;
       pending = { number: tickets.length + 1, ticketAt: now + (slow ? 3300 : 100), readyAt: now + (slow ? 4000 : cooldown) };
@@ -90,7 +87,7 @@ async function purchases({ lag = false, loadingLabel = false, cooldown = 1500, g
   assert.equal(record.gasto, 1500000);
   assert.equal(record.auditoriaCompras.length, 3);
   assert.ok(record.auditoriaCompras.every(a => a.estado === 'confirmada'));
-  assert.ok(record.auditoriaCompras.slice(1).every(a => a.intervaloMs >= 600));
+  assert.ok(record.auditoriaCompras.slice(1).every(a => a.intervaloMs >= 500));
   assert.equal(status, 'Limite atingido');
   assert.equal(cfg.rifa.ultimaEdicao, 'teste', 'Compra enviada consome edição e bloqueia repetição ambígua');
 }
@@ -121,7 +118,8 @@ function scheduling() {
   context.watch({}); assert.equal(starts, 1, 'Não reiniciar compra já iniciada');
   delete cfg.rifa.ultimaEdicao;
   context.premioMarcadoRifa = () => false;
-  context.watch({}); assert.equal(starts, 1, 'Respeitar prêmio desmarcado'); assert.equal(status, 'Ignorada');
+  context.tentativaEntradaRifa.depois = 0;
+  context.watch({}); assert.equal(starts, 2, 'v3.20: ida obrigatória mesmo com prêmio desmarcado; a compra é que filtra');
 }
 
 function exclusiveWatch() {

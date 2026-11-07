@@ -53,7 +53,7 @@ async function scenario(mode) {
     registrarMotivoRifa: () => record,
     atualizarHistoricoRifa: () => {},
     rifaEsgotada: () => false, rifaStatus: (x) => { status = x; },
-    gravarJson: () => {}, salvarCfg: () => {}, esperar: async () => {},
+    gravarJson: () => {}, salvarCfg: () => {}, esperar: async () => { if (mode === 'delayed' && clicks === 1 && ++waits === 50) { balance -= 500_000; numbers++; } },
     esperarAte: async fn => {
       waits++;
       if (mode === 'delayed' && waits === 2) { balance -= 500_000; numbers++; }
