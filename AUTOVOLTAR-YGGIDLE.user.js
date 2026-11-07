@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.21
+// @version      3.22
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.21'); } catch { return '3.21'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.22'); } catch { return '3.22'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -4616,6 +4616,32 @@
     });
     return achou;
   };
+  // v3.22: o NPC YggIdle Bet agora pergunta "Qual máquina você quer usar?" e
+  // lista cartões (Recicladora de Cartas, Rifa YggIdle, Escambo) com título e
+  // descrição. Acha o título "Rifa YggIdle" e clica no cartão que o contém.
+  const opcaoRifaNoMenu = (w) => {
+    const antigo = botaoPorTexto(w.document,t => /^Rifa Yggidle$/i.test(t));
+    if (antigo) return antigo;
+    const titulos = [...w.document.querySelectorAll('button,[role="button"],a,li,div,span,strong,b,p,h3,h4')]
+      .filter(el => visivel(el) && normalizar(textoDe(el)) === 'rifa yggidle' &&
+        ![...el.children].some(c => normalizar(textoDe(c)) === 'rifa yggidle'));
+    for (const titulo of titulos) {
+      let p = titulo;
+      for (let i = 0; p && i < 5; i++, p = p.parentElement) {
+        const t = p.innerText || '';
+        if (/seus n[uú]meros nesta edi[cç][aã]o/i.test(t)) break; // já é a janela da rifa
+        if (p.matches?.('button,[role="button"],a,li') || /sorteio a cada|n[uú]mero a/i.test(t)) {
+          const clicavel = p.closest?.('button,[role="button"],a,li');
+          if (clicavel) return clicavel;
+          // sobe até o cartão inteiro, sem englobar as outras máquinas
+          while (p.parentElement && !/recicladora|escambo|qual m[aá]quina/i.test(p.parentElement.innerText || '')) p = p.parentElement;
+          return p;
+        }
+      }
+      return titulo;
+    }
+    return null;
+  };
   const abrirRifaNoNpc = async (w) => {
     if (janelaRifa(w)) return true;
     if (posicao(w)?.mapa !== 'prontera') return false;
@@ -4623,7 +4649,7 @@
       const npc = await acharNpcRifa(w);
       if (!npc) { await esperar(700); continue; }
       try { npc.onMouseDown?.(); } catch {}
-      const opcao = await esperarAte(() => botaoPorTexto(w.document,t => /^Rifa Yggidle$/i.test(t)),2500);
+      const opcao = await esperarAte(() => opcaoRifaNoMenu(w),2500);
       if (opcao) clicarControleRifa(opcao);
       if (await esperarAte(() => janelaRifa(w),3500)) return true;
     }
