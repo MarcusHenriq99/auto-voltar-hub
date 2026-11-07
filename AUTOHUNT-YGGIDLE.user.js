@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.70
-// @description  Complementa o autopilot do jogo: quando ele fica sem alvo, fixa o monstro visivel mais proximo ou anda explorando o mapa ate aparecer um. v1.54: clique completo no canvas e nos paineis.
+// @version      1.71
+// @description  Complementa o Autopilot: adquire alvos próximos sem esperar o primeiro golpe, retoma perseguições paradas e explora pelo motor do jogo, preservando as regras de teleporte.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
 // @noframes
@@ -1275,6 +1275,66 @@
     return true;
   };
   let cheffeniaVistaParaRetorno = false;
+  const perseguicoesEspeciais = new Map();
+  const reforcarAlvoParado = (w,e,mob,agora) => {
+    const p=posicao(e);
+    if (!p || temJanelaAberta(w) || pausadoPelaRifa()) return;
+    const chave=p.mapa+':'+mob.gid, celula=p.x+','+p.y;
+    let c=perseguicoesEspeciais.get(chave);
+    if (!c) { if (perseguicoesEspeciais.size>60) perseguicoesEspeciais.clear(); perseguicoesEspeciais.set(chave,{celula,em:agora}); return; }
+    let conjurando=false;
+    try { const cast=w.__fznEu?.()?.cast; conjurando=Boolean(cast && cast.delay>0 && agora<cast.tick+cast.delay+300); } catch {}
+    if (c.celula!==celula || conjurando || (Number(meuAlvoGid)===Number(mob.gid) && agora-meuGolpeEm<LUTA_MS)) { c.celula=celula;c.em=agora;return; }
+    if (agora-c.em<1500) return;
+    c.em=agora;
+    try { if (e.setAutopilotPinnedTarget(Number(mob.gid))!==0) log('retomando perseguição de ' + mob.name + ': sem movimento/golpe em 1,5 s'); } catch {}
+  };
+  const tentarAlvoFarm = (e, vivos, agora, ocioso) => {
+    if (fixado && agora - fixado.em >= FIXAR_ESPERA_MS) {
+      evitar.set(fixado.gid, agora + FIXADO_EVITAR_MS);
+      log('alvo ' + fixado.nome + ' sem movimento/golpe; liberando para tentar outro');
+      fixado = null;
+      if (pinoGid) { pinoGid = 0; try { e.setAutopilotPinnedTarget(0); } catch {} }
+    }
+    if (fixado || ocioso < OCIOSO_FIXAR_MS || (golpesMeus > 0 && ocioso >= OCIOSO_ASA_MS)) return false;
+    const mob = vivos.find(m => !evitar.has(m.gid) && Number(m.distance) <= FARM_LONGE);
+    if (!mob) return false;
+    try {
+      const comando = e.setAutopilotPinnedTarget(Number(mob.gid));
+      if (comando === 0) return false; // sessão ainda não aceita comandos
+      pinoGid = Number(mob.gid); fixado = { gid: pinoGid, nome: mob.name, em: agora };
+      log('buscando ' + mob.name + ' a ' + mob.distance + ': alvo enviado ao Autopilot');
+      return true;
+    } catch (err) { log('erro ao fixar: ' + String(err).slice(0,80)); return false; }
+  };
+  const explorarNoMotor = async (w, e, agora) => {
+    if (ocupado || !cfg.ligado || pausadoPelaRifa() || temJanelaAberta(w) || agora - ultimoPasso < PASSO_EXPLORAR_MS) return false;
+    const pos = posicao(e);
+    if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y) || CIDADES_RE.test(pos.mapa)) return false;
+    ocupado = true; ultimoPasso = agora;
+    try {
+      if (!w.__fznHuntCaminhada || w.__fznHuntCaminhada.erro) {
+        w.__fznHuntCaminhada = { carregando: true };
+        const script = w.document.createElement('script'); script.type = 'module';
+        script.textContent = "Promise.all([import('Network/NetworkManager.js'),import('Network/PacketStructure.js'),import('Network/PacketVerManager.js')]).then(([n,p,v])=>{window.__fznHuntCaminhada={andar:(x,y)=>{if(!Number.isInteger(x)||!Number.isInteger(y)||x<0||y<0||x>1023||y>1023)return false;const C=v.default.value>=20180307?p.default.CZ.REQUEST_MOVE2:p.default.CZ.REQUEST_MOVE;if(typeof C!=='function')return false;const pkt=new C();pkt.dest[0]=x;pkt.dest[1]=y;n.default.sendPacket(pkt);return true;}};}).catch(e=>{window.__fznHuntCaminhada={erro:String(e)};});";
+        w.document.head.appendChild(script);
+      }
+      for (let i=0;i<30 && w.__fznHuntCaminhada?.carregando;i++) await esperar(100);
+      if (!cfg.ligado || pausadoPelaRifa() || temJanelaAberta(w) || posicao(e)?.mapa !== pos.mapa) return false;
+      if (typeof w.__fznHuntCaminhada?.andar !== 'function') return false;
+      if (posAntesDoPasso && pos.x === posAntesDoPasso.x && pos.y === posAntesDoPasso.y) {
+        direcao += Math.PI/2 + Math.random()*Math.PI/2;
+        log('exploração sem deslocamento; mudando de direção');
+      } else direcao += (Math.random()-0.5)*0.6;
+      const x=Math.max(0,Math.min(1023,Math.round(pos.x+Math.cos(direcao)*9)));
+      const y=Math.max(0,Math.min(1023,Math.round(pos.y+Math.sin(direcao)*9)));
+      if (x===pos.x && y===pos.y) return false;
+      if (!w.__fznHuntCaminhada.andar(x,y)) return false;
+      posAntesDoPasso = pos; euDesliguei = Date.now();
+      log('busca no mapa: caminhada solicitada ' + pos.x + ',' + pos.y + ' → ' + x + ',' + y);
+      return true;
+    } finally { ocupado = false; }
+  };
   const ciclo = async () => {
     if (pausadoPelaRifa()) return;
     if (!cfg.ligado || (ocupado && !cfg.soMvp)) return;
@@ -1326,7 +1386,7 @@
       const ev = radarEv.filter((m) => normN(m?.name) === EVENTO_NOME).sort((a, b) => (a.distance || 0) - (b.distance || 0))[0];
       if (ev) {
         semAlvoDesde = 0; radarVazioDesde = 0; naoMvpDesde = 0;
-        if (ap.targetGid === ev.gid) return;
+        if (ap.targetGid === ev.gid) { reforcarAlvoParado(w,e,ev,agora); return; }
         if (eventoFixado !== ev.gid || agora - eventoFixadoEm > 500) {
           try { e.setAutopilotPinnedTarget(ev.gid); } catch {}
           if (eventoFixado !== ev.gid) log('evento: alvo ' + ev.name + ' a ' + ev.distance);
@@ -1347,7 +1407,7 @@
       if (mvp) {
         mvpUltimoGid = Number(mvp.gid) || 0; mvpVistoEm = agora;
         semAlvoDesde = 0; radarVazioDesde = 0; naoMvpDesde = 0;
-        if (ap.targetGid === mvp.gid) return;
+        if (ap.targetGid === mvp.gid) { reforcarAlvoParado(w,e,mvp,agora); return; }
         if (mvpFixado !== mvp.gid || agora - mvpFixadoEm > 500) {
           try { e.setAutopilotPinnedTarget(mvp.gid); } catch {}
           if (mvpFixado !== mvp.gid) log('so MVP: alvo ' + mvp.name + ' a ' + mvp.distance);
@@ -1393,7 +1453,8 @@
     const ign = ignorados(ap);
     let radar = [];
     try { radar = e.getAutopilotRadarSnapshot()?.mobs || []; } catch {}
-    const vivos = radar.filter((m) => !ign.has(m.mobId));
+    const vivos = radar.filter((m) => Number(m.gid) > 0 && !ign.has(m.mobId) && (!cfg.soMvp || ehMvp(m)) && (!ehMvp(m) || !mvpTomado(m)))
+      .sort((a,b) => (Number.isFinite(Number(a.distance)) ? Number(a.distance) : Infinity) - (Number.isFinite(Number(b.distance)) ? Number(b.distance) : Infinity));
     if (cfg.bio4 && radar.some((m) => ehBio4(m) && !bio4Evitar.has(m.gid))) { ociosoDesde = 0; radarVazioDesde = 0; return; }
     try {
       const eu = w.__fznEu?.();
@@ -1446,12 +1507,17 @@
     } else {
       radarVazioDesde = 0;
       exploraVazioDesde = 0;
-      if (lutando || andando) { ociosoDesde = 0; return; }
+      if (lutando || andando) { ociosoDesde = 0; if (fixado) fixado.em = agora; return; }
       if (!ociosoDesde) { ociosoDesde = agora; return; }
       const ocioso = agora - ociosoDesde;
       const perto = Number(vivos[0].distance) || 0;
+      // Não esperar o primeiro golpe para tentar iniciar a primeira luta.
+      // Janela, movimento, conjuração, pacote e modos especiais já foram tratados.
+      const pacoteInsuficiente = cfg.pacote > 0 && vivos.filter(m => Number(m.distance) >= 0 && Number(m.distance) <= PACOTE_RAIO).length < cfg.pacote;
+      if (!pacoteInsuficiente && tentarAlvoFarm(e, vivos, agora, ocioso)) return;
       if (!golpesMeus) {
         if (!golpesAvisado && agora - inicioFarm > 60000) { golpesAvisado = true; log('aviso: nenhum golpe meu visto em 60 s; gancho de golpes mudo -- so asa de radar vazio'); }
+        if (!fixado && !vivos.some(m => !evitar.has(m.gid) && Number(m.distance) <= FARM_LONGE)) await explorarNoMotor(w,e,agora);
         return;
       }
       if (perto > FARM_LONGE) {
@@ -1460,54 +1526,22 @@
       }
       if (ocioso >= OCIOSO_ASA_MS) {
         if (usarAsa(w, e, agora) && ultimaAsaEm >= agora) { log('parado ' + ocioso + ' ms sem bater com ' + vivos[0].name + ' a ' + perto + ' -> asa' + retrato(w)); ociosoDesde = 0; fixado = null; if (pinoGid) { pinoGid = 0; try { e.setAutopilotPinnedTarget(0); } catch {} } }
+        else if (!fixado) await explorarNoMotor(w,e,agora);
         return;
-      }
-      if (fixado && agora - fixado.em >= FIXAR_ESPERA_MS) {
-        evitar.set(fixado.gid, agora + FIXADO_EVITAR_MS);
-        log('fixado ' + fixado.nome + ' sem golpe em 1,5 s; evitando por 15 s');
-        fixado = null;
-      }
-      if (!fixado && ocioso >= OCIOSO_FIXAR_MS) {
-        const mob = vivos.find((m) => !evitar.has(m.gid) && Number(m.distance) <= FARM_LONGE);
-        if (mob) {
-          try { e.setAutopilotPinnedTarget(mob.gid); pinoGid = mob.gid; fixado = { gid: mob.gid, nome: mob.name, em: agora }; log('parado ' + ocioso + ' ms sem bater: fixando o mais perto, ' + mob.name + ' a ' + mob.distance); } catch (err) { log('erro ao fixar: ' + String(err).slice(0, 80)); }
-        }
       }
       return;
     }
     if (!exploraVazioDesde) exploraVazioDesde = agora;
     if (agora - exploraVazioDesde < 2000) return;
     if (agora - ultimoPasso < PASSO_EXPLORAR_MS) return;
-    const pos = posicao(e);
-    if (posAntesDoPasso && pos && pos.x === posAntesDoPasso.x && pos.y === posAntesDoPasso.y) {
-      direcao += Math.PI / 2 + Math.random() * Math.PI / 2;
-      log('nao andou; mudando de direcao');
-    } else {
-      direcao += (Math.random() - 0.5) * 0.6;
-    }
-    const canvas = canvasDoJogo(w);
-    if (!canvas) return;
-    const r = canvas.getBoundingClientRect();
-    const raio = Math.min(r.width, r.height) * RAIO_EXPLORAR;
-    const x = Math.round(r.left + r.width / 2 + Math.cos(direcao) * raio);
-    const y = Math.round(r.top + r.height / 2 + Math.sin(direcao) * raio);
-    ocupado = true;
-    try {
-      posAntesDoPasso = pos;
-      ultimoPasso = agora;
-      euDesliguei = Date.now();
-      await clicarNoCanvas(w, canvas, x, y);
-      log(`radar vazio: explorando (${pos ? `${pos.x},${pos.y}` : '?'})`);
-    } finally {
-      ocupado = false;
-    }
+    await explorarNoMotor(w,e,agora);
   };
 
   let painel = null, botaoAsa = null;
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const cartao = fznCartaoYgg('Auto-hunt', 'v1.70', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
+      const cartao = fznCartaoYgg('Auto-hunt', 'v1.71', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
         cfg.ligado = !cfg.ligado;
@@ -1609,4 +1643,5 @@
   setInterval(() => { ciclo().catch((err) => log(`erro: ${String(err).slice(0, 100)}`)); }, 100);
   } catch (err) { mostrarErro('inicio', err); }
 })();
+
 

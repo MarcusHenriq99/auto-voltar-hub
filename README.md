@@ -7,10 +7,14 @@ Script de automação do Yggidle usado no FZN Idle Hub. Esta pasta contém a ver
 - `AUTOVOLTAR-YGGIDLE.user.js`: script principal, versão 3.18.
 - `AUTOLOGIN-YGGIDLE.user.js`: login automático e recuperação de conexão, versão 1.26.
 - `ABATES-YGGIDLE.user.js`: contador independente de abates por dia, monstro e hora.
-- `AUTOHUNT-YGGIDLE.user.js`: complemento do Autopilot, versão 1.70; asa da Cheffenia opcional, proteção contra teleporte durante combate com MVP, retorno pelo Arauto após mudança real para Prontera e retomada da caça no Covil.
+- `AUTOHUNT-YGGIDLE.user.js`: complemento do Autopilot, versão 1.71; aquisição do alvo próximo antes do primeiro golpe, retomada de perseguição parada e caminhada pelo motor, com as opções de teleporte e conteúdo preservadas.
 - `tests/`: verificações locais dos fluxos de aviso diário, Loja de Cash, evento, mochila e limites.
 
 ## Comportamento principal
+
+Auto Hunt 1.71: remove a dependência de um golpe já observado para iniciar a primeira luta. Tenta o monstro elegível mais próximo após 300 ms de ociosidade, sem inundar o servidor de comandos; uma tentativa sem movimento/golpe é liberada após 1,5 s para tentar outro alvo. Deslocamento real e combate protegem a perseguição em curso. MVP e alvo do evento já selecionados têm o foco reenviado quando ficam de fato parados, sem golpe/conjuração. Sem asa disponível ou após tentativas bloqueadas, explora com `REQUEST_MOVE`, por células do mapa, sem depender de canvas/foco. As janelas, rifa, NOKS, regras Ignorar/Fugir, Somente MVP, Bio 4, pacote mínimo e critérios/intervalos de teleporte continuam sendo respeitados. O radar do cliente já era ordenado; a causa principal era o bloqueio anterior ao primeiro golpe e o fluxo de alvo fixado parado.
+
+Verificação local: `test-hunt-acquire-v171.cjs`, `test-mvp-combat.cjs`, `test-rifa-hunt-pause-v167.cjs` e `test-stay-dead-content-v311.cjs`. O antigo `test-hunt-revive-v166.cjs` falha também no arquivo 1.70, antes desta alteração; o controle atual de renascimento é coberto pelo teste v3.11. Validação ao vivo da aquisição e caminhada da v1.71 ainda pendente.
 
 A v3.18 corrige também a ocupação real: conta a união por índice da mochila e `equipment.all`, como a HUD do jogo. Pede os dois snapshots com a mochila fechada; 82 itens na mochila mais 18 equipados agora são 100/100, sem duplicar itens presentes nas duas listas.
 
