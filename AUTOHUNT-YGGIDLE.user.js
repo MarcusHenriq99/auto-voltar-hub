@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.72
+// @version      1.73
 // @description  Complementa o Autopilot: adquire alvos próximos sem esperar o primeiro golpe, retoma perseguições paradas e explora pelo motor do jogo, preservando as regras de teleporte.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -872,7 +872,10 @@
     };
     w.__fznMvpCb = (dono, meuAid, meuGid) => { try { if (dono && (dono === meuAid || dono === meuGid)) contarMvp(); } catch {} };
     w.__fznSkillCb = (skid, origem, alvo, eu, fase) => {
-      if (eu && origem === eu) meuGolpeEm = Date.now();
+      if (eu && origem === eu && fase === 'golpe' && Number(alvo) > 0 && Number(alvo) !== Number(eu)) {
+        meuGolpeEm = Date.now();
+        meuAlvoGid = Number(alvo);
+      }
       if (eu && alvo === eu && origem !== eu) diag('skill', skid, 'skill ' + skid + ' em mim (' + fase + ') de ' + origem);
       else if (skid === 84) diag('skill84', origem, 'skill 84 (' + fase + ') alvo ' + alvo + ' eu ' + eu);
       if (!(skid in SKILLS_FUGIR_BIO4) || !eu || alvo !== eu) return;
@@ -1011,12 +1014,11 @@
   const PACOTE_MS = 500;
   const PACOTES = [0, 2, 3, 4, 5, 6];
   let pacoteFracoDesde = 0;
-  let conjurandoAgora = false;
   const ANDANDO_MS = 500;
   const OCIOSO_FIXAR_MS = 300;
   const FIXAR_ESPERA_MS = 1500;
   const OCIOSO_ASA_MS = 3000;
-  let acaoLutaDesde = 0;
+  let primeiroCastSemProgresso = null;
   const trilha = [];
   let ultPosTrilha = null;
   let trilhaW = null;
@@ -1298,12 +1300,13 @@
       if (pinoGid) { pinoGid = 0; try { e.setAutopilotPinnedTarget(0); } catch {} }
     }
     if (fixado || ocioso < OCIOSO_FIXAR_MS || (golpesMeus > 0 && ocioso >= OCIOSO_ASA_MS)) return false;
-    const mob = vivos.find(m => !evitar.has(m.gid) && Number(m.distance) <= FARM_LONGE);
+    const mob = vivos.find(m => !evitar.has(Number(m.gid)) && Number(m.distance) <= FARM_LONGE);
     if (!mob) return false;
     try {
       const comando = e.setAutopilotPinnedTarget(Number(mob.gid));
       if (comando === 0) return false; // sessão ainda não aceita comandos
       pinoGid = Number(mob.gid); fixado = { gid: pinoGid, nome: mob.name, em: agora };
+      primeiroCastSemProgresso = null;
       log('buscando ' + mob.name + ' a ' + mob.distance + ': alvo enviado ao Autopilot');
       return true;
     } catch (err) { log('erro ao fixar: ' + String(err).slice(0,80)); return false; }
@@ -1456,22 +1459,18 @@
     try { radar = e.getAutopilotRadarSnapshot()?.mobs || []; } catch {}
     const vivos = radar.filter((m) => Number(m.gid) > 0 && !ign.has(m.mobId) && (!modoMvpAtivo(w,e) || ehMvp(m)) && (!ehMvp(m) || !mvpTomado(m)))
       .sort((a,b) => (Number.isFinite(Number(a.distance)) ? Number(a.distance) : Infinity) - (Number.isFinite(Number(b.distance)) ? Number(b.distance) : Infinity));
-    if (cfg.bio4 && radar.some((m) => ehBio4(m) && !bio4Evitar.has(m.gid))) { ociosoDesde = 0; radarVazioDesde = 0; return; }
-    try {
-      const eu = w.__fznEu?.();
-      if (eu) {
-        const c = eu.cast;
-        const conjurando = c && c.delay > 0 && agora < c.tick + c.delay + 300;
-        conjurandoAgora = Boolean(conjurando);
-        let nomeAcao = '';
-        if (eu.ACTION) for (const k in eu.ACTION) if (eu.ACTION[k] === eu.action) { nomeAcao = k; break; }
-        const emAcao = /^(ATTACK[0-9]?|SKILL)$/.test(nomeAcao);
-        if (emAcao) { if (!acaoLutaDesde) acaoLutaDesde = agora; } else acaoLutaDesde = 0;
-        if (conjurando || (emAcao && agora - acaoLutaDesde < 8000)) meuGolpeEm = agora;
-      }
-    } catch {}
     const lutando = agora - meuGolpeEm < LUTA_MS;
     const andando = agora - ultimoMovEm < ANDANDO_MS;
+    if (lutando || andando) primeiroCastSemProgresso = null;
+    let conjurando = false;
+    try {
+      const cast = w.__fznEu?.()?.cast;
+      if (cast && cast.delay > 0 && agora < cast.tick + cast.delay + 300) {
+        // Protege a primeira conjuração, sem renovar a espera em cada tentativa.
+        if (primeiroCastSemProgresso === null) primeiroCastSemProgresso = cast.tick;
+        conjurando = primeiroCastSemProgresso === cast.tick;
+      }
+    } catch {}
     if (pinoGid && !radar.some((m) => m.gid === pinoGid)) { pinoGid = 0; try { e.setAutopilotPinnedTarget(0); } catch {} }
     if (fixado && fixado.gid !== pinoGid) fixado = null;
     if (fixado && meuAlvoGid === fixado.gid && lutando) fixado = null;
@@ -1494,7 +1493,7 @@
       if (andando) { radarVazioDesde = 0; return; }
       if (!radarVazioDesde) radarVazioDesde = agora;
       const vazioMs = agora - radarVazioDesde;
-      if (lutando) return;
+      if (lutando || conjurando) return;
       if (vazioMs >= ASA_SEM_MOB_MS && usarAsa(w, e, agora)) {
         if (ultimaAsaEm >= agora) {
           const ignorRadar = radar.filter((m) => ign.has(m.mobId)).slice(0, 4).map((m) => m.name + ' a ' + m.distance).join(', ');
@@ -1508,17 +1507,26 @@
     } else {
       radarVazioDesde = 0;
       exploraVazioDesde = 0;
-      if (lutando || andando) { ociosoDesde = 0; if (fixado) fixado.em = agora; return; }
+      if (lutando || andando || conjurando) { ociosoDesde = 0; if (fixado) fixado.em = agora; return; }
       if (!ociosoDesde) { ociosoDesde = agora; return; }
       const ocioso = agora - ociosoDesde;
       const perto = Number(vivos[0].distance) || 0;
       // Não esperar o primeiro golpe para tentar iniciar a primeira luta.
       // Janela, movimento, conjuração, pacote e modos especiais já foram tratados.
       const pacoteInsuficiente = cfg.pacote > 0 && vivos.filter(m => Number(m.distance) >= 0 && Number(m.distance) <= PACOTE_RAIO).length < cfg.pacote;
-      if (!pacoteInsuficiente && tentarAlvoFarm(e, vivos, agora, ocioso)) return;
+      const alvoNativo = Number(ap.targetGid);
+      const travado = !fixado && ocioso >= FIXAR_ESPERA_MS &&
+        vivos.find(m => Number(m.gid) === alvoNativo && !evitar.has(alvoNativo));
+      if (travado && !pacoteInsuficiente) {
+        evitar.set(alvoNativo, agora + FIXADO_EVITAR_MS);
+        if (pinoGid === alvoNativo) { pinoGid = 0; try { e.setAutopilotPinnedTarget(0); } catch {} }
+        log('alvo ' + travado.name + ' sem deslocamento ou golpe; procurando outra rota ou alvo');
+        ociosoDesde = agora - OCIOSO_FIXAR_MS;
+      }
+      if (!pacoteInsuficiente && tentarAlvoFarm(e, vivos, agora, agora - ociosoDesde)) return;
       if (!golpesMeus) {
         if (!golpesAvisado && agora - inicioFarm > 60000) { golpesAvisado = true; log('aviso: nenhum golpe meu visto em 60 s; gancho de golpes mudo -- so asa de radar vazio'); }
-        if (!fixado && !vivos.some(m => !evitar.has(m.gid) && Number(m.distance) <= FARM_LONGE)) await explorarNoMotor(w,e,agora);
+        if (!fixado && !vivos.some(m => !evitar.has(Number(m.gid)) && Number(m.distance) <= FARM_LONGE)) await explorarNoMotor(w,e,agora);
         return;
       }
       if (perto > FARM_LONGE) {
@@ -1542,7 +1550,7 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const cartao = fznCartaoYgg('Auto-hunt', 'v1.72', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
+      const cartao = fznCartaoYgg('Auto-hunt', 'v1.73', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
         cfg.ligado = !cfg.ligado;
