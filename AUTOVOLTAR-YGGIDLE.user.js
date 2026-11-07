@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.22
+// @version      3.23
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.22'); } catch { return '3.22'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.23'); } catch { return '3.23'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -4943,6 +4943,11 @@
     // filtrando premio marcado e gasto maximo). Se outra rotina estiver no meio,
     // a ida fica pendente e acontece assim que ela terminar.
     const agoraRifa = Date.now();
+    // v3.23: a ida obrigatoria vale so para premio MARCADO. Premio anunciado e
+    // desmarcado: fica no farm. Sem anuncio ainda: vai e confere no NPC.
+    if (rifaEstado.premio && !premioMarcadoRifa(rifaEstado.premio)) {
+      registrar('Ignorada','prêmio não marcado: '+rifaEstado.premio); return;
+    }
     if (agoraRifa < edicao.inicio - 60000) {
       registrar('Aguardando último minuto',rifaEstado.premio || 'prêmio ainda não identificado'); return;
     }

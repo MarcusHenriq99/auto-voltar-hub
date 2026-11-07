@@ -38,18 +38,18 @@ api.watch({});
 assert.equal(cfg.rifa.historico[0].premio, prize, 'Completar prêmio quando anúncio chegar');
 assert.ok(writes > firstWrites, 'Persistir prêmio mesmo quando motivo não muda');
 cfg.rifa.ligado = true;
-// v3.20: com a rifa marcada a ida e obrigatoria 1 min antes; premio nao
-// marcado, lista vazia ou orcamento baixo nao impedem mais a ida.
+// v3.23: premio anunciado e desmarcado fica no farm; sem anuncio, a ida e
+// obrigatoria 1 min antes (lista vazia ou orcamento nao impedem a ida).
 api.watch({});
-assert.match(cfg.rifa.historico[0].resultado, /Aguardando último minuto/);
+assert.match(cfg.rifa.historico[0].resultado, /Ignorada.*prêmio não marcado/);
 assert.equal(starts, 0);
 assert.match(api.text(), /desligada/);
-cfg.rifa.premios = []; cfg.rifa.limiteGasto = 0;
+prize = ''; vm.runInContext("rifaEstado.premio = ''", context); cfg.rifa.premios = []; cfg.rifa.limiteGasto = 0;
 api.watch({}); assert.match(cfg.rifa.historico[0].resultado, /Aguardando último minuto/);
 edition.abriu = true; now = edition.inicio; context.ocupado = true;
 api.watch({}); assert.match(cfg.rifa.historico[0].resultado, /Aguardando rotina/);
 assert.equal(starts, 0);
-context.ocupado = false; prize = 'Fúria';
+context.ocupado = false; prize = 'Fúria'; cfg.rifa.premios = ['Fúria'];
 now = edition.inicio + 5 * 60000;
 api.watch({}); assert.equal(starts, 1, 'Ida pendente por rotina acontece assim que ela termina, mesmo depois do minuto');
 const record = cfg.rifa.historico[0];

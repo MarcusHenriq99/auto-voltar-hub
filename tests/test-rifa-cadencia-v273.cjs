@@ -119,7 +119,7 @@ function scheduling() {
   delete cfg.rifa.ultimaEdicao;
   context.premioMarcadoRifa = () => false;
   context.tentativaEntradaRifa.depois = 0;
-  context.watch({}); assert.equal(starts, 2, 'v3.20: ida obrigatória mesmo com prêmio desmarcado; a compra é que filtra');
+  context.watch({}); assert.equal(starts, 1, 'v3.23: prêmio anunciado e desmarcado não sai do farm'); assert.equal(status, 'Ignorada');
 }
 
 function exclusiveWatch() {
