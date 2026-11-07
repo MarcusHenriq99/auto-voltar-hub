@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.73
+// @version      1.74
 // @description  Complementa o Autopilot: adquire alvos próximos sem esperar o primeiro golpe, retoma perseguições paradas e explora pelo motor do jogo, preservando as regras de teleporte.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -588,6 +588,8 @@
   const semAc = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   const tipoAsa = (it) => {
     const id = Number(it.itemId), n = semAc(it.name);
+    // v1.74: caixa/pacote que CONTEM asas nao e asa ("Caixa de Asa de Mosca Infinita").
+    if (!ASA_IDS.includes(id) && /\b(caixa|pacote|bau|box|kit|cupom)\b/.test(n)) return null;
     if (id === ASA_GIGANTE_INFINITA || /asas? de mosca gigante/.test(n)) return 'gigante';
     if (id === ASA_INFINITA || /asas? de mosca infinita/.test(n)) return 'infinita';
     if (id === 601 || /^asas? de mosca$/.test(n.trim()) || /fly wing/.test(n)) return 'comum';
