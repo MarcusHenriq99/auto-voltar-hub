@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.18
+// @version      3.19
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.18'); } catch { return '3.18'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.19'); } catch { return '3.19'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -4423,6 +4423,18 @@
     ultimaConferenciaResultadoRifa = Date.now();
     const texto = w.document.body.innerText || '';
     const anuncios = [...texto.matchAll(/\[Rifa YggIdle\]\s*([^\n]+?)\s+tirou o n[uú]mero da sorte e levou\s+([^\n]+?)\s+x\d+[!.]?/gi)];
+    // v3.19: um vencedor NOVO anunciado durante a edicao a encerra de vez
+    // (gravado em cfg, vale tambem depois de recarregar a conta).
+    const edicaoAtual = edicaoRifaAtual();
+    if (edicaoAtual) {
+      if (rifaEstado.baseAnuncios?.id !== edicaoAtual.id)
+        rifaEstado.baseAnuncios = { id: edicaoAtual.id, n: anuncios.length };
+      else if (anuncios.length > rifaEstado.baseAnuncios.n && cfg.rifa.ultimaEdicao !== edicaoAtual.id) {
+        rifaEstado.baseAnuncios.n = anuncios.length;
+        cfg.rifa.ultimaEdicao = edicaoAtual.id; salvarCfg();
+        log('Rifa: vencedor anunciado; edição ' + edicaoAtual.id + ' marcada como encerrada');
+      }
+    }
     if (!anuncios.length) return;
     const registro = cfg.rifa.historico.find(r => r.confirmados > 0 &&
       Date.now() >= r.inicio && Date.now() <= r.inicio + 95*60000 &&
@@ -4912,6 +4924,9 @@
     }
     if (rifaEstado.premio && !premioMarcadoRifa(rifaEstado.premio)) {
       registrar('Ignorada','prêmio não marcado: '+rifaEstado.premio+'; marque no painel para disputar esta edição'); return;
+    }
+    if (Date.now() > edicao.inicio + 60000) {
+      registrar('Ignorada','fora do horário: só sai do farm 1 minuto antes da rifa'); return;
     }
     if (!edicao.abriu && Date.now() < edicao.inicio - 60000) {
       registrar('Aguardando último minuto',rifaEstado.premio || 'prêmio ainda não identificado');
