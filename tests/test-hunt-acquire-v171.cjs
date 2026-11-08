@@ -40,7 +40,7 @@ function setup(options={}){
  t=setup();const boss={gid:999,name:'MVP'};t.ctx.special(t.ctx.w,t.ctx.e,boss,100000);t.ctx.special(t.ctx.w,t.ctx.e,boss,101600);assert.deepEqual(t.pins,[999],'Already selected special target is retried if genuinely idle');
  t.ctx.meuAlvoGid=999;t.ctx.meuGolpeEm=102000;t.ctx.special(t.ctx.w,t.ctx.e,boss,102100);assert.deepEqual(t.pins,[999],'Do not re-pin a boss in active combat');
  let used=0,inCheff=false;const wingCtx={cfg:{asa:'auto',cheffeniaTeleporte:true},Date:{now:()=>100000},asa:{index:2,count:10,lidaEm:100000,pedidaEm:100000,aguardando:false},
-  pausadoPelaRifa:()=>false,sessaoCheffenia:()=>inCheff,modoMvpAtivo:()=>inCheff,mvpEmCombate:()=>true,snapshotAp:()=>({}),ganchoMochila(){},asaLiberada:()=>true,posicao:()=>({x:100,y:100}),
+  pausadoPelaRifa:()=>false,asaBloqueadaPorMvp:()=>false,sessaoCheffenia:()=>inCheff,modoMvpAtivo:()=>inCheff,mvpEmCombate:()=>true,snapshotAp:()=>({}),ganchoMochila(){},asaLiberada:()=>true,posicao:()=>({x:100,y:100}),
   ultimaAsaEm:0,radarVazioDesde:0,setTimeout(){},log(){}};
  vm.createContext(wingCtx);vm.runInContext(part('  const usarAsa =','  setInterval(() => {\n    try { if (ocupado)')+'\nglobalThis.use=usarAsa;',wingCtx);
  assert.equal(wingCtx.use({}, {useInventoryItem(){used++;}},100000),true,'Saved Cheffenia mode does not suppress normal farm teleport');

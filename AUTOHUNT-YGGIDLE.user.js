@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.84
+// @version      1.85
 // @description  Complementa o Autopilot: adquire alvos próximos sem esperar o primeiro golpe, retoma perseguições paradas e explora pelo motor do jogo, preservando as regras de teleporte.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -475,7 +475,7 @@
     if (Number(meuAlvoGid) === Number(m.gid) && agora - meuGolpeEm < 10000) return false;
     if (r.meuPrimeiro && r.meuPrimeiro <= r.outroPrimeiro) return false;
     if (r.grupoPrimeiro && r.grupoPrimeiro <= r.outroPrimeiro) return false;
-    if (!mvpPularAgora) log('so MVP: ' + m.name + ' ja esta apanhando de outro (' + r.quem + ') -> asa');
+    if (!mvpPularAgora) log('so MVP: ' + m.name + ' ja esta apanhando de outro (' + r.quem + ')');
     mvpPularAgora = true;
     if (mvpFixado === m.gid) { mvpFixado = null; try { jogo()?.__elragEngine?.setAutopilotPinnedTarget(0); } catch {} }
     return true;
@@ -634,12 +634,27 @@
     for (const k of Object.keys(original)) { try { g[k] = original[k]; } catch {} }
     ui.updateInventorySnapshot = g;
   };
+  // v1.85: na Chefenia, NUNCA usar asa com MVP configurado no radar (vale para toda asa,
+  // inclusive fugas e MVP ja atacado por outro). O radar pisca: lembra o MVP por 1,5 s.
+  let mvpRadarEm = 0, mvpBloqueioLogEm = 0;
+  const asaBloqueadaPorMvp = (w, e) => {
+    if (!sessaoCheffenia(w, e)) return false;
+    let mobs = [];
+    try { mobs = e.getAutopilotRadarSnapshot()?.mobs || []; } catch {}
+    const mvp = mobs.find((m) => Number(m.gid) > 0 && ehMvp(m));
+    const agora = Date.now();
+    if (mvp) mvpRadarEm = agora;
+    const bloqueada = !!mvp || agora - mvpRadarEm < 1500;
+    if (bloqueada && agora - mvpBloqueioLogEm > 5000) { mvpBloqueioLogEm = agora; log('asa bloqueada: MVP ' + (mvp ? mvp.name + ' a ' + mvp.distance : 'visto ha pouco') + ' no radar'); }
+    return bloqueada;
+  };
   const FUGA_RE = /sem asa de mosca:?\s*n[aã]o consigo fugir/i;
   let fugaEm = 0;
   const fugirComAsa = (w) => {
     if (cfg.asa === 'off') return;
     const e = w.__elragEngine;
     if (sessaoCheffenia(w, e) && cfg.cheffeniaTeleporte !== true) return;
+    if (asaBloqueadaPorMvp(w, e)) return;
     if (mvpEmCombate(snapshotAp(e))) return;
     if (Date.now() - fugaEm < 1500) return;
     let melhor = null, tipoMelhor = null;
@@ -1289,6 +1304,7 @@
   const usarAsa = (w, e, agora) => {
     if (pausadoPelaRifa()) return false;
     if (cfg.asa === 'off' || (sessaoCheffenia(w, e) && cfg.cheffeniaTeleporte !== true)) return false;
+    if (asaBloqueadaPorMvp(w, e)) return false;
     if (modoMvpAtivo(w,e) && mvpEmCombate(snapshotAp(e), agora)) return false;
     ganchoMochila(w);
     if ((asa.index == null || agora - asa.lidaEm > 120000) && agora - asa.pedidaEm > 20000) {
@@ -1662,6 +1678,8 @@
         return;
       }
       if (mvpFixado) { mvpFixado = null; try { e.setAutopilotPinnedTarget(0); } catch {} log('so MVP: MVP saiu do radar'); }
+      // v1.85: MVP ainda no radar (ex.: de outro jogador) reinicia a espera da asa.
+      if (radarMvp.some((m) => Number(m.gid) > 0 && ehMvp(m))) { naoMvpDesde = 0; mvpPularAgora = false; }
       if (asa.aguardando) {
         const pos = posicao(e);
         const mudou = pos && asa.posAntes && (pos.x !== asa.posAntes.x || pos.y !== asa.posAntes.y || pos.mapa !== asa.posAntes.mapa);
@@ -1795,7 +1813,7 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const versao = typeof GM_info === 'undefined' ? '1.84' : (GM_info.script?.version || '1.84');
+      const versao = typeof GM_info === 'undefined' ? '1.85' : (GM_info.script?.version || '1.85');
       const cartao = fznCartaoYgg('Auto-hunt', 'v' + versao, 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
