@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.83
+// @version      1.84
 // @description  Complementa o Autopilot: adquire alvos próximos sem esperar o primeiro golpe, retoma perseguições paradas e explora pelo motor do jogo, preservando as regras de teleporte.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -1034,6 +1034,7 @@
         if (!(c && c.delay > 0 && Date.now() < c.tick + c.delay)) break;
         await esperar(50);
       }
+      if (!cfg.ligado || pausadoPelaRifa()) return;
       const ok = w.__fznAndar?.(dest[0], dest[1]);
       const espera = Number(cfg.kiteEspera) || 1500;
       const fimEm = Date.now() + espera;
@@ -1049,7 +1050,7 @@
       kiteAndando = false;
     }
     for (let i = 0; i < 16; i++) {
-      if (pausadoPelaRifa()) return;
+      if (!cfg.ligado || pausadoPelaRifa()) return;
       let ap = null;
       try { ap = e.getAutopilotSnapshot(); } catch {}
       if (i && ap && !AUTOPILOT_PARADO.has(ap.runtimeState)) return;
@@ -1134,7 +1135,8 @@
       }
       let foi = false;
       for (let tentativa = 0; tentativa < 3 && !foi; tentativa++) {
-        while (!asaLiberada()) await esperar(30);
+        while (cfg.ligado && !pausadoPelaRifa() && !asaLiberada()) await esperar(30);
+        if (!cfg.ligado || pausadoPelaRifa()) return;
         asa.aguardando = false;
         const antes = posicao(e);
         if (!usarAsa(w, e, Date.now()) || ultimaAsaEm < Date.now() - 100) { await esperar(150); continue; }
@@ -1147,14 +1149,14 @@
       log(motivo + ' em ' + nome + ' (' + pos[0] + ',' + pos[1] + '): autopilot parado -> asa ' + (foi ? 'OK' : 'SEM EFEITO') + ' -> religado (' + (Date.now() - t0) + ' ms)');
     } catch (err) { log('Pneuma: erro ' + String(err).slice(0, 60)); }
     finally {
-      try { if (!pausadoPelaRifa()) e.setAutopilotRunning(true); } catch {}
+      try { if (cfg.ligado && !pausadoPelaRifa()) e.setAutopilotRunning(true); } catch {}
       meuAlvoGid = 0;
       pneumaFugindo = false;
     }
     // v1.58: o 1o "ligar" logo apos a asa as vezes nao pega (chegada no mapa); insiste a cada 250 ms por 4 s
     for (let i = 0; i < 16; i++) {
       await esperar(250);
-      if (pausadoPelaRifa()) return;
+      if (!cfg.ligado || pausadoPelaRifa()) return;
       let ap = null;
       try { ap = e.getAutopilotSnapshot(); } catch {}
       if (ap && !AUTOPILOT_PARADO.has(ap.runtimeState)) { if (i) log('Pneuma: autopilot religado na tentativa ' + (i + 1) + ' (' + (Date.now() - t0) + ' ms)'); return; }
@@ -1317,7 +1319,6 @@
     const m = String(mapa || '').toLowerCase();
     return /^lhz_dun04(\.|$)/.test(m) || /chef/.test(m) || /^moro_vol(\.|$)/.test(m) || m.includes('@') || /inv$/.test(m);
   };
-  const foraDaCidade = (mapa) => Boolean(mapa) && !CIDADES_RE.test(mapa);
   const janelaBloqueiaReligar = (w, mapa) => {
     if (!mapaDeRenascer(mapa) && !sessaoCheffenia(w, w.__elragEngine)) return temJanelaAberta(w);
     // Em mapas especiais, o convite "Voltar para ..." pode permanecer
@@ -1325,7 +1326,7 @@
     return personagemMorto(w) || /Bem-vindo aos servicos Kafra/
       .test(w.document.body?.innerText || '');
   };
-  // v1.60: sempre ativo fora da cidade, renascer nos mapas especiais e destravar "ocupado"
+  // Vigia de renascimento e de ocupação, somente com o Auto Hunt ligado.
   let ocupadoDesde = 0, renascerEm = 0, motivoParado = '';
   const motivo = (txt) => { if (txt !== motivoParado) { motivoParado = txt; if (txt) log('parado: ' + txt); } };
   setInterval(() => {
@@ -1335,11 +1336,7 @@
       if (!e) return;
       const mapa = String(posicao(e)?.mapa || '');
       const agora = Date.now();
-      if (pausadoPelaRifa()) return;
-      if (!cfg.ligado && foraDaCidade(mapa)) {
-        cfg.ligado = true; gravarJson(CHAVE_CFG, cfg);
-        log('Hunt estava OFF em ' + mapa + ' -> ligado de novo (so desliga na cidade)');
-      }
+      if (!cfg.ligado || pausadoPelaRifa()) return;
       if (ocupado) {
         if (!ocupadoDesde) ocupadoDesde = agora;
         else if (agora - ocupadoDesde > 30000) { ocupado = false; ocupadoDesde = 0; log('ocupado preso ha 30 s -> liberado'); }
@@ -1352,7 +1349,7 @@
           renascerEm = agora;
           log('Morreu em ' + mapa + ': Renascer agora');
           b.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true, composed: true, view: w }));
-          setTimeout(() => { try { if (!pausadoPelaRifa() && posicao(e)?.mapa === mapa && !personagemMorto(w)) { e.setAutopilotRunning(true); log('Renascer: cacada religada em ' + mapa); } } catch {} }, 1500);
+          setTimeout(() => { try { if (cfg.ligado && !pausadoPelaRifa() && posicao(e)?.mapa === mapa && !personagemMorto(w)) { e.setAutopilotRunning(true); log('Renascer: cacada religada em ' + mapa); } } catch {} }, 1500);
         } else motivo('morto em ' + mapa + ', Renascer agora ainda desabilitado');
       }
     } catch {}
@@ -1430,12 +1427,13 @@
         return;
       }
       if (posicao(e)?.mapa !== 'prontera') { log('Poder Infernal: ponto de salvamento nao e Prontera; retorno automatico interrompido'); recuperacaoCheffPendente = false; return; }
-      if (!await falarArauto(w)) return;
+      if (!await falarArauto(w) || !cfg.ligado || pausadoPelaRifa()) return;
       const entrar = botaoCheff(w, /^Entrar$/i);
       if (!entrar) { log('Cheffenia: botao Entrar nao apareceu'); return; }
       log('Cheffenia: entrando novamente pelo Arauto'); entrar.click();
       const chegou = await esperarCheff(() => mapaCheffenia(posicao(e)?.mapa) ? posicao(e) : null, 20000);
       if (!chegou) { log('Cheffenia: entrada nao confirmada; verificarei novamente'); return; }
+      if (!cfg.ligado || pausadoPelaRifa()) return;
       try { e.setAutopilotRunning(true); } catch {}
       const ligado = await esperarCheff(() => { try { return !AUTOPILOT_PARADO.has(e.getAutopilotSnapshot()?.runtimeState); } catch { return false; } }, 4000);
       log(ligado ? 'Cheffenia: retorno confirmado; Autopilot ligado' : 'Cheffenia: retorno confirmado; Autopilot nao confirmou, repetirei');
@@ -1797,11 +1795,21 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const versao = typeof GM_info === 'undefined' ? '1.83' : (GM_info.script?.version || '1.83');
+      const versao = typeof GM_info === 'undefined' ? '1.84' : (GM_info.script?.version || '1.84');
       const cartao = fznCartaoYgg('Auto-hunt', 'v' + versao, 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
         cfg.ligado = !cfg.ligado;
+        if (!cfg.ligado) {
+          const e = jogo()?.__elragEngine;
+          const pino = Number(snapshotAp(e)?.pinnedTargetGid);
+          if (pino > 0 && [pinoGid, mvpFixado, perseguicaoEvento?.gid].some(gid => Number(gid) === pino)) {
+            try { e.setAutopilotPinnedTarget(0); } catch {}
+          }
+          pinoGid = 0; fixado = null; mvpFixado = null; perseguicaoEvento = null;
+          recuperacaoCheffPendente = false;
+          window.top.__FZN_CHEFF_RECOVERY__ = { active: false };
+        }
         gravarJson(CHAVE_CFG, cfg);
         log(cfg.ligado ? 'ligado' : 'desligado');
       });
