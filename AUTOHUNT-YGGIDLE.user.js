@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.74
+// @version      1.75
 // @description  Complementa o Autopilot: adquire alvos próximos sem esperar o primeiro golpe, retoma perseguições paradas e explora pelo motor do jogo, preservando as regras de teleporte.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -870,7 +870,10 @@
     w.__fznSaiuCb = (gid, tipo) => { try { if (tipo === 1 && lugarDoMapa(mapaAgora) === 'bio4' && Date.now() - (golpeiEm.get(gid) || 0) < 10000) contarAbate(gid); } catch {} };
     w.__fznUnidCb = (aid, job, x, y, sumiu) => {
       if (sumiu) { pneumas.delete(aid); return; }
-      if (Number(job) === UNT_PNEUMA) pneumas.set(aid, { x: Number(x), y: Number(y), mapa: mapaAgora, em: Date.now() });
+      if (Number(job) === UNT_PNEUMA) {
+        pneumas.set(aid, { x: Number(x), y: Number(y), mapa: mapaAgora, em: Date.now() });
+        setTimeout(checarPneuma, 0);
+      }
     };
     w.__fznMvpCb = (dono, meuAid, meuGid) => { try { if (dono && (dono === meuAid || dono === meuGid)) contarMvp(); } catch {} };
     w.__fznSkillCb = (skid, origem, alvo, eu, fase) => {
@@ -925,22 +928,35 @@
       if (usarAsa(w, e, agora)) { log(skillPerigo.nome + ' em mim -> asa'); diag('fuga', Date.now(), skillPerigo.nome + ' em mim -> asa'); skillPerigo = null; }
     } catch {}
   }, 50);
-  setInterval(() => {
+  // v1.75: alvo = alvo atual do autopilot (ou o ultimo golpe, ate 3 s); checa a
+  // cada 50 ms e tambem no instante em que a Pneuma aparece.
+  const alvoPneuma = (e, agora) => {
+    try {
+      const ap = e.getAutopilotSnapshot?.();
+      if (ap && !AUTOPILOT_PARADO.has(ap.runtimeState) && Number(ap.targetGid) > 0) return Number(ap.targetGid);
+    } catch {}
+    if (meuAlvoGid && agora - meuGolpeEm <= 3000) return Number(meuAlvoGid);
+    return 0;
+  };
+  function checarPneuma() {
     try {
       if (!pneumas.size) return;
       const agora = Date.now();
       for (const [id, p] of pneumas) if (agora - p.em > PNEUMA_VIDA_MS || p.mapa !== mapaAgora) pneumas.delete(id);
-      if (!cfg.ligado || !cfg.pneuma || !pneumas.size) return;
+      if (!cfg.ligado || !cfg.pneuma || !pneumas.size || pneumaFugindo) return;
       const w = jogo();
       const e = w?.__elragEngine;
-      if (!e || !meuAlvoGid || agora - meuGolpeEm > 3000) return;
-      const pos = w.__fznPosDe?.(meuAlvoGid);
+      if (!e) return;
+      const alvo = alvoPneuma(e, agora);
+      if (!alvo) return;
+      const pos = w.__fznPosDe?.(alvo);
       if (!pos) return;
       const dentro = [...pneumas.values()].some((p) => Math.abs(p.x - pos[0]) <= 1 && Math.abs(p.y - pos[1]) <= 1);
-      if (!dentro || pneumaFugindo || temJanelaAberta(w)) return;
-      pneumaFuga(w, e, nomesGid.get(meuAlvoGid) || '?', pos);
+      if (!dentro || temJanelaAberta(w)) return;
+      pneumaFuga(w, e, nomesGid.get(alvo) || '?', pos);
     } catch {}
-  }, 100);
+  }
+  setInterval(checarPneuma, 50);
   // v1.57: Tiro Preciso/ataque do autopilot atrapalham a asa -> para o autopilot, espera o cast acabar, asa, religa
   let pneumaFugindo = false;
   const pneumaFuga = async (w, e, nome, pos) => {
@@ -956,7 +972,6 @@
         if (!(c && c.delay > 0 && Date.now() < c.tick + c.delay)) break;
         await esperar(50);
       }
-      await esperar(80);
       let foi = false;
       for (let tentativa = 0; tentativa < 3 && !foi; tentativa++) {
         while (!asaLiberada()) await esperar(30);
