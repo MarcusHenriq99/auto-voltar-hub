@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.27
+// @version      3.28
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.27'); } catch { return '3.27'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.28'); } catch { return '3.28'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -3088,44 +3088,84 @@
     return validarChegadaFarm(w);
   };
 
-  const entrarCheffenia = async (w) => {
-    etapa('8/8 Voltando ao mapa', 'Arauto da Cheffenia');
-    const dialogo = () => /Arauto da Cheffenia/i.test(w.document.body?.innerText || '') &&
-      botaoPorTexto(w.document, (t) => /^Entrar$/i.test(t));
-    let entrar = dialogo();
-    if (!entrar) {
-      const manager = await carregarEntidadesNpc(w);
-      const canvas = canvasDoJogo(w);
-      if (!manager || !canvas) return segurarRetorno(w, 'Arauto da Cheffenia ou canvas indisponivel');
-      let npc = null;
-      const personagem = posicao(w);
-      manager.forEach((e) => {
-        const c = e?.constructor;
-        const tipoNpc = c && ((Number.isFinite(c.TYPE_NPC) && e.objecttype === c.TYPE_NPC) ||
-          (Number.isFinite(c.TYPE_NPC2) && e.objecttype === c.TYPE_NPC2));
-        if (!tipoNpc || !(e.GID > 0) || e.remove_tick || !e.position) return;
-        if (![e.display?.name, e.name, e._name, e.entityName].some((s) => /Arauto da Cheffenia/i.test(String(s || '')))) return;
-        const distancia = personagem ? Math.hypot(e.position[0] - personagem.x, e.position[1] - personagem.y) : 0;
-        if (!npc || distancia < npc.distancia) npc = { entidade: e, distancia };
-      });
-      if (!npc) return segurarRetorno(w, 'Arauto da Cheffenia nao encontrado em Prontera');
-      for (let i = 0; i < 3 && !entrar; i++) {
-        try {
-          const camera = w.__elragEngine.renderer?.camera || w.__elragEngine.camera;
-          const xy = camera?.worldToScreen?.(npc.entidade.position[0], npc.entidade.position[1], 0);
-          const r = canvas.getBoundingClientRect();
-          if (!xy || xy.length < 2 || xy[0] < 0 || xy[1] < 0 || xy[0] > r.width || xy[1] > r.height) {
-            if (typeof npc.entidade.onMouseDown !== 'function')
-              return segurarRetorno(w, 'Arauto fora da tela e sem interacao disponivel');
-            npc.entidade.onMouseDown();
-          } else {
-            await clicarNoCanvas(w, canvas, r.left + xy[0], r.top + xy[1]);
-          }
-        } catch (e) { log('Cheffenia: clique no Arauto falhou: ' + String(e).slice(0, 80)); }
-        entrar = await esperarAte(dialogo, 3000, 200);
+  const nomeArautoChefenia = /^arauto da cheff?enia(?:#.*)?$/;
+  const entradaChefenia = (w) => {
+    const titulos = [...w.document.querySelectorAll('h1,h2,h3,div,span')]
+      .filter(el => el.children.length === 0 && visivel(el) && nomeArautoChefenia.test(normalizar(textoDe(el))));
+    for (const titulo of titulos) {
+      for (let painel = titulo.parentElement, i = 0; painel && i < 7 && painel !== w.document.body; painel = painel.parentElement, i++) {
+        const texto = normalizar(textoDe(painel));
+        if (!/tempo de cheff?enia solo|escolha a cheff?enia de hoje|canais abertos/.test(texto)) continue;
+        const entradas = [...painel.querySelectorAll('button,[role="button"]')]
+          .filter(b => visivel(b) && !b.disabled && b.getAttribute?.('aria-disabled') !== 'true' && /^entrar$/i.test(textoDe(b)));
+        if (/escolha a cheff?enia de hoje/.test(texto)) {
+          const normais = entradas.filter(b => {
+            for (let card = b.parentElement; card && card !== painel; card = card.parentElement) {
+              const rotulo = normalizar(textoDe(card));
+              if (/^cheff?enia de season\b/.test(rotulo)) return false;
+              if (/^cheff?enia\s+premio:/.test(rotulo)) return true;
+            }
+            return false;
+          });
+          return normais.length === 1 ? normais[0] : null;
+        }
+        return entradas.length === 1 ? entradas[0] : null;
       }
     }
-    if (!entrar) return segurarRetorno(w, 'conversa com Arauto da Cheffenia nao abriu');
+    return null;
+  };
+
+  const entrarCheffenia = async (w) => {
+    etapa('8/8 Voltando ao mapa', 'Arauto da Chefenia');
+    const emProntera = () => cfg.ligado && !cancelando() && posicao(w)?.mapa === 'prontera';
+    if (!emProntera()) return false;
+    let entrar = entradaChefenia(w);
+    if (!entrar) {
+      const manager = await carregarEntidadesNpc(w);
+      if (!manager) return segurarRetorno(w, 'Chefenia: entidades de Prontera indisponíveis');
+      const [ax, ay] = [154, 196];
+      const perto = (p) => p && Math.hypot(p.x - ax, p.y - ay) <= 5;
+      const localizar = () => {
+        let porNome = null, porCelula = null;
+        manager.forEach(e => {
+          const c = e?.constructor;
+          if (!c || ![c.TYPE_NPC, c.TYPE_NPC2].some(t => Number.isFinite(t) && t === e.objecttype) ||
+              !(e.GID > 0) || e.remove_tick || !e.position) return;
+          const nomes = [e.display?.name, e.name, e._name, e.entityName].map(normalizar);
+          if (nomes.some(n => nomeArautoChefenia.test(n))) porNome = e;
+          else if (nomes.every(n => !n) && Math.hypot(e.position[0] - ax, e.position[1] - ay) < 0.75) porCelula = e;
+        });
+        return porNome || porCelula;
+      };
+      const falhos = new Set();
+      for (let i = 0; i < 10 && emProntera() && !entrar; i++) {
+        const p = posicao(w);
+        if (!perto(p)) {
+          const ponte = await carregarCaminhadaBio4(w);
+          if (!ponte || !emProntera()) break;
+          const dx = ax - p.x, dy = ay - 2 - p.y;
+          const escala = Math.min(1, 10 / Math.max(Math.abs(dx), Math.abs(dy)));
+          const x = Math.round(p.x + dx * escala), y = Math.round(p.y + dy * escala);
+          const trecho = [[x,y],[x-2,y],[x+2,y],[x,y-2],[x,y+2]].find(([tx,ty]) =>
+            !falhos.has(p.x + ',' + p.y + ':' + tx + ',' + ty) && (tx !== p.x || ty !== p.y) &&
+            w.__fznRotaLhz?.(p.x,p.y,tx,ty) !== false);
+          if (!trecho) break;
+          const [tx,ty] = trecho;
+          if (!ponte.andar(tx,ty) || !await esperarAte(() => {
+            const q = posicao(w);
+            return !emProntera() || perto(q) || Math.max(Math.abs(q.x-tx), Math.abs(q.y-ty)) <= 1;
+          }, 6500, 250)) falhos.add(p.x + ',' + p.y + ':' + tx + ',' + ty);
+          continue;
+        }
+        const npc = await esperarAte(localizar, 3500, 200);
+        if (!npc || !emProntera()) break;
+        try { npc.onMouseDown?.(); } catch (err) { log('Chefenia: interação com o Arauto falhou: ' + String(err).slice(0,80)); }
+        entrar = await esperarAte(() => entradaChefenia(w), 3000, 200);
+        if (!entrar) break;
+      }
+    }
+    if (!emProntera()) return false;
+    if (!entrar) return segurarRetorno(w, 'Chefenia: entrada pelo Arauto não disponível em Prontera');
     entrar.click();
     const chegou = await esperarAte(() => mapaCheffenia(posicao(w)?.mapa), 20000, 250);
     if (!chegou) return segurarRetorno(w, 'entrada na Cheffenia sem confirmacao');
