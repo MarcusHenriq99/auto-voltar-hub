@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.24
+// @version      3.25
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.24'); } catch { return '3.24'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.25'); } catch { return '3.25'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -2731,6 +2731,7 @@
     : cfg.conteudo.modo === 'cheffenia' ? 'moro_vol'
     : cfg.conteudo.modo === 'expedicao' ? (cfg.conteudo.mapa || 'expedicao') : null;
   const mapaConfereConteudo = (mapa) => {
+    if (cfg.conteudo.modo === 'lhz' && /^(?:mid_lhzinv|invasao_lhz)(?:\.gat)?$/i.test(String(mapa || ''))) return true;
     const alvo = mapaDoConteudo();
     return Boolean(alvo && (cfg.conteudo.modo === 'cheffenia'
       ? mapaCheffenia(mapa) : cfg.conteudo.modo === 'expedicao'
@@ -2852,6 +2853,7 @@
       // Mesmo pacote REQUEST_MOVE usado por sendWalkRequest no MapEngine.
       // Coordenadas do mapa dispensam foco, camera e cliques de tela.
       script.textContent = "Promise.all([import('Network/NetworkManager.js'),import('Network/PacketStructure.js'),import('Network/PacketVerManager.js')]).then(([n,p,v])=>{window.__fznBio4Caminhada={andar:(x,y)=>{if(!Number.isInteger(x)||!Number.isInteger(y)||x<0||y<0||x>1023||y>1023)return false;const C=v.default.value>=20180307?p.default.CZ.REQUEST_MOVE2:p.default.CZ.REQUEST_MOVE;if(typeof C!=='function')return false;const pkt=new C();pkt.dest[0]=x;pkt.dest[1]=y;n.default.sendPacket(pkt);return true;}};}).catch(e=>{window.__fznBio4Caminhada={erro:String(e)};});";
+      script.textContent += "import('Utils/PathFinding.js').then(({default:P})=>{window.__fznRotaLhz=(x0,y0,x,y)=>P.searchLong(x0,y0,x,y,0,new Int16Array((P.MAX_WALKPATH+1)*2)).success;}).catch(()=>{});";
       w.document.head.appendChild(script);
     }
     const ponte = await esperarAte(() => !w.__fznBio4Caminhada?.carregando && w.__fznBio4Caminhada, 4000);
@@ -2995,7 +2997,8 @@
     const manager = await carregarEntidadesNpc(w);
     if (!manager) return segurarRetorno(w, 'LHZ: entidades ainda indisponíveis');
     let painel = dialogoLhz(w);
-    for (let i = 0; i < 10 && !painel; i++) {
+    const trechosFalhos = new Set();
+    for (let i = 0; i < 20 && !painel; i++) {
       if (!cfg.ligado || cancelando() || posicao(w)?.mapa !== 'prontera') return false;
       let npc = localizarNpcLhz(manager);
       const p = posicao(w), alvo = npc?.position || [140,194];
@@ -3011,11 +3014,29 @@
         // Parar duas células em frente ao NPC, sem tentar ocupar sua célula.
         const dx = alvo[0] + 2 - p.x, dy = alvo[1] - p.y;
         const escala = Math.min(1, 10 / Math.max(Math.abs(dx), Math.abs(dy)));
-        const x = Math.round(p.x + dx * escala), y = Math.round(p.y + dy * escala);
+        const xDireto = Math.round(p.x + dx * escala), yDireto = Math.round(p.y + dy * escala);
+        const chave = (x,y) => p.x + ',' + p.y + ':' + x + ',' + y;
+        const alternativas = [[xDireto,yDireto]];
+        for (const desvio of [2,4,6]) {
+          alternativas.push([xDireto+desvio,yDireto],[xDireto,yDireto+desvio],
+            [xDireto-desvio,yDireto],[xDireto,yDireto-desvio]);
+        }
+        const trecho = alternativas.find(([x,y]) => {
+          if (x < 0 || y < 0 || x > 1023 || y > 1023 ||
+              Math.max(Math.abs(x-p.x), Math.abs(y-p.y)) <= 1 || trechosFalhos.has(chave(x,y))) return false;
+          try { return w.__fznRotaLhz?.(p.x,p.y,x,y) !== false; } catch { return true; }
+        });
+        if (!trecho) return segurarRetorno(w, 'LHZ: nenhum trecho acessível até o NPC');
+        const [x,y] = trecho;
+        if (!cfg.ligado || cancelando() || posicao(w)?.mapa !== 'prontera') return false;
         log('LHZ: caminhando de ' + p.x + ',' + p.y + ' para ' + x + ',' + y);
-        if (!cfg.ligado || cancelando() || !ponte.andar(x,y)) return false;
-        if (!await esperarAte(() => { const q = posicao(w); return q?.mapa === 'prontera' && Math.max(Math.abs(q.x-x), Math.abs(q.y-y)) <= 1; }, 8000, 250))
-          return segurarRetorno(w, 'LHZ: caminhada sem chegada confirmada');
+        if (!ponte.andar(x,y) || !await esperarAte(() => {
+          const q = posicao(w);
+          return cancelando() || !cfg.ligado || q?.mapa !== 'prontera' || Math.max(Math.abs(q.x-x), Math.abs(q.y-y)) <= 1;
+        }, 6500, 250)) {
+          trechosFalhos.add(chave(x,y));
+          log('LHZ: trecho sem chegada; procurando desvio');
+        }
       }
     }
     if (!painel) return segurarRetorno(w, 'LHZ: diálogo não abriu após caminhada');
