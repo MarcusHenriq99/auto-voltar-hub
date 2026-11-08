@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.76
+// @version      1.77
 // @description  Complementa o Autopilot: adquire alvos próximos sem esperar o primeiro golpe, retoma perseguições paradas e explora pelo motor do jogo, preservando as regras de teleporte.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -434,7 +434,7 @@
   let mvpFixado = null, mvpFixadoEm = 0;
   let mvpUltimoGid = 0, mvpVistoEm = 0;
   const EVENTO_NOME = normN('Stefan J.E. Wolf');
-  let eventoFixado = null, eventoFixadoEm = 0;
+  let perseguicaoEvento = null;
   const SO_MVP_TELEPORTE_MS = 2500;
   let naoMvpDesde = 0;
   const golpesMvp = new Map();
@@ -1417,6 +1417,53 @@
       return true;
     } finally { ocupado = false; }
   };
+  const perseguirStefan = async (w, e, mob, agora) => {
+    const pos = posicao(e);
+    if (!pos || temJanelaAberta(w) || pausadoPelaRifa()) {
+      if (perseguicaoEvento) perseguicaoEvento.em = agora;
+      return;
+    }
+    const gid = Number(mob.gid);
+    const celula = pos.mapa + ':' + pos.x + ':' + pos.y;
+    if (perseguicaoEvento?.gid !== gid || perseguicaoEvento.mapa !== pos.mapa) {
+      perseguicaoEvento = { gid, mapa: pos.mapa, celula, em: agora, cast: null, repetiu: false };
+      fixado = null;
+      pinoGid = 0;
+      try {
+        if (e.setAutopilotPinnedTarget(gid) !== 0) log('evento: alvo ' + mob.name + ' a ' + mob.distance);
+      } catch {}
+      return;
+    }
+    const estado = perseguicaoEvento;
+    const acertou = Number(meuAlvoGid) === gid && agora - meuGolpeEm < LUTA_MS;
+    if (estado.celula !== celula || acertou) {
+      estado.celula = celula;
+      estado.em = agora;
+      estado.cast = null;
+      estado.repetiu = false;
+      return;
+    }
+    const cast = w.__fznEu?.()?.cast;
+    if (cast && cast.delay > 0 && agora < cast.tick + cast.delay + 300) {
+      if (estado.cast === null) estado.cast = cast.tick;
+      if (estado.cast === cast.tick) { estado.em = agora; return; }
+    }
+    if (agora - estado.em < FIXAR_ESPERA_MS) return;
+    estado.em = agora;
+    if (estado.repetiu && agora - ultimoPasso >= PASSO_EXPLORAR_MS) {
+      try { e.setAutopilotPinnedTarget(0); } catch {}
+      estado.repetiu = false;
+      if (await explorarNoMotor(w, e, agora)) {
+        log('evento: sem progresso contra ' + mob.name + '; tentando outra posição');
+        return;
+      }
+      if (pausadoPelaRifa() || temJanelaAberta(w) || posicao(e)?.mapa !== pos.mapa) return;
+    }
+    estado.repetiu = true;
+    try {
+      if (e.setAutopilotPinnedTarget(gid) !== 0) log('evento: retomando perseguição de ' + mob.name);
+    } catch {}
+  };
   const ciclo = async () => {
     if (pausadoPelaRifa()) return;
     if (!cfg.ligado || ocupado) return;
@@ -1461,22 +1508,22 @@
       return;
     }
     if (apParadoDesde) { log('autopilot voltou (parado ' + Math.round((agora - apParadoDesde) / 1000) + ' s)'); apParadoDesde = 0; motivoParado = ''; }
-    // evento: Stefan J.E. Wolf no radar e sempre o alvo
+    // O Stefan tem prioridade no radar, com recuperação se ficar fora de alcance.
     {
       let radarEv = [];
       try { radarEv = e.getAutopilotRadarSnapshot()?.mobs || []; } catch {}
-      const ev = radarEv.filter((m) => normN(m?.name) === EVENTO_NOME).sort((a, b) => (a.distance || 0) - (b.distance || 0))[0];
+      const ev = radarEv.filter((m) => Number(m.gid) > 0 && normN(m.name) === EVENTO_NOME)
+        .sort((a, b) => (a.distance || 0) - (b.distance || 0))[0];
       if (ev) {
         semAlvoDesde = 0; radarVazioDesde = 0; naoMvpDesde = 0;
-        if (ap.targetGid === ev.gid) { reforcarAlvoParado(w,e,ev,agora); return; }
-        if (eventoFixado !== ev.gid || agora - eventoFixadoEm > 500) {
-          try { e.setAutopilotPinnedTarget(ev.gid); } catch {}
-          if (eventoFixado !== ev.gid) log('evento: alvo ' + ev.name + ' a ' + ev.distance);
-          eventoFixado = ev.gid; eventoFixadoEm = agora;
-        }
+        await perseguirStefan(w, e, ev, agora);
         return;
       }
-      if (eventoFixado) { eventoFixado = null; try { e.setAutopilotPinnedTarget(0); } catch {} log('evento: Stefan saiu do radar'); }
+      if (perseguicaoEvento) {
+        perseguicaoEvento = null;
+        try { e.setAutopilotPinnedTarget(0); } catch {}
+        log('evento: Stefan saiu do radar');
+      }
     }
     if (modoMvpAtivo(w,e)) {
       try { ganchoCatalogo(w); } catch {}
