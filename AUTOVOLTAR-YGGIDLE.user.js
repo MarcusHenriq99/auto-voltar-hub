@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.26
+// @version      3.27
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.26'); } catch { return '3.26'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.27'); } catch { return '3.27'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -3048,7 +3048,10 @@
     const texto = normalizar(textoDe(painel));
     const painelNovo = texto.includes('tempo restante') && texto.includes('entrada de hoje');
     const saldo = /(?:ainda tem|restam?|tempo restante)\s+(\d+)\s*min/.exec(texto);
-    if (saldo && Number(saldo[1]) === 0 || /tempo.*(?:esgot|acab)|limite.*(?:atingid|esgot)|nao.*(?:tem|possui).*tempo/.test(texto))
+    const saldoEsgotado = saldo && Number(saldo[1]) === 0;
+    const avisoEsgotado = !painelNovo && !saldo &&
+      /tempo.*(?:esgot|acab)|limite.*(?:atingid|esgot)|nao.*(?:tem|possui).*tempo/.test(texto);
+    if (saldoEsgotado || avisoEsgotado)
       return encerrarAcessoConteudo('Invasão de LHZ: tempo diário esgotado');
     if (!saldo || Number(saldo[1]) <= 0) return segurarRetorno(w, 'LHZ: saldo de minutos não confirmado pelo NPC');
     if (painelNovo && !texto.includes('entrada paga hoje por este personagem'))
