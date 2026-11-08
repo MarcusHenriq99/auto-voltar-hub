@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.82
+// @version      1.83
 // @description  Complementa o Autopilot: adquire alvos próximos sem esperar o primeiro golpe, retoma perseguições paradas e explora pelo motor do jogo, preservando as regras de teleporte.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -435,7 +435,7 @@
   let mvpUltimoGid = 0, mvpVistoEm = 0;
   const EVENTO_NOME = normN('Stefan J.E. Wolf');
   let perseguicaoEvento = null;
-  const SO_MVP_TELEPORTE_MS = 300;
+  const SO_MVP_TELEPORTE_MS = 1500;
   let naoMvpDesde = 0;
   const golpesMvp = new Map();
   const MVP_TOMADO_MS = 2000;
@@ -1797,7 +1797,7 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const versao = typeof GM_info === 'undefined' ? '1.82' : (GM_info.script?.version || '1.82');
+      const versao = typeof GM_info === 'undefined' ? '1.83' : (GM_info.script?.version || '1.83');
       const cartao = fznCartaoYgg('Auto-hunt', 'v' + versao, 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
