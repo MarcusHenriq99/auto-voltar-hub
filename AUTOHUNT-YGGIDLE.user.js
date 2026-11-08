@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.78
+// @version      1.79
 // @description  Complementa o Autopilot: adquire alvos próximos sem esperar o primeiro golpe, retoma perseguições paradas e explora pelo motor do jogo, preservando as regras de teleporte.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -1417,7 +1417,7 @@
       return true;
     } finally { ocupado = false; }
   };
-  const perseguirStefan = async (w, e, mob, agora) => {
+  const perseguirStefan = async (w, e, ap, mob, agora) => {
     const pos = posicao(e);
     if (!pos || temJanelaAberta(w) || pausadoPelaRifa()) {
       if (perseguicaoEvento) perseguicaoEvento.em = agora;
@@ -1426,7 +1426,7 @@
     const gid = Number(mob.gid);
     const celula = pos.mapa + ':' + pos.x + ':' + pos.y;
     if (perseguicaoEvento?.gid !== gid || perseguicaoEvento.mapa !== pos.mapa) {
-      perseguicaoEvento = { gid, mapa: pos.mapa, celula, em: agora, cast: null, repetiu: false };
+      perseguicaoEvento = { gid, mapa: pos.mapa, celula, em: agora, pinoEm: agora, retomarEm: 0, cast: null, repetiu: false };
       fixado = null;
       pinoGid = 0;
       try {
@@ -1435,16 +1435,25 @@
       return;
     }
     const estado = perseguicaoEvento;
+    if (agora < estado.retomarEm) return;
+    const mirandoStefan = Number(ap.targetGid) === gid;
+    const moveu = estado.celula !== celula;
+    estado.celula = celula;
     const acertou = Number(meuAlvoGid) === gid && agora - meuGolpeEm < LUTA_MS;
-    if (estado.celula !== celula || acertou) {
-      estado.celula = celula;
+    if (acertou || (mirandoStefan && moveu)) {
       estado.em = agora;
       estado.cast = null;
       estado.repetiu = false;
-      return;
     }
+    if (!mirandoStefan && agora - estado.pinoEm >= 750) {
+      estado.pinoEm = agora;
+      try {
+        if (e.setAutopilotPinnedTarget(gid) !== 0) log('evento: retomando prioridade de ' + mob.name);
+      } catch {}
+    }
+    if (acertou || (mirandoStefan && moveu)) return;
     const cast = w.__fznEu?.()?.cast;
-    if (cast && cast.delay > 0 && agora < cast.tick + cast.delay + 300) {
+    if (mirandoStefan && cast && cast.delay > 0 && agora < cast.tick + cast.delay + 300) {
       if (estado.cast === null) estado.cast = cast.tick;
       if (estado.cast === cast.tick) { estado.em = agora; return; }
     }
@@ -1454,12 +1463,15 @@
       try { e.setAutopilotPinnedTarget(0); } catch {}
       estado.repetiu = false;
       if (await explorarNoMotor(w, e, agora)) {
+        estado.retomarEm = Date.now() + ANDANDO_MS;
         log('evento: sem progresso contra ' + mob.name + '; tentando outra posição');
         return;
       }
       if (pausadoPelaRifa() || temJanelaAberta(w) || posicao(e)?.mapa !== pos.mapa) return;
     }
     estado.repetiu = true;
+    if (agora - estado.pinoEm < 750) return;
+    estado.pinoEm = agora;
     try {
       if (e.setAutopilotPinnedTarget(gid) !== 0) log('evento: retomando perseguição de ' + mob.name);
     } catch {}
@@ -1516,7 +1528,7 @@
         .sort((a, b) => (a.distance || 0) - (b.distance || 0))[0];
       if (ev) {
         semAlvoDesde = 0; radarVazioDesde = 0; naoMvpDesde = 0;
-        await perseguirStefan(w, e, ev, agora);
+        await perseguirStefan(w, e, ap, ev, agora);
         return;
       }
       if (perseguicaoEvento) {
@@ -1675,7 +1687,7 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const versao = typeof GM_info === 'undefined' ? '1.78' : (GM_info.script?.version || '1.78');
+      const versao = typeof GM_info === 'undefined' ? '1.79' : (GM_info.script?.version || '1.79');
       const cartao = fznCartaoYgg('Auto-hunt', 'v' + versao, 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
