@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.77
+// @version      1.78
 // @description  Complementa o Autopilot: adquire alvos próximos sem esperar o primeiro golpe, retoma perseguições paradas e explora pelo motor do jogo, preservando as regras de teleporte.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -1675,7 +1675,8 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const cartao = fznCartaoYgg('Auto-hunt', 'v1.73', 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
+      const versao = typeof GM_info === 'undefined' ? '1.78' : (GM_info.script?.version || '1.78');
+      const cartao = fznCartaoYgg('Auto-hunt', 'v' + versao, 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
         cfg.ligado = !cfg.ligado;
@@ -1803,7 +1804,11 @@
     painel.title = lerJson(CHAVE_LOG, []).slice(-12).join('\n') || 'sem eventos ainda';
   }
 
-  try { atualizarPainel(); } catch (err) { mostrarErro('painel', err); }
+  const iniciarPainel = () => {
+    try { atualizarPainel(); } catch (err) { mostrarErro('painel', err); }
+  };
+  if (document.body) iniciarPainel();
+  else document.addEventListener('DOMContentLoaded', iniciarPainel, { once: true });
   setInterval(() => { ciclo().catch((err) => log(`erro: ${String(err).slice(0, 100)}`)); }, 100);
   } catch (err) { mostrarErro('inicio', err); }
 })();
