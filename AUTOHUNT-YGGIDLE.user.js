@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.79
+// @version      1.80
 // @description  Complementa o Autopilot: adquire alvos próximos sem esperar o primeiro golpe, retoma perseguições paradas e explora pelo motor do jogo, preservando as regras de teleporte.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -505,7 +505,9 @@
   const posicao = (e) => {
     try { const m = e.getMinimapInfoSnapshot(); return m ? { mapa: m.mapId, x: m.x, y: m.y } : null; } catch { return null; }
   };
-  const ignorados = (ap) => new Set((ap?.targetPolicy?.species || []).map((s) => s.mobId));
+  // 0 = Ignorar, 1 = Fugir, 2 = Preferir.
+  const ignorados = (ap) => new Set((ap?.targetPolicy?.species || [])
+    .filter((s) => Number(s.disposition) !== 2).map((s) => Number(s.mobId)));
   const fugirDe = (ap) => new Set((ap?.targetPolicy?.species || []).filter((s) => s.disposition === 1).map((s) => s.mobId));
   const quadros = (w, n) => new Promise((r) => {
     const teto = setTimeout(r, 1500);
@@ -1382,7 +1384,11 @@
     if (!mob) return false;
     try {
       const comando = e.setAutopilotPinnedTarget(Number(mob.gid));
-      if (comando === 0) return false; // sessão ainda não aceita comandos
+      if (comando === 0) {
+        // Deixa o próximo ciclo tentar outro alvo ou caminhar se nenhum comando sair.
+        evitar.set(Number(mob.gid), agora + FIXAR_ESPERA_MS);
+        return false;
+      }
       pinoGid = Number(mob.gid); fixado = { gid: pinoGid, nome: mob.name, em: agora };
       primeiroCastSemProgresso = null;
       log('buscando ' + mob.name + ' a ' + mob.distance + ': alvo enviado ao Autopilot');
@@ -1594,7 +1600,7 @@
     const ign = ignorados(ap);
     let radar = [];
     try { radar = e.getAutopilotRadarSnapshot()?.mobs || []; } catch {}
-    const vivos = radar.filter((m) => Number(m.gid) > 0 && !ign.has(m.mobId) && (!modoMvpAtivo(w,e) || ehMvp(m)) && (!ehMvp(m) || !mvpTomado(m)))
+    const vivos = radar.filter((m) => Number(m.gid) > 0 && !ign.has(Number(m.mobId)) && (!modoMvpAtivo(w,e) || ehMvp(m)) && (!ehMvp(m) || !mvpTomado(m)))
       .sort((a,b) => (Number.isFinite(Number(a.distance)) ? Number(a.distance) : Infinity) - (Number.isFinite(Number(b.distance)) ? Number(b.distance) : Infinity));
     const lutando = agora - meuGolpeEm < LUTA_MS;
     const andando = agora - ultimoMovEm < ANDANDO_MS;
@@ -1608,9 +1614,9 @@
         conjurando = primeiroCastSemProgresso === cast.tick;
       }
     } catch {}
-    if (pinoGid && !radar.some((m) => m.gid === pinoGid)) { pinoGid = 0; try { e.setAutopilotPinnedTarget(0); } catch {} }
+    if (pinoGid && !radar.some((m) => Number(m.gid) === pinoGid)) { pinoGid = 0; try { e.setAutopilotPinnedTarget(0); } catch {} }
     if (fixado && fixado.gid !== pinoGid) fixado = null;
-    if (fixado && meuAlvoGid === fixado.gid && lutando) fixado = null;
+    if (fixado && Number(meuAlvoGid) === fixado.gid && lutando) fixado = null;
     // v1.68: pacote minimo (so com monstros no radar; radar vazio segue a regra antiga).
     // v1.69: conjuracao NAO segura o teleporte quando o grupo e pequeno: cancelar
     // a skill e sair e o certo. So alvo fixado (MVP etc.) segura.
@@ -1633,7 +1639,7 @@
       if (lutando || conjurando) return;
       if (vazioMs >= ASA_SEM_MOB_MS && usarAsa(w, e, agora)) {
         if (ultimaAsaEm >= agora) {
-          const ignorRadar = radar.filter((m) => ign.has(m.mobId)).slice(0, 4).map((m) => m.name + ' a ' + m.distance).join(', ');
+          const ignorRadar = radar.filter((m) => ign.has(Number(m.mobId))).slice(0, 4).map((m) => m.name + ' a ' + m.distance).join(', ');
           const regras = (ap?.targetPolicy?.species || []).map((r) => r.mobId + '@' + r.sourceMapIndex + (r.disposition === 1 ? 'F' : 'I')).join(' ');
           log('motivo: radar vazio e parado por ' + vazioMs + ' ms' + retrato(w) + ' | radar ' + radar.length + (ignorRadar ? ' (ignorados: ' + ignorRadar + ')' : '') + ' | golpe ha ' + (meuGolpeEm ? agora - meuGolpeEm : '-') + ' ms' + (regras ? ' | regras ' + regras.slice(0, 120) : ''));
           radarVazioDesde = 0;
@@ -1667,7 +1673,14 @@
         return;
       }
       if (perto > FARM_LONGE) {
-        if (ocioso >= FARM_LONGE_MS && usarAsa(w, e, agora) && ultimaAsaEm >= agora) { log('parado sem bater ' + ocioso + ' ms; mob mais perto a ' + perto + ' (> ' + FARM_LONGE + ') -> asa' + retrato(w)); ociosoDesde = 0; }
+        if (ocioso >= FARM_LONGE_MS) {
+          if (usarAsa(w, e, agora)) {
+            if (ultimaAsaEm >= agora) {
+              log('parado sem bater ' + ocioso + ' ms; mob mais perto a ' + perto + ' (> ' + FARM_LONGE + ') -> asa' + retrato(w));
+              ociosoDesde = 0;
+            }
+          } else if (!fixado && ocioso >= FIXAR_ESPERA_MS) await explorarNoMotor(w, e, agora);
+        }
         return;
       }
       if (ocioso >= OCIOSO_ASA_MS) {
@@ -1687,7 +1700,7 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const versao = typeof GM_info === 'undefined' ? '1.79' : (GM_info.script?.version || '1.79');
+      const versao = typeof GM_info === 'undefined' ? '1.80' : (GM_info.script?.version || '1.80');
       const cartao = fznCartaoYgg('Auto-hunt', 'v' + versao, 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
