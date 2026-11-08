@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.75
+// @version      1.76
 // @description  Complementa o Autopilot: adquire alvos próximos sem esperar o primeiro golpe, retoma perseguições paradas e explora pelo motor do jogo, preservando as regras de teleporte.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -877,6 +877,7 @@
     };
     w.__fznMvpCb = (dono, meuAid, meuGid) => { try { if (dono && (dono === meuAid || dono === meuGid)) contarMvp(); } catch {} };
     w.__fznSkillCb = (skid, origem, alvo, eu, fase) => {
+      if (eu && origem === eu && skid && alvo !== eu && !skillsVistas.has(skid)) { skillsVistas.add(skid); pintarSkillsDist(); }
       if (eu && origem === eu && fase === 'golpe' && Number(alvo) > 0 && Number(alvo) !== Number(eu)) {
         meuGolpeEm = Date.now();
         meuAlvoGid = Number(alvo);
@@ -957,9 +958,69 @@
     } catch {}
   }
   setInterval(checarPneuma, 50);
+  // v1.62 (restaurado na 1.76): MANTER DISTANCIA. Sonda 31/10: o servidor ja para no alcance (Tiro Preciso = 9) quando vem andando;
+  // o perigo e ele contornar parede andando colado no mob. Enquanto EU ando em direcao ao alvo: chegou a
+  // cfg.distMin celulas ou menos, ou o alvo ja esta no alcance mas sem visada (parede) -> asa. Mob que vem ate
+  // mim com o boneco parado nao conta (nao faz kite). Visada = celulas SNIPABLE na reta (Altitude, como o *athena).
+  const skillsVistas = new Set();
+  let pintarSkillsDist = () => {};
+  const pontesDist = new WeakSet();
+  const ganchoDist = (w) => {
+    if (pontesDist.has(w)) return;
+    pontesDist.add(w);
+    const s = w.document.createElement('script');
+    s.type = 'module';
+    s.textContent = `Promise.all([import('Renderer/Map/Altitude.js'),import('UI/Components/SkillList/SkillList.js'),import('DB/DBManager.js')]).then(([a,sl,db])=>{
+      const A=a.default,SL=sl.default,DB=db.default;
+      window.__fznVisada=(x0,y0,x1,y1)=>{try{let dx=Math.abs(x1-x0),dy=-Math.abs(y1-y0),sx=x0<x1?1:-1,sy=y0<y1?1:-1,er=dx+dy,x=x0,y=y0;for(let i=0;i<60;i++){if((x!==x0||y!==y0)&&(x!==x1||y!==y1)&&!(A.getCellType(x,y)&A.TYPE.SNIPABLE))return false;if(x===x1&&y===y1)return true;const e2=2*er;if(e2>=dy){er+=dy;x+=sx}if(e2<=dx){er+=dx;y+=sy}}return true}catch(e){return null}};
+      window.__fznAlcance=(id)=>{try{const k=SL.getUI().getSkillById(id);return k&&k.attackRange!=null?k.attackRange:null}catch(e){return null}};
+      window.__fznNomeSkill=(id)=>{try{return DB.getSkillName(id)}catch(e){return String(id)}};
+    }).catch(e=>{window.__fznDistErro=String(e)});`;
+    w.document.head.appendChild(s);
+  };
+  const histEu = [];
+  let distAsaEm = 0;
+  setInterval(() => {
+    try {
+      const w = jogo();
+      const e = w?.__elragEngine;
+      if (!e) return;
+      ganchoDist(w);
+      const eu = w.__fznEu?.();
+      const p = eu?.position;
+      if (!p) return;
+      const agora = Date.now();
+      const x = Math.round(p[0]), y = Math.round(p[1]);
+      const ult = histEu[histEu.length - 1];
+      if (ult && Math.max(Math.abs(ult.x - x), Math.abs(ult.y - y)) > 3) histEu.length = 0; // asa/teleporte
+      histEu.push({ t: agora, x, y });
+      while (histEu.length && agora - histEu[0].t > 400) histEu.shift();
+      if (!cfg.ligado || !cfg.dist || pneumaFugindo || agora - distAsaEm < 2000 || !asaLiberada()) return;
+      const h0 = histEu[0];
+      if (!h0 || agora - h0.t < 250 || (h0.x === x && h0.y === y)) return; // parado: mob que vem ate mim nao conta
+      let gid = alvoPneuma(e, agora);
+      if (!gid) gid = pinoGid;
+      if (!gid) { try { gid = e.getAutopilotRadarSnapshot?.()?.mobs?.[0]?.gid || 0; } catch {} }
+      const ap = gid && w.__fznPosDe?.(gid);
+      if (!ap) return;
+      const cheb = (ax, ay) => Math.max(Math.abs(ap[0] - ax), Math.abs(ap[1] - ay));
+      const d = cheb(x, y);
+      if (d >= cheb(h0.x, h0.y)) return; // nao estou indo na direcao dele
+      const skid = Number(cfg.distSkill) || [...skillsVistas].pop() || 0;
+      const alc = skid ? w.__fznAlcance?.(skid) : null;
+      if (alc == null || temJanelaAberta(w)) return;
+      const min = Number(cfg.distMin) || 3;
+      let motivo = '';
+      if (d <= min) motivo = 'Distancia (andando ate ' + d + ' cel, minimo ' + min + ')';
+      else if (d <= alc && w.__fznVisada?.(x, y, ap[0], ap[1]) === false) motivo = 'Distancia (parede: alvo a ' + d + ' cel sem visada, alcance ' + alc + ')';
+      if (!motivo) return;
+      distAsaEm = agora;
+      pneumaFuga(w, e, nomesGid.get(gid) || '?', ap, motivo);
+    } catch {}
+  }, 100);
   // v1.57: Tiro Preciso/ataque do autopilot atrapalham a asa -> para o autopilot, espera o cast acabar, asa, religa
   let pneumaFugindo = false;
-  const pneumaFuga = async (w, e, nome, pos) => {
+  const pneumaFuga = async (w, e, nome, pos, motivo = 'Pneuma') => {
     if (pausadoPelaRifa()) return;
     pneumaFugindo = true;
     const t0 = Date.now();
@@ -984,7 +1045,7 @@
           if (p && antes && (p.x !== antes.x || p.y !== antes.y || p.mapa !== antes.mapa)) { foi = true; break; }
         }
       }
-      log('Pneuma em ' + nome + ' (' + pos[0] + ',' + pos[1] + '): autopilot parado -> asa ' + (foi ? 'OK' : 'SEM EFEITO') + ' -> religado (' + (Date.now() - t0) + ' ms)');
+      log(motivo + ' em ' + nome + ' (' + pos[0] + ',' + pos[1] + '): autopilot parado -> asa ' + (foi ? 'OK' : 'SEM EFEITO') + ' -> religado (' + (Date.now() - t0) + ' ms)');
     } catch (err) { log('Pneuma: erro ' + String(err).slice(0, 60)); }
     finally {
       try { if (!pausadoPelaRifa()) e.setAutopilotRunning(true); } catch {}
@@ -1650,7 +1711,37 @@
       selClasse.addEventListener('change', () => { cfg.classe = selClasse.value; gravarJson(CHAVE_CFG, cfg); log('classe: ' + (cfg.classe || '?')); pintarFurt(); });
       botaoFurt.addEventListener('click', () => { cfg.furtividade = !cfg.furtividade; gravarJson(CHAVE_CFG, cfg); log('furtividade F5 ' + (cfg.furtividade ? 'ligada' : 'desligada')); pintarFurt(); });
       pintarFurt();
+      const botaoDist = document.createElement('button');
+      botaoDist.title = 'Manter distancia: enquanto o boneco anda ate o alvo, se ele chegar perto demais (minimo abaixo) ou o alvo estiver no alcance da skill mas atras de parede, usa a Asa de Mosca em vez de chegar perto. Nao faz kite: mob que vem ate voce com o boneco parado nao conta.';
+      const pintarDist = () => { botaoDist.textContent = 'Distancia'; botaoDist.className = cfg.dist ? 'fzn-ygg--on' : 'fzn-ygg--off'; };
+      botaoDist.addEventListener('click', () => { cfg.dist = !cfg.dist; gravarJson(CHAVE_CFG, cfg); log('manter distancia ' + (cfg.dist ? 'ligado' : 'desligado')); pintarDist(); });
+      pintarDist();
+      const selSkillDist = document.createElement('select');
+      selSkillDist.title = 'Skill cujo alcance vale para o Manter distancia (alcance lido do jogo). Aparecem as skills que voce ja usou neste login.';
+      pintarSkillsDist = () => {
+        const w = jogo();
+        const ids = new Set([...skillsVistas]);
+        if (cfg.distSkill) ids.add(Number(cfg.distSkill));
+        selSkillDist.textContent = '';
+        const o0 = document.createElement('option'); o0.value = ''; o0.textContent = 'Skill: ultima usada'; selSkillDist.appendChild(o0);
+        for (const id of ids) {
+          const o = document.createElement('option');
+          const alc = w?.__fznAlcance?.(id);
+          o.value = String(id); o.textContent = (w?.__fznNomeSkill?.(id) || 'skill ' + id) + (alc != null ? ' (' + alc + ' cel)' : '');
+          selSkillDist.appendChild(o);
+        }
+        selSkillDist.value = cfg.distSkill ? String(cfg.distSkill) : '';
+      };
+      selSkillDist.addEventListener('focus', () => pintarSkillsDist());
+      selSkillDist.addEventListener('change', () => { cfg.distSkill = Number(selSkillDist.value) || 0; gravarJson(CHAVE_CFG, cfg); log('distancia: skill ' + (cfg.distSkill || 'ultima usada')); });
+      pintarSkillsDist();
+      const selMinDist = document.createElement('select');
+      selMinDist.title = 'Andando ate o alvo, nunca chegar a esta distancia ou menos (em celulas): usa a asa antes.';
+      for (let n = 1; n <= 8; n++) { const o = document.createElement('option'); o.value = String(n); o.textContent = 'Minimo: ' + n + ' cel'; selMinDist.appendChild(o); }
+      selMinDist.value = String(cfg.distMin || 3);
+      selMinDist.addEventListener('change', () => { cfg.distMin = Number(selMinDist.value); gravarJson(CHAVE_CFG, cfg); log('distancia: minimo ' + cfg.distMin); });
       gv.grupo('Opcoes', botaoNoks, botaoMvp, botaoTeleporte, botaoRecuperar, botaoBio4, botaoPneuma, botaoAsa, botaoPacote);
+      gv.grupo('Distancia', botaoDist, selSkillDist, selMinDist);
       gv.grupo('Classe', selClasse, botaoFurt);
       cartao.caixa.style.maxWidth = 'min(420px, 95vw)';
       linhaStatus = gv.status;
