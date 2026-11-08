@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.23
+// @version      3.24
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.23'); } catch { return '3.23'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.24'); } catch { return '3.24'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -1736,6 +1736,7 @@
     if (/\basas? de mosca\b|\bfly wings?\b/.test(n)) return 'NUNCA VENDER (Asa de Mosca reservada para o farm)';
     if (NUNCA_VENDER_FIXO.some((x) => n.includes(normalizar(x)))) return 'NUNCA VENDER (item raro)';
     if (PREMIOS_RIFA.some((x) => n.includes(normalizar(x)))) return 'NUNCA VENDER (premio da rifa)';
+    if (NOMES_CONSOLACAO_RIFA.has(n.replace(/^\[evento\]\s*/, ''))) return 'NUNCA VENDER (consolacao da rifa)';
     const pessoal = nomeProtegidoDaConta(nome);
     if (pessoal) return `NUNCA VENDER (lista desta conta: "${pessoal}")`;
     return null;
@@ -4335,6 +4336,20 @@
     'Fogo de Muspelheim','Bile de Nidhogg','Peçonha de Jörmungandr',
     'Bênção de Baldur','Esporo de Yggdrasil','Hidromel de Kvasir'
   ];
+  // https://yggidle.com.br/atualizacoes/premios-da-rifa-yggidle
+  const CONSOLACAO_RIFA = [
+    'Garrafa de Veneno', 'Caixa da Sonolência', 'Caixa do Ressentimento',
+    'Medicina Milagrosa', 'Fruto de Yggdrasil Amargo', 'Sobremesa de Noel',
+    'Suco Celular Enriquecido', 'Abrasivo', 'Pílula de Combate',
+    'Poção de Regeneração', 'Poção Ilimitada', 'Poção Infinita',
+    'Elixir Rubro', 'Bolinho Divino', 'Fruto de Yggdrasil Desidratado',
+    'Poção Menor de Defesa', 'Poção Menor de Mana', 'Poção Menor de Vida',
+    'Suco de Gato', 'Manual & Chiclete', 'Pergaminho da Bênção',
+    'Pergaminho para Aumentar Agilidade'
+  ];
+  const NOMES_CONSOLACAO_RIFA = new Set([
+    ...CONSOLACAO_RIFA, 'Pergaminho de Aumentar Agilidade'
+  ].map(normalizar));
   const rifaEstado = { etapa: 'Aguardando', premio: '', edicao: '', compras: 0, detalhe: '' };
   let rifaRodando = false, rifaFarmPausado = false, rifaMenu = null, rifaModalAtual = null;
   let ultimaConferenciaResultadoRifa = 0;
@@ -5710,6 +5725,8 @@
         <ul>${NUNCA_VENDER_FIXO.map(nome => `<li>${nome}</li>`).join('')}</ul></details>
       <details style="margin:6px 0"><summary style="cursor:pointer">Prêmios da rifa (${PREMIOS_RIFA.length}) — proteção fixa</summary>
         <ul>${PREMIOS_RIFA.map(nome => `<li>${nome}</li>`).join('')}</ul></details>
+      <details style="margin:6px 0"><summary style="cursor:pointer">Consolação da rifa (${CONSOLACAO_RIFA.length}) — proteção fixa</summary>
+        <ul>${CONSOLACAO_RIFA.map(nome => `<li>${nome.replace(/&/g, '&amp;')}</li>`).join('')}</ul></details>
       <label for="fzn-nunca-vender-nomes" style="display:block;margin-top:8px;font-weight:bold">Minha lista desta conta</label>
       <div>Um nome por linha. Aceita parte do nome; nomes de até 3 letras precisam ser palavras inteiras. Acrescente aqui outros itens de mapa que quiser preservar.</div>
       <textarea id="fzn-nunca-vender-nomes" aria-label="Itens que nunca serão vendidos nesta conta" data-v="nomes" rows="6" style="${campo};width:100%;box-sizing:border-box">${(v.nomes || []).join('\n').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
