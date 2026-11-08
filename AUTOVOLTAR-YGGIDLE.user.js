@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.25
+// @version      3.26
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.25'); } catch { return '3.25'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.26'); } catch { return '3.26'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -2977,7 +2977,12 @@
   };
 
   const dialogoLhz = (w) => [...w.document.querySelectorAll('[data-hud-presentation], [role="dialog"]')]
-    .find(el => visivel(el) && /\[Invas[aã]o de LHZ\]/i.test(textoDe(el))) || null;
+    .find(el => {
+      if (!visivel(el)) return false;
+      const texto = normalizar(textoDe(el));
+      return texto.includes('[invasao de lhz]') ||
+        (texto.includes('invasao de lhz') && texto.includes('tempo restante') && texto.includes('ir para a cidade tomada'));
+    }) || null;
   // Ceifador validado ao vivo: 140,194. O nome pode ainda não estar disponível
   // após login/recarga; aproximar pelo chão 142,194 permite carregar a entidade.
   const localizarNpcLhz = (manager) => {
@@ -3041,11 +3046,17 @@
     }
     if (!painel) return segurarRetorno(w, 'LHZ: diálogo não abriu após caminhada');
     const texto = normalizar(textoDe(painel));
-    const saldo = /(?:ainda tem|restam?)\s+(\d+)\s*min/.exec(texto);
+    const painelNovo = texto.includes('tempo restante') && texto.includes('entrada de hoje');
+    const saldo = /(?:ainda tem|restam?|tempo restante)\s+(\d+)\s*min/.exec(texto);
     if (saldo && Number(saldo[1]) === 0 || /tempo.*(?:esgot|acab)|limite.*(?:atingid|esgot)|nao.*(?:tem|possui).*tempo/.test(texto))
       return encerrarAcessoConteudo('Invasão de LHZ: tempo diário esgotado');
     if (!saldo || Number(saldo[1]) <= 0) return segurarRetorno(w, 'LHZ: saldo de minutos não confirmado pelo NPC');
-    const entrar = [...painel.querySelectorAll('button, [role="button"]')].find(b => visivel(b) && !b.disabled && /^ir para a cidade tomada$/.test(normalizar(textoDe(b))));
+    if (painelNovo && !texto.includes('entrada paga hoje por este personagem'))
+      return segurarRetorno(w, 'LHZ: retorno sem cobrança não confirmado pelo painel');
+    const botoes = [...painel.querySelectorAll('button, [role="button"]')]
+      .filter(b => visivel(b) && !b.disabled && b.getAttribute?.('aria-disabled') !== 'true');
+    const entradas = botoes.filter(b => (painelNovo ? /^entrar$/ : /^ir para a cidade tomada$/).test(normalizar(textoDe(b))));
+    const entrar = entradas.length === 1 ? entradas[0] : null;
     if (!cfg.ligado || cancelando()) return false;
     const fecharLhz = () => {
       const painelAtual = dialogoLhz(w);
@@ -3054,8 +3065,9 @@
     // O servidor aguarda fechar a fala após a escolha para executar o warp.
     // Aceitar também a fala pendente de uma tentativa anterior interrompida.
     if (entrar) entrar.click();
-    else if (!fecharLhz()) return segurarRetorno(w, 'LHZ: opção Ir para a cidade tomada indisponível');
-    const fechamento = await esperarAte(() => posicao(w)?.mapa !== 'prontera' || fecharLhz(), 4000, 150);
+    else if (painelNovo || !fecharLhz()) return segurarRetorno(w, 'LHZ: opção Ir para a cidade tomada indisponível');
+    const fechamento = painelNovo ? null
+      : await esperarAte(() => posicao(w)?.mapa !== 'prontera' || fecharLhz(), 4000, 150);
     if (!cfg.ligado || cancelando()) return false;
     if (fechamento && typeof fechamento.click === 'function') {
       log('LHZ: fechando o diálogo para concluir a entrada'); fechamento.click();
