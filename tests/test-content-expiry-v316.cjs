@@ -1,6 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const src=fs.readFileSync(require('node:path').join(__dirname,'..','AUTOVOLTAR-YGGIDLE.user.js'),'utf8');
-const start=src.indexOf('  const encerrarAcessoConteudo ='),end=src.indexOf('  // Uma recarga por passagem',start);
+const start=src.indexOf('  const encerrarAcessoConteudo ='),end=src.indexOf('  const PORTEIRO_BIO4 =',start);
 function setup(modo='lhz',mapa='rockrdg2'){
  let textos=[];const venda={ligado:true,nomes:['item permitido']},armazem={ligado:true};
  const cfg={ligado:true,venda,armazem,conteudo:{modo,anterior:{mapaFarmManual:mapa,destinoFarm:{mapa,nome:mapa},retornoEvento:false}},mapaFarmManual:'mid_lhzinv',destinoFarm:{mapa:'mid_lhzinv'}};
@@ -21,4 +21,3 @@ t=setup();t.ctx.api.conferirFimConteudo(t.w);t.set(['Seu tempo na Cheffenia acab
 t.set(['Sua hora de hoje na Invasao de LHZ acabou. Volte depois das 05:00.']);t.ctx.api.conferirFimConteudo(t.w);assert.equal(t.cfg.conteudo.modo,'normal');assert.equal(t.cfg.destinoFarm.mapa,'rockrdg2');
 t=setup();t.cfg.conteudo.esgotado='Tempo esgotado confirmado pelo servidor';t.ctx.api.conferirFimConteudo(t.w);assert.equal(t.cfg.conteudo.modo,'normal','Migrate already blocked v3.15 content to normal farm');
 console.log('OK: expiry unmarks each timed content, restores per-account normal farm, preserves rules, persists recovery, ignores stale/unrelated announcements and migrates old blocked mode.');
-

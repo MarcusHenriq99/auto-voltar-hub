@@ -10,20 +10,31 @@ const section = (text, from, to) => {
 };
 function setup(mode = 'native', initialMap = 'lhz_dun04') {
   let now = 100000, dead = mode !== 'alive', map = initialMap, requestedAt = 0;
-  const deadline = now + 7000, requests = [], logs = [];
+  const normal = initialMap === 'prt_fild08';
+  const inicio = now, deadline = now + (normal ? 23000 : 7000);
+  const requests = [], saves = [], logs = [];
   let resumes = 0, originalSnapshots = 0;
   const advance = ms => {
     now += ms;
     if (mode === 'expelled' && now >= deadline - 1000) { map = 'prontera'; dead = false; }
     if (mode === 'automatic' && now >= deadline - 2000) dead = false;
+    if (mode === 'normalOff' && now >= inicio + 10000) ctx.cfg.ligado = false;
     if (requestedAt && now >= requestedAt + 600 && mode !== 'pending') dead = false;
   };
   const request = () => { assert.equal(dead, true); assert.equal(map, initialMap); assert.ok(now >= deadline, 'Server cooldown longer than 3 s is respected'); requests.push(now); requestedAt = now; };
   const button = { dispatchEvent: event => { assert.equal(event.type, 'click'); request(); } };
+  const save = { click() { saves.push(now - inicio); map = 'prontera'; dead = false; } };
   const w = {
     __elragUI: { updateEscapeSnapshot() { originalSnapshots++; } },
     __elragEngine: {
-      openEscape() { w.__elragUI.updateEscapeSnapshot({ isDead: dead, hasLeaf: mode !== 'noLeaf', reviveAvailableAt: deadline }); },
+      openEscape() {
+        const conhecido = !normal || (now >= inicio + 9000 && mode !== 'normalMissing');
+        w.__elragUI.updateEscapeSnapshot({
+          isDead: dead,
+          hasLeaf: conhecido && !['noLeaf', 'normalNoLeaf'].includes(mode),
+          reviveAvailableAt: conhecido ? deadline : 0,
+        });
+      },
       reviveNow: mode === 'button' ? undefined : request,
     },
     MouseEvent: class { constructor(type) { this.type = type; } },
@@ -37,24 +48,50 @@ function setup(mode = 'native', initialMap = 'lhz_dun04') {
     ocupado: false, morteConfirmada: () => dead, cancelando: () => false,
     Date: { now: () => now }, log: m => logs.push(m), etapa() {},
     sairDaEconomia: async () => {}, retomarCacada: async () => { assert.equal(dead, false); assert.equal(map, initialMap); resumes++; },
-    botaoPorTexto: (_doc, match) => mode === 'button' && dead && now >= deadline && match('Renascer agora (gasta 1 Folha de Yggdrasil)') ? button : null,
+    autopilotLigado: () => false, botaoHunt: () => null, retomadaPlanejada: new WeakMap(),
+    pausarCacada: async () => true, registrarDestinoFarm() {}, morteSemDialogoDesde: 0,
+    contarQuadros: async () => 0, espelhados: new WeakSet(),
+    rotinaDaCidade: async () => assert.equal(map, 'prontera'),
+    botaoPorTexto: (_doc, match) => {
+      if (!dead) return null;
+      if (match('Voltar ao ponto de salvamento')) return save;
+      // A HUD pode se adiantar ao estado do servidor durante a contagem.
+      if ((mode === 'normalDelayed' && now >= inicio + 9000 || mode === 'button' && now >= deadline)
+          && match('Renascer agora (gasta 1 Folha de Yggdrasil)')) return button;
+      return null;
+    },
     esperar: async ms => advance(ms),
     esperarAte: async (fn, ms, step = 200) => { const until = now + ms; while (now < until) { const result = fn(); if (result) return result; advance(step); } return null; },
   };
   vm.createContext(ctx);
   vm.runInContext(section(source, '  const mapaDeRenascer =', '  let ponteMorteJanela =') +
     '\nglobalThis.api={renascerNoLugar,aoMorrer,mapaDeRenascer};', ctx);
-  return { ctx, w, requests, logs, resumes: () => resumes, snapshots: () => originalSnapshots };
+  return { ctx, w, requests, saves, logs, resumes: () => resumes, snapshots: () => originalSnapshots };
 }
 (async () => {
   for (const map of ['lhz_dun04', 'lhz_dun04#instance', 'moro_vol', 'mid_volinf', 'vulcao_cheff']) {
     const t = setup('native', map);
     assert.equal(t.ctx.api.mapaDeRenascer({ mapa: map }), true);
-    await t.ctx.api.aoMorrer(t.w, { click() { throw Error('Never send special-content death to save point'); } });
+    await t.ctx.api.aoMorrer(t.w);
+    assert.deepEqual(t.saves, []);
     assert.equal(t.requests.length, 1, 'One revive request for a confirmed death');
     assert.equal(t.resumes(), 1, 'Life and same map confirmed before resuming');
     assert.ok(t.snapshots() > 0, 'Original HUD receiver is preserved');
     assert.equal(t.ctx.ocupado, false);
+  }
+
+  for (const [mode, saves, requests, resumes] of [
+    ['normalDelayed', [], 1, 1],
+    ['normalNoLeaf', [9000], 0, 0],
+    ['normalMissing', [15000], 0, 0],
+    ['normalOff', [], 0, 0],
+  ]) {
+    const t = setup(mode, 'prt_fild08');
+    await t.ctx.api.aoMorrer(t.w);
+    assert.deepEqual(t.saves, saves, mode);
+    assert.equal(t.requests.length, requests, mode);
+    assert.equal(t.resumes(), resumes, mode);
+    assert.equal(t.ctx.ocupado, false, mode);
   }
   for (const mode of ['noLeaf', 'expelled', 'alive', 'automatic', 'button', 'pending']) {
     const t = setup(mode);
@@ -72,6 +109,7 @@ function setup(mode = 'native', initialMap = 'lhz_dun04') {
     posicao: () => ({ mapa: map }), personagemMorto: () => dead,
     mapaCheffenia: m => /^(moro_vol|mid_vol)/.test(m),
     renascimentoControladoPeloVoltar: () => false,
+    cfg: { ligado: true }, pausadoPelaRifa: () => false,
     recuperacaoCheffPendente: true, recuperacaoCheffOcupada: false, ultimaTentativaCheff: 0,
     Date: { now: () => 100000 }, window: { top: {} }, poderInfernalVistoEm: 0,
     falarArauto: async () => true, botaoCheff: (_w, match) => {
@@ -87,6 +125,6 @@ function setup(mode = 'native', initialMap = 'lhz_dun04') {
   assert.equal(entries, 0); assert.equal(ctx.window.top.__FZN_CHEFF_RECOVERY__.active, false);
   dead = false; map = 'prontera'; ctx.recuperacaoCheffPendente = true;
   await ctx.recover(w); assert.equal(entries, 1, 'Actual expulsion still permits NPC reentry');
-  console.log('OK: wait for server cooldown, use one leaf and resume in same map; no save point/reload with missing leaf/button; Auto Hunt only reenters after real map change.');
+  console.log('OK: wait for the server in normal and special maps, use a leaf before saving, and confirm life on the same map.');
 })().catch(e => { console.error(e); process.exitCode = 1; });
 

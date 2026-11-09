@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.28
+// @version      3.29
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.28'); } catch { return '3.28'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.29'); } catch { return '3.29'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -2742,9 +2742,6 @@
   const vigiarTempoConteudo = (w) => {
     const alvo = mapaDoConteudo();
     if (conteudoDireto() && mapaConfereConteudo(posicao(w)?.mapa)) {
-      if (cfg.conteudo.cidadeRevalidada) {
-        cfg.conteudo.cidadeRevalidada = false; delete cfg.conteudo.esgotado; salvarCfg();
-      }
       const t = w.__elragEngine?.getTempoEvento?.();
       const fonte = cfg.conteudo.modo === 'bio4' ? 1 : 2;
       if (t?.fonte === fonte && Number.isInteger(t.secondsLeft) && t.secondsLeft >= 0) {
@@ -2816,17 +2813,6 @@
       vistos.add(t);
       if (!primeiraLeitura && cfg.ligado && conteudo === modo) { encerrarAcessoConteudo('Aviso do servidor: ' + t); return; }
     }
-  };
-  // Uma recarga por passagem pela cidade. Persistir ANTES da recarga evita
-  // loops após login/reaplicação. Não deduzir limbo pela quantidade de pessoas.
-  const revalidarProntera = (w) => {
-    if (!conteudoDireto() || posicao(w)?.mapa !== 'prontera' || cfg.conteudo.cidadeRevalidada) return true;
-    cfg.conteudo.cidadeRevalidada = true; salvarCfg();
-    log(nomeConteudo() + ': atualizando o jogo uma vez em Prontera antes do retorno, para evitar a sessão do limbo');
-    etapa('Revalidando Prontera', 'Atualizando o jogo antes de caminhar ao NPC');
-    // O api.html interno não inicializa sozinho: reiniciar a aplicação completa.
-    (w.top || w).location.reload();
-    return false;
   };
   const PORTEIRO_BIO4 = [170, 184];
   cfg.caminhoBio4 = cfg.caminhoBio4 && typeof cfg.caminhoBio4 === 'object' ? cfg.caminhoBio4 : {};
@@ -3080,7 +3066,7 @@
       return p?.mapa && p.mapa !== 'prontera' && t?.fonte === 2 && t.secondsLeft > 0 ? p : null;
     }, 20000, 250);
     if (!chegou) return segurarRetorno(w, 'LHZ: mapa e contador do servidor não confirmaram entrada');
-    cfg.conteudo.mapa = chegou.mapa; cfg.conteudo.cidadeRevalidada = false;
+    cfg.conteudo.mapa = chegou.mapa;
     cfg.mapaFarmManual = chegou.mapa; cfg.destinoFarm = { mapa: chegou.mapa, nome: 'Invasão de LHZ' };
     delete cfg.retornoPendente; delete cfg.conteudo.esgotado; salvarCfg();
     log('Invasão de LHZ: chegada confirmada em ' + chegou.mapa + ' com tempo ativo');
@@ -3364,7 +3350,6 @@
         return segurarRetorno(w, 'Bio 4: nao consegui chegar a Prontera para retornar pelo Porteiro');
       if (!cfg.ligado || cancelando()) return false;
       if (!await pausarCacada(w)) return segurarRetorno(w, 'Bio 4: nao consegui pausar a cacada antes do Porteiro');
-      if (!revalidarProntera(w)) return false;
       return cfg.conteudo.modo === 'lhz' ? entrarLhz(w) : entrarBio4(w);
     }
     const semMuni = typeof semMunicaoParaCacar === 'function' ? semMunicaoParaCacar(w) : null;
@@ -3572,6 +3557,43 @@
     try { w.__elragEngine.openEscape?.(); } catch {}
     return estadosRenascer.get(w);
   };
+  const botaoRenascer = (w) => {
+    const botao = botaoPorTexto(w.document, (t) => /^Renascer agora\b/i.test(t));
+    return botao?.getAttribute?.('aria-disabled') === 'true' ? null : botao;
+  };
+  const aguardarRenascimento = async (w, mapa, limiteSemEstado = Infinity) => {
+    const fim = Date.now() + 120000;
+    let ultimoPedido = 0, aviso = '';
+    while (cfg.ligado && !cancelando() && Date.now() < fim && posicao(w)?.mapa === mapa) {
+      if (!morteConfirmada(w)) {
+        await retomarCacada(w);
+        log('Renascer: vida confirmada e cacada retomada no mesmo mapa ' + mapa);
+        return false;
+      }
+      const estado = prepararRenascer(w);
+      const prazo = Number(estado?.reviveAvailableAt);
+      const confirmado = estado?.isDead === true && prazo > 0;
+      const liberado = confirmado && estado.hasLeaf === true && prazo <= Date.now();
+      const botao = botaoRenascer(w);
+      if ((liberado || (!confirmado && botao)) && Date.now() - ultimoPedido >= 1500) {
+        const reviveNow = w.__elragEngine?.reviveNow;
+        if ((liberado && typeof reviveNow === 'function') || botao) {
+          ultimoPedido = Date.now();
+          log('Morreu em ' + mapa + ': usando Folha para Renascer agora, sem sair do mapa');
+          if (liberado && typeof reviveNow === 'function') reviveNow.call(w.__elragEngine);
+          else botao.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true, composed: true, view: w }));
+          await esperarAte(() => cancelando() || !cfg.ligado || posicao(w)?.mapa !== mapa || !morteConfirmada(w), 6000, 200);
+          continue;
+        }
+      }
+      if (limiteSemEstado !== Infinity &&
+          (confirmado ? estado.hasLeaf === false : !botao && !ultimoPedido && Date.now() >= limiteSemEstado)) return true;
+      const motivo = confirmado && estado.hasLeaf === false ? 'Aguardando Folha' : 'Aguardando liberar Renascer agora';
+      if (aviso !== motivo) { aviso = motivo; etapa('Renascer no mapa', motivo); }
+      await esperar(250);
+    }
+    return false;
+  };
   const renascerNoLugar = async (w) => {
     if (!morteConfirmada(w)) return;
     if (mapaCovil(posicao(w)) || covil.mortePendente) return renascerNoCovil(w);
@@ -3579,30 +3601,9 @@
     try {
       const p = posicao(w);
       await sairDaEconomia(w);
-      const fim = Date.now() + 120000;
-      let ultimoPedido = 0, aviso = '';
-      while (cfg.ligado && !cancelando() && Date.now() < fim && posicao(w)?.mapa === p?.mapa) {
-        if (!morteConfirmada(w)) {
-          await retomarCacada(w);
-          log('Renascer: vida confirmada e cacada retomada no mesmo mapa ' + p.mapa);
-          return;
-        }
-        const estado = prepararRenascer(w);
-        const botao = botaoPorTexto(w.document, (t) => /^Renascer agora/i.test(t));
-        const liberado = estado?.isDead === true && estado.hasLeaf === true &&
-          Number(estado.reviveAvailableAt) > 0 && Number(estado.reviveAvailableAt) <= Date.now();
-        if ((botao || liberado) && Date.now() - ultimoPedido >= 1500) {
-          ultimoPedido = Date.now();
-          log('Morreu em ' + p.mapa + ': usando Folha para Renascer agora, sem sair do mapa');
-          if (liberado && typeof w.__elragEngine.reviveNow === 'function') w.__elragEngine.reviveNow();
-          else if (botao) botao.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true, composed: true, view: w }));
-          await esperarAte(() => posicao(w)?.mapa !== p.mapa || !morteConfirmada(w), 6000, 200);
-          continue;
-        }
-        const motivo = estado?.hasLeaf === false ? 'Aguardando Folha/reconhecimento do servidor' : 'Aguardando liberar Renascer agora';
-        if (aviso !== motivo) { aviso = motivo; etapa('Renascer no mapa', motivo + '; nao volto ao ponto de salvamento'); }
-        await esperar(250);
-      }
+      if (!p?.mapa) return;
+      await aguardarRenascimento(w, p.mapa);
+      if (posicao(w)?.mapa === p.mapa && !morteConfirmada(w)) return;
       log(posicao(w)?.mapa !== p?.mapa
         ? 'Renascer: mapa mudou de ' + p?.mapa + ' para ' + posicao(w)?.mapa + '; retorno pelo NPC se necessario'
         : 'Renascer ainda indisponivel em ' + p?.mapa + '; continuo no mapa, sem salvamento nem recarga');
@@ -3613,7 +3614,7 @@
     }
   };
 
-  const aoMorrer = async (w, botaoSalvamento) => {
+  const aoMorrer = async (w) => {
     if (!morteConfirmada(w)) return;
     if (mapaCovil(posicao(w)) || covil.mortePendente) {
       if (!ocupado) await renascerNoCovil(w);
@@ -3622,11 +3623,20 @@
     if (mapaDeRenascer(posicao(w))) return renascerNoLugar(w);
     ocupado = true;
     try {
+      const antes = posicao(w);
+      if (!antes?.mapa) return;
       const retomar = autopilotLigado(w) || !!botaoHunt(w, true);
       retomadaPlanejada.set(w, retomar);
+      await sairDaEconomia(w);
+      // O botão de salvamento pode aparecer antes do primeiro status de Folha.
+      if (!await aguardarRenascimento(w, antes.mapa, Date.now() + 15000)) return;
       if (!await pausarCacada(w)) { segurarRetorno(w, 'nao consegui pausar a cacada antes de renascer'); return; }
-      if (await sairDaEconomia(w)) botaoSalvamento = botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento') || botaoSalvamento;
-      const antes = posicao(w);
+      if (!cfg.ligado || cancelando() || posicao(w)?.mapa !== antes.mapa || !morteConfirmada(w)) return;
+      const estado = prepararRenascer(w);
+      if (botaoRenascer(w) || (estado?.isDead === true && estado.hasLeaf === true)) return;
+      const botaoSalvamento = botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento');
+      if (!botaoSalvamento) { recuperarMorteSemDialogo(w); return; }
+      morteSemDialogoDesde = 0;
       if (!cfg.mapaFarmManual && !cfg.destinoFarm?.mapa) registrarDestinoFarm(w);
       log(`Morreu${antes ? ` em ${antes.nome}` : ''}. Voltando ao ponto de salvamento`);
       botaoSalvamento.click();
@@ -5208,13 +5218,10 @@
       armazemInicialConferido = true;
       if (armazemAberto(w)) { liberarArmazemInicial(w); return; }
     }
-    const salvar = botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento');
-    if (morreu && !salvar) { recuperarMorteSemDialogo(w); return; }
-    if (morreu && salvar) {
-      morteSemDialogoDesde = 0;
-      if (mapaDeRenascer(posicao(w))) { renascerNoLugar(w); return; }
-      aoMorrer(w, salvar); return;
+    if (morreu) {
+      void aoMorrer(w); return;
     }
+    morteSemDialogoDesde = 0;
     avisarJanelaOculta(w);
     conferirMapaFarm(w);
     vigiarCidadeSemRotina(w);
