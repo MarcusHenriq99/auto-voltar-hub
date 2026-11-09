@@ -12,14 +12,14 @@ const trecho = (source, from, to) => {
   return source.slice(a, b);
 };
 
-const apSource = trecho(voltar, '  const autopilotLigado =', '  const ligarAutopilot =');
+const apSource = trecho(voltar, '  const estadoAutopilot =', '  const ligarAutopilot =');
 const ap = vm.runInNewContext(apSource + '\nautopilotLigado;', {});
 for (const state of [0, 1]) {
   assert.equal(ap({ __elragEngine: { getAutopilotSnapshot: () => ({ runtimeState: state }) } }), false);
 }
 assert.equal(ap({ __elragEngine: { getAutopilotSnapshot: () => ({ runtimeState: 2 }) } }), true);
 
-const janelaSource = trecho(hunt, '  const janelaBloqueiaReligar =', '  // v1.60: sempre ativo');
+const janelaSource = trecho(hunt, '  const janelaBloqueiaReligar =', '  // Vigia de renascimento');
 const janela = vm.runInNewContext(trecho(hunt, '  const personagemMorto =', '  const covilControladoPeloVoltar =') + janelaSource + '\njanelaBloqueiaReligar;', {
   temJanelaAberta: () => true,
   mapaDeRenascer: () => true,
@@ -34,6 +34,7 @@ let agora = 10000;
 const ctx = {
   Date: { now: () => agora },
   botaoPorTexto: () => undefined,
+  etapa: () => {},
   log: () => {},
 };
 vm.createContext(ctx);
@@ -49,17 +50,12 @@ assert.equal(ctx.morteConfirmadaTeste(w), true, 'Detecta morte mesmo sem o menu 
 ctx.abrirMenuMorteTeste(w);
 assert.equal(menuClicado, true, 'Abre o menu para permitir o retorno');
 let recargas = 0;
-const sessao = new Map();
 const wSemDialogo = {
   document: {
     body: { innerText: 'HP\n1 / 56.458\n0,0%\nMenu\nConfigurações' },
     head: { appendChild: () => {} },
     createElement: () => ({ type: '', textContent: '' }),
     querySelector: () => ({ click: () => { menuClicado = true; } }),
-  },
-  sessionStorage: {
-    getItem: (k) => sessao.get(k) || null,
-    setItem: (k, v) => sessao.set(k, v),
   },
   location: { reload: () => { recargas++; } },
 };
@@ -68,10 +64,10 @@ ctx.recuperarMorteSemDialogoTeste(wSemDialogo);
 assert.equal(recargas, 0, 'Primeiro tenta abrir o menu de morte');
 agora += 9000;
 ctx.recuperarMorteSemDialogoTeste(wSemDialogo);
-assert.equal(recargas, 1, 'Recarrega somente o jogo se o dialogo de morte nao aparecer');
+assert.equal(recargas, 0, 'A falta do diálogo de morte não autoriza recarga');
 agora += 9000;
 ctx.recuperarMorteSemDialogoTeste(wSemDialogo);
-assert.equal(recargas, 1, 'Nao entra em ciclo de recargas durante dois minutos');
+assert.equal(recargas, 0, 'Continua procurando o menu de morte sem recarregar');
 wSemDialogo.document.body.innerText = 'HP\n1 / 100\n1,0%';
 assert.equal(ctx.morteConfirmadaTeste(wSemDialogo), false, 'Nao trata 1 HP vivo como morto');
 console.log('OK: estados parados, janela do Covil e morte sem menu detectados.');

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.29
+// @version      3.30
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.29'); } catch { return '3.29'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.30'); } catch { return '3.30'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -3561,6 +3561,14 @@
     const botao = botaoPorTexto(w.document, (t) => /^Renascer agora\b/i.test(t));
     return botao?.getAttribute?.('aria-disabled') === 'true' ? null : botao;
   };
+  const limiteRenascimentoAtingido = (w) => {
+    try {
+      // StopReason.DeadReviveSuspended na HUD do jogo.
+      if (Number(w.__elragEngine?.getAutopilotSnapshot?.()?.stopReason) === 10) return true;
+    } catch {}
+    return /seu autopilot ja renasceu\s+\d+\s+vez(?:es)?,\s+o limite que voce escolheu/.test(
+      normalizar(w.document.body?.innerText || ''));
+  };
   const aguardarRenascimento = async (w, mapa, limiteSemEstado = Infinity) => {
     const fim = Date.now() + 120000;
     let ultimoPedido = 0, aviso = '';
@@ -3571,6 +3579,7 @@
         return false;
       }
       const estado = prepararRenascer(w);
+      if (limiteRenascimentoAtingido(w)) return 'limite';
       const prazo = Number(estado?.reviveAvailableAt);
       const confirmado = estado?.isDead === true && prazo > 0;
       const liberado = confirmado && estado.hasLeaf === true && prazo <= Date.now();
@@ -3587,70 +3596,58 @@
         }
       }
       if (limiteSemEstado !== Infinity &&
-          (confirmado ? estado.hasLeaf === false : !botao && !ultimoPedido && Date.now() >= limiteSemEstado)) return true;
+          (confirmado ? estado.hasLeaf === false : !botao && !ultimoPedido && Date.now() >= limiteSemEstado)) return 'salvamento';
       const motivo = confirmado && estado.hasLeaf === false ? 'Aguardando Folha' : 'Aguardando liberar Renascer agora';
       if (aviso !== motivo) { aviso = motivo; etapa('Renascer no mapa', motivo); }
       await esperar(250);
     }
     return false;
   };
-  const renascerNoLugar = async (w) => {
-    if (!morteConfirmada(w)) return;
-    if (mapaCovil(posicao(w)) || covil.mortePendente) return renascerNoCovil(w);
-    ocupado = true;
-    try {
-      const p = posicao(w);
-      await sairDaEconomia(w);
-      if (!p?.mapa) return;
-      await aguardarRenascimento(w, p.mapa);
-      if (posicao(w)?.mapa === p.mapa && !morteConfirmada(w)) return;
-      log(posicao(w)?.mapa !== p?.mapa
-        ? 'Renascer: mapa mudou de ' + p?.mapa + ' para ' + posicao(w)?.mapa + '; retorno pelo NPC se necessario'
-        : 'Renascer ainda indisponivel em ' + p?.mapa + '; continuo no mapa, sem salvamento nem recarga');
-    } catch (e) {
-      log('Renascer: erro ' + String(e?.message || e).slice(0, 100));
-    } finally {
-      ocupado = false;
-    }
-  };
-
   const aoMorrer = async (w) => {
     if (!morteConfirmada(w)) return;
-    if (mapaCovil(posicao(w)) || covil.mortePendente) {
+    const antes = posicao(w);
+    const limiteAtingido = limiteRenascimentoAtingido(w);
+    if (!limiteAtingido && (mapaCovil(antes) || covil.mortePendente)) {
       if (!ocupado) await renascerNoCovil(w);
       return;
     }
-    if (mapaDeRenascer(posicao(w))) return renascerNoLugar(w);
+    if (!antes?.mapa) return;
     ocupado = true;
     try {
-      const antes = posicao(w);
-      if (!antes?.mapa) return;
-      const retomar = autopilotLigado(w) || !!botaoHunt(w, true);
-      retomadaPlanejada.set(w, retomar);
+      const cacava = autopilotLigado(w) || !!botaoHunt(w, true);
       await sairDaEconomia(w);
       // O botão de salvamento pode aparecer antes do primeiro status de Folha.
-      if (!await aguardarRenascimento(w, antes.mapa, Date.now() + 15000)) return;
+      const motivo = limiteAtingido ? 'limite' : await aguardarRenascimento(
+        w, antes.mapa, mapaDeRenascer(antes) ? Infinity : Date.now() + 15000);
+      if (!motivo || !cfg.ligado || cancelando() || posicao(w)?.mapa !== antes.mapa || !morteConfirmada(w)) return;
+      const acharSalvamento = () => botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento');
+      prepararRenascer(w);
+      if (!acharSalvamento()) { recuperarMorteSemDialogo(w); return; }
+      const retomar = cacava || motivo === 'limite';
+      retomadaPlanejada.set(w, retomar);
       if (!await pausarCacada(w)) { segurarRetorno(w, 'nao consegui pausar a cacada antes de renascer'); return; }
       if (!cfg.ligado || cancelando() || posicao(w)?.mapa !== antes.mapa || !morteConfirmada(w)) return;
       const estado = prepararRenascer(w);
-      if (botaoRenascer(w) || (estado?.isDead === true && estado.hasLeaf === true)) return;
-      const botaoSalvamento = botaoPorTexto(w.document, (t) => t === 'Voltar ao ponto de salvamento');
+      const noLimite = motivo === 'limite' || limiteRenascimentoAtingido(w);
+      if (!noLimite && (botaoRenascer(w) || (estado?.isDead === true && estado.hasLeaf === true))) return;
+      const botaoSalvamento = acharSalvamento();
       if (!botaoSalvamento) { recuperarMorteSemDialogo(w); return; }
-      morteSemDialogoDesde = 0;
       if (!cfg.mapaFarmManual && !cfg.destinoFarm?.mapa) registrarDestinoFarm(w);
-      log(`Morreu${antes ? ` em ${antes.nome}` : ''}. Voltando ao ponto de salvamento`);
-      botaoSalvamento.click();
+      log(noLimite ? 'Autopilot atingiu o limite de renascimentos. Voltando ao ponto de salvamento' :
+        `Morreu em ${antes.nome || antes.mapa}. Voltando ao ponto de salvamento`);
+      if (typeof w.__elragEngine?.returnToSavePoint === 'function') w.__elragEngine.returnToSavePoint();
+      else botaoSalvamento.click();
       contarQuadros(w, 2000).then((n) => log(`Quadros do jogo: ${n} em 2 s (${espelhados.has(w) ? 'espelhado' : 'NAO espelhado'})`));
       const chegou = await esperarAte(() => {
         const p = posicao(w);
-        return p && antes && (p.mapa !== antes.mapa || p.x !== antes.x || p.y !== antes.y);
+        return p?.mapa && !morteConfirmada(w) && (p.mapa !== antes.mapa || p.x !== antes.x || p.y !== antes.y);
       }, 30000, 500);
       if (!chegou) {
         chegadaAtrasada = { mapaMorte: antes?.mapa || '', desde: Date.now(), retomarAutopilot: retomar };
         log('Nao chegou na cidade em 30 s; sigo conferindo a chegada e a tela de morte');
         return;
       }
-      await rotinaDaCidade(w, retomar);
+      if (!cfg.covil?.ligado) await rotinaDaCidade(w, retomar);
     } catch (e) {
       log(`erro: ${String(e?.message || e).slice(0, 120)}`);
     } finally {
@@ -3658,7 +3655,6 @@
     }
   };
   let ponteMorteJanela = null, ultimaPonteMorte = 0, ultimaAberturaMenuMorte = 0;
-  let morteSemDialogoJanela = null, morteSemDialogoDesde = 0, morteSemDialogoAviso = 0;
   const hpMortal = (w) => {
     const texto = w.document.body?.innerText || '';
     const hp = /\bHP\s*([\d.]+)\s*\/\s*([\d.]+)\s*([\d.,]+)\s*%/i.exec(texto);
@@ -3687,29 +3683,8 @@
     return hpMortal(w);
   };
   const recuperarMorteSemDialogo = (w) => {
-    if (mapaDeRenascer(posicao(w))) { if (!ocupado) void renascerNoLugar(w); return; }
-    if (morteSemDialogoJanela !== w) { morteSemDialogoJanela = w; morteSemDialogoDesde = 0; }
-    if (!morteSemDialogoDesde) morteSemDialogoDesde = Date.now();
-    if (Date.now() - morteSemDialogoDesde < 8000) { abrirMenuMorte(w); return; }
-    // O cliente pode deixar HP em 1/0,0% e exibir o menu comum. Nessa
-    // dessincronia nao existe botao de salvamento; recarregar apenas o jogo
-    // permite ao auto login retomar o personagem sem limpar cache/configuracao.
-    const chave = 'fzn-autovoltar-reload-morte';
-    let ultimo = 0;
-    try { ultimo = Number(w.sessionStorage.getItem(chave)) || 0; } catch {}
-    if (ultimo && Date.now() - ultimo < 120000) {
-      if (Date.now() - morteSemDialogoAviso > 30000) {
-        morteSemDialogoAviso = Date.now();
-        log('HP em 0%, mas o jogo nao abriu o menu de morte; aguardando nova tentativa de recarga');
-      }
-      return;
-    }
-    try {
-      w.sessionStorage.setItem(chave, String(Date.now()));
-      log('HP em 0% sem opcoes de renascimento; recarregando somente o jogo para recuperar a sessao');
-      w.location.reload();
-      morteSemDialogoDesde = Date.now();
-    } catch (e) { log('Morte: falha ao recarregar o jogo: ' + String(e).slice(0, 100)); }
+    etapa('Aguardando menu de morte', 'Ponto de salvamento ainda indisponível');
+    abrirMenuMorte(w);
   };
   const abrirMenuMorte = (w) => {
     if (Date.now() - ultimaAberturaMenuMorte < 3000) return;
@@ -3980,7 +3955,7 @@
         etapa('Covil', 'Aguardando Renascer agora com Folha de Yggdrasil; permaneço no covil');
         return;
       }
-      if (posicao(w)?.mapa !== mapa || !morteConfirmada(w)) return;
+      if (posicao(w)?.mapa !== mapa || !morteConfirmada(w) || limiteRenascimentoAtingido(w)) return;
       log('Covil: usando Renascer agora com Folha de Yggdrasil, sem sair da instância');
       // O .click() global redireciona por coordenadas e emite vários eventos.
       // Aqui só o botão de renascer pode receber um único click.
@@ -5168,9 +5143,14 @@
     vigiarTempoConteudo(w);
     if (!cfg.covil?.ligado && !mapaCovil(posicao(w)) && !covil.mortePendente) vigiarRifa(w);
     if (rifaRodando) return;
+    const morreu = morteConfirmada(w);
+    if (cfg.ligado && morreu && limiteRenascimentoAtingido(w)) {
+      if (!ocupado) void aoMorrer(w);
+      return;
+    }
     // A tela de tres mortes oferece Renascer agora. Trate-a antes de uma
     // rotina ocupada deixar o personagem esperando no menu.
-    if (cfg.ligado && (cfg.covil.ligado && emInstancia(posicao(w)) || mapaCovil(posicao(w)) || covil.mortePendente) && morteConfirmada(w)) {
+    if (cfg.ligado && (cfg.covil.ligado && emInstancia(posicao(w)) || mapaCovil(posicao(w)) || covil.mortePendente) && morreu) {
       covil.mortePendente = true;
       if (!covil.morteRegistrada && cfg.covil.ligado) {
         covil.morteRegistrada = true; contarCovil('morte');
@@ -5181,19 +5161,18 @@
       }
       return;
     }
-    if (!morteConfirmada(w)) {
+    if (!morreu) {
       covil.morteRegistrada = false;
       covil.mortePendente = false;
     }
-    if (cfg.ligado && mapaDeRenascer(posicao(w)) && morteConfirmada(w)) {
-      if (!ocupado) void renascerNoLugar(w);
+    if (cfg.ligado && mapaDeRenascer(posicao(w)) && morreu) {
+      if (!ocupado) void aoMorrer(w);
       return;
     }
     if (!cfg.ligado || ocupado) return;
     const cheffRecovery = window.top.__FZN_CHEFF_RECOVERY__;
     const mapaCheff = posicao(w)?.mapa || '';
     if (cheffRecovery?.active && Date.now() - (cheffRecovery.desde || 0) < 45000 && (mapaCheffenia(mapaCheff) || /^prontera$/i.test(mapaCheff) || /cheffenia|chefenia/i.test(mapaCheff))) return;
-    const morreu = morteConfirmada(w);
     if (cfg.covil.ligado) {
       if (morreu) { etapa('Covil', 'Aguardando renascimento; não uso retorno ao salvamento'); return; }
       rodadaCovil(w); return;
@@ -5221,7 +5200,6 @@
     if (morreu) {
       void aoMorrer(w); return;
     }
-    morteSemDialogoDesde = 0;
     avisarJanelaOculta(w);
     conferirMapaFarm(w);
     vigiarCidadeSemRotina(w);

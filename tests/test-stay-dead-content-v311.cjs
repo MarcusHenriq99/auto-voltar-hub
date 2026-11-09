@@ -13,7 +13,8 @@ function setup(mode = 'native', initialMap = 'lhz_dun04') {
   const normal = initialMap === 'prt_fild08';
   const inicio = now, deadline = now + (normal ? 23000 : 7000);
   const requests = [], saves = [], logs = [];
-  let resumes = 0, originalSnapshots = 0;
+  let resumes = 0, originalSnapshots = 0, menuOpened = 0;
+  const limiteTexto = 'Seu Autopilot já renasceu 10 vezes, o limite que você escolheu. Continuar renascendo (gasta 1 Folha de Yggdrasil) ou voltar para a cidade?';
   const advance = ms => {
     now += ms;
     if (mode === 'expelled' && now >= deadline - 1000) { map = 'prontera'; dead = false; }
@@ -27,6 +28,10 @@ function setup(mode = 'native', initialMap = 'lhz_dun04') {
   const w = {
     __elragUI: { updateEscapeSnapshot() { originalSnapshots++; } },
     __elragEngine: {
+      getAutopilotSnapshot() {
+        return { stopReason: mode === 'limitEngine' || mode === 'limitNoMenu' ||
+          (mode === 'limitLate' && now >= inicio + 4000) ? 10 : 0 };
+      },
       openEscape() {
         const conhecido = !normal || (now >= inicio + 9000 && mode !== 'normalMissing');
         w.__elragUI.updateEscapeSnapshot({
@@ -36,27 +41,30 @@ function setup(mode = 'native', initialMap = 'lhz_dun04') {
         });
       },
       reviveNow: mode === 'button' ? undefined : request,
+      returnToSavePoint: mode === 'limitEngine' ? () => save.click() : undefined,
     },
     MouseEvent: class { constructor(type) { this.type = type; } },
-    document: { body: { innerText: 'Voltar ao ponto de salvamento' } },
+    document: { body: { innerText: mode === 'limitHud' ? limiteTexto : 'Voltar ao ponto de salvamento' } },
     location: { reload() { throw Error('No reload in special content'); } },
   };
   const ctx = {
     cfg: { ligado: true }, instanciaAutoVoltar: {},
-    normalizar: s => s.toLowerCase(), mapaCheffenia: m => /^(moro_vol|mid_vol)/.test(m),
+    normalizar: s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(),
+    mapaCheffenia: m => /^(moro_vol|mid_vol)/.test(m),
     posicao: () => ({ mapa: map }), covil: {}, mapaCovil: () => false,
     ocupado: false, morteConfirmada: () => dead, cancelando: () => false,
     Date: { now: () => now }, log: m => logs.push(m), etapa() {},
     sairDaEconomia: async () => {}, retomarCacada: async () => { assert.equal(dead, false); assert.equal(map, initialMap); resumes++; },
     autopilotLigado: () => false, botaoHunt: () => null, retomadaPlanejada: new WeakMap(),
-    pausarCacada: async () => true, registrarDestinoFarm() {}, morteSemDialogoDesde: 0,
+    pausarCacada: async () => true, registrarDestinoFarm() {},
+    abrirMenuMorte: () => { menuOpened++; },
     contarQuadros: async () => 0, espelhados: new WeakSet(),
     rotinaDaCidade: async () => assert.equal(map, 'prontera'),
     botaoPorTexto: (_doc, match) => {
       if (!dead) return null;
-      if (match('Voltar ao ponto de salvamento')) return save;
+      if (match('Voltar ao ponto de salvamento')) return mode === 'limitNoMenu' ? null : save;
       // A HUD pode se adiantar ao estado do servidor durante a contagem.
-      if ((mode === 'normalDelayed' && now >= inicio + 9000 || mode === 'button' && now >= deadline)
+      if ((mode === 'limitHud' || mode === 'normalDelayed' && now >= inicio + 9000 || mode === 'button' && now >= deadline)
           && match('Renascer agora (gasta 1 Folha de Yggdrasil)')) return button;
       return null;
     },
@@ -65,8 +73,9 @@ function setup(mode = 'native', initialMap = 'lhz_dun04') {
   };
   vm.createContext(ctx);
   vm.runInContext(section(source, '  const mapaDeRenascer =', '  let ponteMorteJanela =') +
-    '\nglobalThis.api={renascerNoLugar,aoMorrer,mapaDeRenascer};', ctx);
-  return { ctx, w, requests, saves, logs, resumes: () => resumes, snapshots: () => originalSnapshots };
+    section(source, '  const recuperarMorteSemDialogo =', '  const abrirMenuMorte =') +
+    '\nglobalThis.api={aoMorrer,mapaDeRenascer};', ctx);
+  return { ctx, w, requests, saves, logs, resumes: () => resumes, snapshots: () => originalSnapshots, menuOpened: () => menuOpened };
 }
 (async () => {
   for (const map of ['lhz_dun04', 'lhz_dun04#instance', 'moro_vol', 'mid_volinf', 'vulcao_cheff']) {
@@ -95,12 +104,27 @@ function setup(mode = 'native', initialMap = 'lhz_dun04') {
   }
   for (const mode of ['noLeaf', 'expelled', 'alive', 'automatic', 'button', 'pending']) {
     const t = setup(mode);
-    await t.ctx.api.renascerNoLugar(t.w);
+    await t.ctx.api.aoMorrer(t.w);
     if (['noLeaf', 'expelled', 'alive', 'automatic'].includes(mode)) assert.equal(t.requests.length, 0, mode);
     if (mode === 'button') assert.equal(t.requests.length, 1);
     assert.equal(t.resumes(), ['automatic', 'button'].includes(mode) ? 1 : 0, mode);
     assert.ok(!t.logs.some(m => /Voltando ao ponto de salvamento/.test(m)));
   }
+  for (const [mode, when] of [['limitEngine', 0], ['limitHud', 0], ['limitLate', 4000]]) {
+    for (const map of ['prt_fild08', 'lhz_dun04', 'mid_lhzinv']) {
+      const t = setup(mode, map);
+      await t.ctx.api.aoMorrer(t.w);
+      assert.deepEqual(t.saves, [when], mode + ' on ' + map);
+      assert.deepEqual(t.requests, []);
+      assert.equal(t.ctx.retomadaPlanejada.get(t.w), true);
+    }
+  }
+  const semMenu = setup('limitNoMenu');
+  for (let i = 0; i < 3; i++) await semMenu.ctx.api.aoMorrer(semMenu.w);
+  assert.equal(semMenu.menuOpened(), 3);
+  assert.deepEqual(semMenu.saves, []);
+  assert.deepEqual(semMenu.requests, []);
+  assert.ok(!semMenu.logs.some(m => /reload/i.test(m)));
 
   // Auto Hunt may reenter after an actual map change; it cannot send the
   // character to Prontera on a death or compete with Auto-voltar for a leaf.

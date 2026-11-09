@@ -15,6 +15,7 @@ async function scenario(mode) {
     Date: { now: () => now }, covil: {}, ocupado: false,
     posicao: () => ({ mapa: map }), botaoPorTexto: () => mode === 'absent' ? null : button,
     abrirMenuMorte: () => {}, etapa: () => {}, log: () => {}, morteConfirmada: () => dead,
+    limiteRenascimentoAtingido: () => mode === 'limit',
     huntsPausados: new WeakSet(), botaoHunt: () => null,
     autopilotLigado: () => autopilot, ligarAutopilot: () => { autopilot = true; },
     esperarAte: async (fn, timeout, step = 200) => {
@@ -36,15 +37,15 @@ async function scenario(mode) {
     section('  const aoMorrer =', '  let ponteMorteJanela =') +
     '\nglobalThis.revive = renascerNoCovil; globalThis.die = aoMorrer;', ctx);
   await ctx.revive(w);
-  assert.equal(clicks, ['absent', 'disabled'].includes(mode) ? 0 : 1, 'Um único evento no controle exato');
+  assert.equal(clicks, ['absent', 'disabled', 'limit'].includes(mode) ? 0 : 1, 'Um único evento no controle exato');
   assert.equal(autopilot, mode === 'success', 'Só retoma com vida confirmada no mesmo mapa');
   assert.equal(ctx.covil.mortePendente, mode !== 'success');
   assert.equal(ctx.ocupado, false);
-  // Mesmo que a rota genérica de morte seja chamada, nunca usa salvamento.
-  await ctx.die(w, { click: () => { throw Error('Salvamento proibido após morte no covil'); } });
+  // Fora do limite escolhido, a rota genérica mantém o renascimento no Covil.
+  if (mode !== 'limit') await ctx.die(w);
 }
 (async () => {
-  for (const mode of ['success', 'absent', 'disabled', 'pending', 'teleported']) await scenario(mode);
+  for (const mode of ['success', 'absent', 'disabled', 'pending', 'teleported', 'limit']) await scenario(mode);
   const ctx = { cfg: { covil: { ligado: true } }, mapaCovil: () => true, posicao: () => ({ mapa: '1@tower' }), covil: {} };
   vm.createContext(ctx);
   vm.runInContext(section('  const sairParaRifa =', '  const fecharRifa =') +
