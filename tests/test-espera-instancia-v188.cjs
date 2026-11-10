@@ -43,3 +43,6 @@ assert.equal(ctx.api.emEsperaInstancia(), false, 'continuar no mesmo mapa nao re
 ctx.cfg.ligado = false; mapa = 'prontera'; passo(); mapa = '2@tower'; passo();
 assert.equal(ctx.api.emEsperaInstancia(), false, 'Auto Hunt desligado nao mexe');
 console.log('OK: 5 s parado ao entrar em instancia, depois a cacada volta.');
+const n = source.indexOf('  const explorarNoMotor = async');
+assert.ok(/if \(ehInstancia\(pos\.mapa\)\)[\s\S]{0,300}return false;/.test(source.slice(n, n + 1500)), 'v1.89: explorar nunca anda em instancia');
+console.log('OK: sem busca de monstros em instancia.');

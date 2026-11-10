@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.88
+// @version      1.89
 // @description  Complementa o Autopilot: adquire alvos próximos sem esperar o primeiro golpe, retoma perseguições paradas e explora pelo motor do jogo, preservando as regras de teleporte.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -1587,11 +1587,17 @@
       return true;
     } catch (err) { log('erro ao fixar: ' + String(err).slice(0,80)); return false; }
   };
+  let instanciaSemBuscaLog = '';
   const explorarNoMotor = async (w, e, agora) => {
     if (emEsperaInstancia()) return false;
     if (ocupado || !cfg.ligado || pausadoPelaRifa() || temJanelaAberta(w) || agora - ultimoPasso < PASSO_EXPLORAR_MS) return false;
     const pos = posicao(e);
     if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y) || CIDADES_RE.test(pos.mapa)) return false;
+    // v1.89: em instancia (mapa com "@") o jogo leva o personagem sozinho; nunca andar buscando monstros.
+    if (ehInstancia(pos.mapa)) {
+      if (instanciaSemBuscaLog !== pos.mapa) { instanciaSemBuscaLog = pos.mapa; log('instancia ' + pos.mapa + ': busca de monstros desligada (o jogo conduz)'); }
+      return false;
+    }
     ocupado = true; ultimoPasso = agora;
     try {
       if (!w.__fznHuntCaminhada || w.__fznHuntCaminhada.erro) {
@@ -1895,7 +1901,7 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const versao = typeof GM_info === 'undefined' ? '1.88' : (GM_info.script?.version || '1.88');
+      const versao = typeof GM_info === 'undefined' ? '1.89' : (GM_info.script?.version || '1.89');
       const cartao = fznCartaoYgg('Auto-hunt', 'v' + versao, 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
