@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.31
+// @version      3.32
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.31'); } catch { return '3.31'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.32'); } catch { return '3.32'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -1206,6 +1206,11 @@
     cfg.armazem.modoInventario = cfg.armazem.tudoNoMapa ? 'guardar' : 'vender';
   }
   const guardarTudo = () => cfg.armazem.modoInventario === 'guardar';
+  // v3.32: destino da Asa de Mosca COMUM (id 601). Gigante/Infinita seguem sempre protegidas.
+  if (!['manter', 'guardar', 'vender'].includes(cfg.asaComum)) cfg.asaComum = 'manter';
+  const ASA_COMUM_ROTULO = { manter: 'Asa: nao vender', guardar: 'Asa: guardar na Kafra', vender: 'Asa: vender' };
+  const nomeAsaComum = (nome) => /^(?:asas? de mosca|fly wings?)$/.test(nomeBase(nome));
+  const ehAsaComum = (item) => Number(item?.itemId) === 601 || nomeAsaComum(item?.name);
   const guardarNoMapa = () => guardarTudo() && cfg.armazem.tudoNoMapa;
   const venderNoMapa = () => !cfg.ferreiro && !guardarTudo() && cfg.venda.ligado && cfg.lojaBolso &&
     cfg.armazem.ligado && cfg.armazem.usarCartao && cfg.armazem.tudoNoMapa;
@@ -1234,7 +1239,8 @@
     const n = nomeBase(item?.name);
     return Boolean(n) && (cfg.compras || []).some((c) => c && c.nome && normalizar(c.nome) === n);
   };
-  const reservadoNoFarm = (item) => itemDeCompra(item) || /\bflechas?\b|\barrows?\b|\basas? de mosca\b|\bfly wings?\b/.test(normalizar(item.name));
+  const reservadoNoFarm = (item) => itemDeCompra(item) ||
+    (ehAsaComum(item) ? cfg.asaComum === 'manter' : /\bflechas?\b|\barrows?\b|\basas? de mosca\b|\bfly wings?\b/.test(normalizar(item.name)));
   const verdadeiro = (v) => v === true || v === 1 || v === '1' || v === 'true';
   const ovoDePet = (item) => verdadeiro(item?.isPetEgg) || verdadeiro(item?.petEgg) ||
     /^ovo (?:de|do|da) \S+/.test(nomeBase(item?.name)) || /\bpet egg\b/.test(nomeBase(item?.name));
@@ -1509,7 +1515,7 @@
     const equipados = await lerEquipados(w);
     if (!equipados) return { ok: false, motivo: 'nao consegui conferir os itens equipados' };
     const lista = candidatosArmazem(equipados, todos);
-    log('Armazem: ' + lista.length + (todos ? ' pilhas para guardar no maximo' : ' pilhas protegidas para guardar') + ' (ovos de pet, equipados, travados, favoritos, cartao, flechas e Asa de Mosca preservados)');
+    log('Armazem: ' + lista.length + (todos ? ' pilhas para guardar no maximo' : ' pilhas protegidas para guardar') + ' (ovos de pet, equipados, travados, favoritos, cartao, flechas' + (cfg.asaComum === 'manter' ? ' e Asa de Mosca' : '') + ' preservados)');
     if (!lista.length) {
       const fechou = await fecharArmazem(w);
       return { ok: fechou, depositados: 0, motivo: fechou ? null : 'janela de armazem nao fechou' };
@@ -1733,7 +1739,10 @@
   const nuncaVenderNome = (nome) => {
     const n = nomeBase(nome);
     if (!n) return null;
-    if (/\basas? de mosca\b|\bfly wings?\b/.test(n)) return 'NUNCA VENDER (Asa de Mosca reservada para o farm)';
+    if (nomeAsaComum(nome)) {
+      if (cfg.asaComum === 'guardar') return 'NUNCA VENDER (Asa de Mosca: guardar na Kafra)';
+      if (cfg.asaComum === 'manter') return 'NUNCA VENDER (Asa de Mosca reservada para o farm)';
+    } else if (/\basas? de mosca\b|\bfly wings?\b/.test(n)) return 'NUNCA VENDER (Asa de Mosca reservada para o farm)';
     if (NUNCA_VENDER_FIXO.some((x) => n.includes(normalizar(x)))) return 'NUNCA VENDER (item raro)';
     if (PREMIOS_RIFA.some((x) => n.includes(normalizar(x)))) return 'NUNCA VENDER (premio da rifa)';
     if (NOMES_CONSOLACAO_RIFA.has(n.replace(/^\[evento\]\s*/, ''))) return 'NUNCA VENDER (consolacao da rifa)';
@@ -1742,7 +1751,10 @@
     return null;
   };
   const nuncaVender = (item) => {
-    if (Number(item?.itemId) === 601) return 'NUNCA VENDER (Asa de Mosca reservada para o farm)';
+    if (ehAsaComum(item)) {
+      if (cfg.asaComum === 'guardar') return 'NUNCA VENDER (Asa de Mosca: guardar na Kafra)';
+      if (cfg.asaComum === 'manter') return 'NUNCA VENDER (Asa de Mosca reservada para o farm)';
+    }
     const porNome = nuncaVenderNome(item?.name);
     if (porNome) return porNome;
     // tier do jogo (src-ui/itemRarity.ts): 5 = Lendario (fundo dourado), 6 = Mitico
@@ -1762,6 +1774,7 @@
     if (itemTravado(item)) return 'cadeado';
     if (itemDeCompra(item)) return 'item da lista de Compras';
     if (itemFavorito(item)) return 'favorito';
+    if (cfg.asaComum === 'vender' && ehAsaComum(item)) return null;
     if (item.isCard && v.proteger.card) return 'carta';
     if (v.proteger[tipo]) return TIPOS_VENDA.find(([k]) => k === tipo)?.[1] || tipo;
     if (v.comCarta && (item.cards || []).some(Boolean)) return 'tem carta encaixada';
@@ -5389,6 +5402,8 @@
     if (cartao) { cartao.textContent = 'Cartao Kafra'; cartao.setAttribute('aria-pressed', String(cfg.armazem.tudoNoMapa)); cartao.disabled = ocupado; cartao.className = cfg.armazem.tudoNoMapa ? 'fzn-av--on' : 'fzn-av--off'; }
     const modo = painel.querySelector('[data-modo-inventario]');
     if (modo) { modo.textContent = guardarTudo() ? 'Guardar tudo' : 'Vender permitidos'; modo.disabled = ocupado; modo.className = ''; }
+    const asaBtn = painel.querySelector('[data-asa-comum]');
+    if (asaBtn) { asaBtn.textContent = ASA_COMUM_ROTULO[cfg.asaComum]; asaBtn.disabled = ocupado; asaBtn.className = cfg.asaComum === 'vender' ? 'fzn-av--on' : ''; }
     const evento = painel.querySelector('[data-evento]');
     if (evento) { evento.textContent = 'Evento'; evento.disabled = ocupado; evento.className = cfg.retornoEvento ? 'fzn-av--on' : 'fzn-av--off'; evento.setAttribute('aria-pressed', String(Boolean(cfg.retornoEvento))); }
     for (const modo of ['bio4', 'lhz', 'cheffenia', 'expedicao']) {
@@ -6059,6 +6074,14 @@
       const modoInventario = document.createElement('button'); estilo(modoInventario); modoInventario.dataset.modoInventario='1';
       modoInventario.title='Guardar tudo: armazena os itens elegiveis no maximo. Vender permitidos: guarda os protegidos pela lista de nao vender e vende o restante. Preserva flechas, Asa de Mosca, cartao, equipados, travados e favoritos.';
       modoInventario.addEventListener('click',()=>{if(ocupado)return;cfg.armazem.modoInventario=guardarTudo()?'vender':'guardar';salvarCfg();log('Modo: '+(guardarTudo()?'Guardar tudo':'Vender permitidos'));atualizarStatus();});
+      const asaComumBtn = document.createElement('button'); estilo(asaComumBtn); asaComumBtn.dataset.asaComum = '1';
+      asaComumBtn.title = 'Asa de Mosca comum: Nao vender = fica na mochila para o farm. Guardar na Kafra = vai para o armazem e nunca e vendida. Vender = vendida com o resto (cadeado e favorito continuam protegendo). Asas Gigante/Infinita nunca sao vendidas. Clique para alternar.';
+      asaComumBtn.addEventListener('click', () => {
+        if (ocupado) return;
+        const ordem = ['manter', 'guardar', 'vender'];
+        cfg.asaComum = ordem[(ordem.indexOf(cfg.asaComum) + 1) % ordem.length];
+        salvarCfg(); log('Asa de Mosca comum: ' + ASA_COMUM_ROTULO[cfg.asaComum]); atualizarStatus();
+      });
       const evento = document.createElement('button'); estilo(evento); evento.dataset.evento = '1';
       evento.title = 'ON: apos curar, guardar e vender em Prontera, fala com o Gerente de Premios e escolhe Ir para o evento. OFF: retorna pelo mapa de farm configurado. Salvo por conta.';
       evento.addEventListener('click', () => { if (ocupado) return; cfg.retornoEvento = !cfg.retornoEvento; salvarCfg(); log('Retorno pelo Gerente de Eventos ' + (cfg.retornoEvento ? 'ligado' : 'desligado')); atualizarStatus(); });
@@ -6146,7 +6169,7 @@
       const grupo = (titulo, ...itens) => { const g = document.createElement('div'); g.className = 'fzn-av__grupo'; const t = document.createElement('span'); t.textContent = titulo; g.append(t, ...itens); return g; };
       const gaveta = document.createElement('div'); gaveta.className = 'fzn-av__gaveta'; gaveta.dataset.gaveta = '1';
       gaveta.append(
-        grupo('Rotina', limites, modoInventario, cartaoFarm, bolso, ferreiro, evento),
+        grupo('Rotina', limites, modoInventario, asaComumBtn, cartaoFarm, bolso, ferreiro, evento),
         grupo('Extras', bio4, lhz, cheffenia, expedicao, faseExpedicao, covilBtn, rifaLiga, lucky),
         grupo('Configurar', mapaFarm, compras, venda, nuncaVenderBtn, rifaBtn, calibrar, importar));
       conteudo.append(barra, status, gaveta, linhaHistorico, abasHist, historico);

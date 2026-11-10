@@ -6,7 +6,7 @@ const extract = (a, b) => source.slice(source.indexOf(a), source.indexOf(b, sour
 const normalizar = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 let saves = 0, scrolls = 0, menus = 0;
 const context = {
-  normalizar, cfg: { venda: { nomes: ['Aço', 'Gema <especial> & rara'], proteger: {} }, armazem: {} },
+  normalizar, cfg: { venda: { nomes: ['Aço', 'Gema <especial> & rara'], proteger: {} }, armazem: {}, asaComum: 'manter' },
   estadoLoja: { mochila: {} },
   fecharOutros: () => {}, abrirSubjanela: () => {}, jogo: () => null,
   TIPOS_VENDA: [], RARIDADES: [], capacidadeMochila: 100, limiteSeguro: () => 70,
@@ -25,6 +25,7 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext(extract('  const nomeBase =', '  const ITENS_ALFHEIM =') +
+  extract('  const nomeAsaComum =', '  const guardarNoMapa =') +
   extract('  const NUNCA_VENDER_FIXO =', '  const protecaoDaLinha =') +
   extract('  const PREMIOS_RIFA =', '  const rifaEstado =') +
   extract('  const protecaoDaLinha =', '  const linhasDeVenda =') +
@@ -74,6 +75,22 @@ assert.equal(a.menu(), null, 'Botão Venda mantém alternância normal');
 a.abrirMenuVenda(true);
 a.menu().listeners.click({ target: { dataset: { a: 'fechar' } } });
 assert.equal(a.menu(), null, 'Fechar Nunca vender não abre Venda');
+// v3.32: destino da Asa de Mosca comum
+context.cfg.venda.proteger = { usable: true };
+const asa = { itemId: 601, name: 'Asa de Mosca' };
+context.cfg.asaComum = 'guardar';
+assert.match(a.nuncaVender(asa), /guardar na Kafra/);
+assert.match(a.motivoProtecao(asa, 'usable'), /guardar na Kafra/, 'guardar: protegida da venda (vai ao armazem)');
+assert.match(a.protecaoDaLinha('Asa de Mosca'), /guardar na Kafra/);
+context.cfg.asaComum = 'vender';
+assert.equal(a.nuncaVender(asa), null);
+assert.equal(a.nuncaVenderNome('Asa de Mosca'), null);
+assert.equal(a.motivoProtecao(asa, 'usable'), null, 'vender: nem a protecao de consumivel segura');
+assert.ok(a.motivoProtecao({ ...asa, favorite: true }, 'usable'), 'vender: favorito continua protegido');
+assert.ok(a.motivoProtecao({ ...asa, locked: true }, 'usable'), 'vender: cadeado continua protegido');
+for (const name of ['Asa de Mosca Infinita', 'Asa de Mosca Gigante']) assert.ok(a.protecaoDaLinha(name), name + ' segue protegida no modo vender');
+context.cfg.asaComum = 'manter';
+assert.match(a.nuncaVender(asa), /reservada para o farm/);
 console.log('OK: proteção por conta e janelas distintas de Venda e Nunca vender, sem controles duplicados.');
 
 assert.doesNotMatch(source,/devolverAsasDaBolsa|asasNaBolsa/, 'No automatic bulk wing withdrawal from ALT+B');
