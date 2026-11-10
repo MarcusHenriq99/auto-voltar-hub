@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.34
+// @version      3.35
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.33'); } catch { return '3.33'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.35'); } catch { return '3.35'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -2267,19 +2267,33 @@
     let menor = null;
     for (const el of w.document.querySelectorAll('div, section')) {
       const t = el.innerText || '';
-      if (!TITULO_FERREIRO.test(t) || !/Selecionar vis/i.test(t) || !el.querySelector('input[type="checkbox"]')) continue;
+      if (!TITULO_FERREIRO.test(t) || !/Selecionar vis/i.test(t) || !el.querySelector('input[type="checkbox"], [role="checkbox"]')) continue;
       if (!menor || menor.contains(el)) menor = el;
     }
     return menor && visivel(menor) ? menor : null;
   };
-  const linhasFerreiro = (raiz) => [...raiz.querySelectorAll('input[type="checkbox"]')].map((c) => {
+  const linhasFerreiro = (raiz) => [...raiz.querySelectorAll('[role="checkbox"][aria-checked], input[type="checkbox"]')].map((c) => {
+    if (c.getAttribute('role') === 'checkbox') {
+      const nome = c.querySelector('span[title]')?.getAttribute('title');
+      if (!nome && !/pe[cç]as?\b/i.test(c.innerText || '')) return null;
+      return { caixa: c, nome: nome || '', marcada: c.getAttribute('aria-checked') === 'true',
+        habilitada: c.getAttribute('aria-disabled') !== 'true' };
+    }
     let linha = c.parentElement;
     for (let i = 0; i < 6 && linha && !/pe[cç]as?\b/i.test(linha.innerText || ''); i++) linha = linha.parentElement;
     if (!linha || /Apenas desmantel|Selecionar vis|Resumo do/i.test(linha.innerText || '')) return null;
     const partes = (linha.innerText || '').split('\n').map((x) => x.trim()).filter(Boolean);
     const nome = partes.find((x) => !/^\d+\s*linhas?$/i.test(x) && !/pe[cç]as?$/i.test(x) && !/^(comum|incomum|raro|[eé]pico|lend[aá]rio|m[ií]tico|[IVX]+)$/i.test(x));
-    return { caixa: c, nome: nome || '' };
+    return { caixa: c, nome: nome || '', marcada: c.checked, habilitada: !c.disabled };
   }).filter(Boolean);
+  const contadorFerreiro = (raiz) => {
+    const texto = raiz.innerText || '';
+    const m = texto.match(/(\d+)\s+ite(?:m|ns)\s+selecionados?/i);
+    return m ? Number(m[1]) : (/Nenhum item selecionado/i.test(texto) ? 0 : -1);
+  };
+  const acionarFerreiro = (w, el) => el.dispatchEvent(new w.MouseEvent('click', {
+    bubbles: true, cancelable: true, composed: true, view: w
+  }));
   const fecharFerreiro = async (w) => {
     for (let i = 0; i < 4 && (ferreiroAberto(w) || dialogoFerreiro(w)); i++) {
       if (/Confirmar desmantelamento/.test(textoTela(w))) { botaoPorTexto(w.document, (t) => /^Voltar$/i.test(t))?.click(); await esperar(300); continue; }
@@ -2294,13 +2308,13 @@
     if (!await lerMochila(w) || !itensMochila().length) { log('Ferreiro: mochila nao leu; pulando'); return false; }
     const equipados = await lerEquipados(w);
     if (!equipados) { log('Ferreiro: equipados nao leram; pulando (nao arrisco desmontar equipado)'); return false; }
-    const livres = new Map();
+    const livres = new Set(), protegidos = new Set();
     for (const { item, tipo } of itensMochila()) {
       const b = nomeBase(item.name); if (!b) continue;
       const pode = !nuncaGuardar(item, equipados) && !motivoProtecao(item, tipo);
-      livres.set(b, (livres.get(b) || 0) + (pode ? Math.max(1, Number(item.count) || 1) : 0));
+      (pode ? livres : protegidos).add(b);
     }
-    if (![...livres.values()].some((n) => n > 0)) { log('Ferreiro: nada desmontavel na mochila'); return true; }
+    if (![...livres].some(nome => !protegidos.has(nome))) { log('Ferreiro: nada desmontavel na mochila'); return true; }
     if (!await falarComNpc(w, 'ferreiro', () => dialogoFerreiro(w) || ferreiroAberto(w))) { log('Ferreiro: desmantelamento pulado porque o diálogo não abriu'); return false; }
     if (!ferreiroAberto(w)) {
       const op = await esperarAte(() => botaoQualquer(w, /^Desmantelar item/i), 3000);
@@ -2317,44 +2331,73 @@
     if (apenas && !apenas.checked) { apenas.click(); await esperar(400); }
     const limpar = () => [...raiz.querySelectorAll('button')].find((b) => /^Limpar sele/i.test(textoDe(b)) && !b.disabled)?.click();
     limpar(); await esperar(300);
-    const sel = [...raiz.querySelectorAll('button, a, span, div')].find((b) => !b.children.length && /^Selecionar vis[ií]veis$/i.test(textoDe(b)));
-    if (!sel) { log('Ferreiro: "Selecionar visiveis" nao encontrado'); return false; }
-    (sel.closest('button, a, [role="button"]') || sel).click(); await esperar(700);
-    const porNome = new Map(), tirados = [];
-    for (const l of linhasFerreiro(raiz)) {
-      if (!l.caixa.checked) continue;
-      const b = nomeBase(l.nome);
-      porNome.set(b, (porNome.get(b) || []).concat(l));
+    const linhas = await esperarAte(() => {
+      const itens = linhasFerreiro(raiz);
+      if (itens.length) return itens;
+      if (/nenhum (?:item|equipamento) (?:encontrado|elegivel|desmantelavel)|nenhum equipamento para desmantelar|nao ha (?:itens|equipamentos)/.test(normalizar(raiz.innerText))) return [];
+      return null;
+    }, 6000, 200);
+    if (!linhas || contadorFerreiro(raiz) !== 0 || linhas.some(l => l.marcada)) {
+      log('Ferreiro: lista ou seleção inicial não confirmada'); limpar(); return false;
     }
-    for (const [b, ls] of porNome) {
-      const max = livres.get(b) || 0;
-      if (!b || ls.length > max) { for (const l of ls) { l.caixa.click(); await esperar(30); } tirados.push((ls[0].nome || '?') + ' x' + ls.length + ' (livres ' + max + ')'); }
+    // Se duas cópias de mesmo nome têm proteções distintas, a linha não as distingue.
+    const alvos = linhas.filter(l => {
+      const nome = nomeBase(l.nome);
+      return l.habilitada && livres.has(nome) && !protegidos.has(nome);
+    });
+    if (!alvos.length) { log('Ferreiro: nenhum equipamento elegível e desprotegido na lista'); return true; }
+    for (const { caixa } of alvos) {
+      if (!cfg.ligado || cancelando() || caixa.isConnected === false) { limpar(); return false; }
+      acionarFerreiro(w, caixa);
+      await esperar(30);
     }
-    await esperar(400);
-    if (tirados.length) log('Ferreiro: desmarcados (protegidos) ' + tirados.slice(0, 10).join(', '));
-    const marcadas = linhasFerreiro(raiz).filter((l) => l.caixa.checked);
-    const texto = raiz.innerText || '';
-    const m = texto.match(/(\d+)\s+itens?\s+selecionados?/i);
-    const contador = m ? Number(m[1]) : (/Nenhum item selecionado/i.test(texto) ? 0 : -1);
-    if (!marcadas.length) { log('Ferreiro: nada a desmontar'); limpar(); return true; }
-    if (contador !== marcadas.length) { log('Ferreiro: contador do jogo ' + contador + ' diferente dos marcados ' + marcadas.length + '; cancelado'); limpar(); return false; }
-    const n = marcadas.length;
-    const reN = new RegExp('^Desmantelar ' + n + ' ite', 'i');
-    const botao = [...raiz.querySelectorAll('button')].find((b) => visivel(b) && !b.disabled && reN.test(textoDe(b)));
-    if (!botao) { log('Ferreiro: botao "Desmantelar ' + n + ' itens" nao apareceu'); limpar(); return false; }
-    botao.click();
-    const reModal = new RegExp('\\b' + n + '\\s+equipamentos?\\s+ser');
-    const modal = await esperarAte(() => /Confirmar desmantelamento/.test(textoTela(w)) && reModal.test(textoTela(w)), 3000);
-    if (!modal) { log('Ferreiro: confirmacao nao apareceu ou com outro numero; cancelado'); await fecharFerreiro(w); return false; }
-    const ok = [...w.document.querySelectorAll('button')].filter((b) => visivel(b) && !b.disabled && reN.test(textoDe(b))).find((b) => b !== botao);
-    if (!ok) { log('Ferreiro: botao de confirmar nao encontrado'); await fecharFerreiro(w); return false; }
-    const nomes = marcadas.map((l) => l.nome);
-    const resumo = [...new Set(nomes)].map((x) => x + ' x' + nomes.filter((y) => y === x).length).join(', ');
-    ok.click();
-    await esperar(1500);
-    log('Ferreiro: desmontei ' + n + ' itens (' + resumo.slice(0, 200) + ')');
-    await lerMochila(w);
-    return true;
+    const n = alvos.length;
+    const caixasAlvo = new Map(alvos.map(l => [l.caixa, nomeBase(l.nome)]));
+    const selecaoValida = () => {
+      const marcadas = linhasFerreiro(raiz).filter(l => l.marcada);
+      return contadorFerreiro(raiz) === n && marcadas.length === n &&
+        marcadas.every(l => l.habilitada && caixasAlvo.get(l.caixa) === nomeBase(l.nome));
+    };
+    if (!await esperarAte(selecaoValida, 2000, 100)) {
+      log('Ferreiro: seleção não corresponde ao lote previsto; cancelado'); limpar(); return false;
+    }
+    const reN = new RegExp('^Desmantelar ' + n + ' ite(?:m|ns)$', 'i');
+    const botaoDoLote = b => visivel(b) && !b.disabled && b.getAttribute('aria-disabled') !== 'true' && reN.test(textoDe(b));
+    const botao = [...raiz.querySelectorAll('button')].find(botaoDoLote);
+    if (!botao || !cfg.ligado || cancelando()) { log('Ferreiro: botão do lote não disponível'); limpar(); return false; }
+    acionarFerreiro(w, botao);
+    const ok = await esperarAte(() => [...w.document.querySelectorAll('button')].find(b => {
+      if (b === botao || !botaoDoLote(b)) return false;
+      for (let el = b.parentElement; el && el !== w.document.body && !el.contains(botao); el = el.parentElement) {
+        if (/Confirmar desmantelamento/i.test(el.innerText || '') &&
+            [...el.querySelectorAll('button')].some(c => /^Voltar$/i.test(textoDe(c)))) return true;
+      }
+      return false;
+    }), 5000, 200);
+    if (!ok || !cfg.ligado || cancelando() || !selecaoValida()) {
+      log('Ferreiro: confirmação do lote não encontrada ou seleção mudou; cancelado'); return false;
+    }
+    const ui = w.__elragUI, original = ui?.updateDismantleResult;
+    if (typeof original !== 'function') { log('Ferreiro: retorno do servidor indisponível; confirmação cancelada'); return false; }
+    let resultado;
+    const gancho = function (resposta) {
+      resultado = resposta;
+      return original.apply(this, arguments);
+    };
+    ui.updateDismantleResult = gancho;
+    try {
+      acionarFerreiro(w, ok);
+      const res = await esperarAte(() => resultado, 12000, 200);
+      if (!res || Number(res.result) !== 0 || Number(res.itemsDestroyed) !== n || !(Number(res.piecesPaid) > 0)) {
+        log('Ferreiro: servidor não confirmou ' + n + ' itens e a entrega das peças' +
+          (res ? ' (resultado ' + res.result + ')' : '')); return false;
+      }
+      log('Ferreiro: ' + n + ' itens desmantelados; ' + res.piecesPaid + ' Peças de Aperfeiçoamento entregues');
+      await lerMochila(w);
+      return true;
+    } finally {
+      if (ui.updateDismantleResult === gancho) ui.updateDismantleResult = original;
+    }
   };
 
   const vendaNaInstancia = async (w, antes) => {
