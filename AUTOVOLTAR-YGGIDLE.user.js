@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.32
+// @version      3.33
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.32'); } catch { return '3.32'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.33'); } catch { return '3.33'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -1212,8 +1212,12 @@
   const nomeAsaComum = (nome) => /^(?:asas? de mosca|fly wings?)$/.test(nomeBase(nome));
   const ehAsaComum = (item) => Number(item?.itemId) === 601 || nomeAsaComum(item?.name);
   const guardarNoMapa = () => guardarTudo() && cfg.armazem.tudoNoMapa;
-  const venderNoMapa = () => !cfg.ferreiro && !guardarTudo() && cfg.venda.ligado && cfg.lojaBolso &&
-    cfg.armazem.ligado && cfg.armazem.usarCartao && cfg.armazem.tudoNoMapa;
+  // v3.33: Loja de Bolso basta para vender no mapa; o Cartao Kafra so acrescenta o deposito dos protegidos.
+  const venderNoMapa = () => !cfg.ferreiro && !guardarTudo() && cfg.venda.ligado && cfg.lojaBolso;
+  const cartaoNoMapa = () => cfg.armazem.ligado && cfg.armazem.usarCartao && cfg.armazem.tudoNoMapa;
+  // Sem cartao, item protegido nao sai da mochila: se a venda no mapa nao baixar o peso,
+  // a proxima viagem vai UMA vez a cidade para guardar na Kafra.
+  let bolsoPrecisaKafra = false;
   const cartaoKafra = (item) => /cartao (?:de )?kafra/.test(normalizar(item.name));
   const itensMochila = () => Object.entries(estadoLoja.mochila || {}).flatMap(([tipo, itens]) =>
     Array.isArray(itens) ? itens.filter(Boolean).map((item) => ({ tipo, item })) : []);
@@ -2361,7 +2365,8 @@
       if (!lojaDeBolso()) { log('Venda: em ' + (antes?.mapa || '?') + ' sem Loja de Bolso; NAO saio daqui, sigo cacando'); ultimaViagemVenda = Date.now() + 13 * 60000; return false; }
       await sairDaEconomia(w);
       if (tinhaAutopilot) await pausarCacada(w);
-      if (cfg.armazem.ligado && cfg.armazem.usarCartao && itensMochila().some(({ item }) => cartaoKafra(item) && item.canUse && Number(item.count) > 0)) {
+      const usouCartao = cartaoNoMapa() && itensMochila().some(({ item }) => cartaoKafra(item) && item.canUse && Number(item.count) > 0);
+      if (usouCartao) {
         etapa('Venda na instancia', 'Cartao Kafra: guardando protegidos');
         const dep = await guardarProtegidos(w, false);
         if (!dep.ok) log('Venda na instancia: deposito pelo cartao falhou (' + dep.motivo + '); sigo para a venda');
@@ -2373,8 +2378,11 @@
       log('Venda na instancia: ' + (ok ? 'concluida' : 'nao concluida') + ' pela Loja de Bolso; peso ' + (p ? p.pct.toFixed(1) + '%' : '?'));
       if (!ok || (p && p.pct >= limiteSeguro()) || mochilaCheia(w)) {
         ultimaViagemVenda = Date.now() - VENDA_INTERVALO_MS + 30000;
-        log('Venda na instancia: peso/espaco ainda alto ou venda incompleta; nova verificacao em 30 s');
-      }
+        if (!usouCartao && !mapaDeRenascer(antes)) {
+          bolsoPrecisaKafra = true;
+          log('Venda na instancia: o que pesa sao itens protegidos e nao ha Cartao Kafra; a proxima viagem vai a cidade guardar na Kafra');
+        } else log('Venda na instancia: peso/espaco ainda alto ou venda incompleta; nova verificacao em 30 s');
+      } else bolsoPrecisaKafra = false;
       return ok;
     } catch (e) {
       log('Venda na instancia: falha — ' + String(e?.message || e).slice(0, 100));
@@ -2441,10 +2449,15 @@
     const atual = posicao(w);
     const ferreiroPorEspaco = irAoFerreiroPorEspaco(w);
     const processarNoMapa = guardarNoMapa() && !ferreiroPorEspaco;
-    if (venderNoMapa() && lojaDeBolso() && !viagemPorSuprimento && atual?.mapa && normalizar(atual.mapa) !== 'prontera') {
-      log('Cartao Kafra + Loja de Bolso: guardando protegidos e vendendo permitidos em ' + atual.mapa + ', sem ir a Prontera');
-      return vendaNaInstancia(w, atual);
+    if (venderNoMapa() && !viagemPorSuprimento && atual?.mapa && normalizar(atual.mapa) !== 'prontera' && (!bolsoPrecisaKafra || mapaDeRenascer(atual))) {
+      if (!lojaDeBolso()) await lerMochila(w);
+      if (lojaDeBolso()) {
+        log((cartaoNoMapa() ? 'Cartao Kafra + Loja de Bolso: guardando protegidos e vendendo' : 'Loja de Bolso: vendendo') + ' permitidos em ' + atual.mapa + ', sem ir a Prontera');
+        return vendaNaInstancia(w, atual);
+      }
+      log('Loja de Bolso ligada, mas o item nao esta na mochila: indo a Prontera');
     }
+    if (bolsoPrecisaKafra) { bolsoPrecisaKafra = false; log('Indo a cidade para guardar protegidos na Kafra (sem Cartao Kafra no mapa)'); }
     ocupado = true;
     etapa(processarNoMapa ? '1/4 Pausando cacada' : '1/8 Pausando cacada', viagemPorSuprimento ? 'Suprimentos abaixo do minimo' : manual ? 'Execucao manual, independente do peso' : ferreiroPorEspaco ? 'Mochila em 95%: indo ao Ferreiro de Prontera' : 'Limite de peso atingido');
     let pauseiAutopilot = false;
