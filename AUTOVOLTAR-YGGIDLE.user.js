@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.33
+// @version      3.34
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -697,6 +697,10 @@
         }
         return typeof original === 'function' ? original.apply(this, arguments) : undefined;
       };
+      // v3.34: herda as marcas dos ganchos de baixo (PESO, AUTOHUNT). Sem isso o PESO nao
+      // se via no topo, embrulhava de novo, este tambem, e a corrente crescia sem fim
+      // (milhares de camadas -> ~2 s por lista da mochila, imagem travada).
+      if (typeof original === 'function') for (const k of Object.keys(original)) { try { gancho[k] = original[k]; } catch {} }
       gancho.__fznAutovoltar = donoGancho;
       ui[metodo] = gancho;
     }

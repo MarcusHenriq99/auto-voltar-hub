@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ygg Idle — leitor de peso (o que pesa na mochila)
 // @namespace    fzn-idle-hub
-// @version      1.2
+// @version      1.3
 // @description  Lista os itens da mochila (e equipados) do mais pesado ao mais leve, com o peso de cada um tirado da Wiki do Ygg.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -341,6 +341,9 @@
       const original = ui[metodo];
       if (typeof original !== 'function' || original.__fznPeso) continue;
       const g = function (snap) { st[chave] = snap; st.seq++; return original.apply(this, arguments); };
+      // v1.3: herda as marcas dos ganchos de baixo (Auto-voltar, AUTOHUNT); sem isso os
+      // scripts se re-embrulhavam sem fim e a mochila levava segundos por atualizacao.
+      for (const k of Object.keys(original)) { try { g[k] = original[k]; } catch {} }
       g.__fznPeso = true;
       ui[metodo] = g;
     }
