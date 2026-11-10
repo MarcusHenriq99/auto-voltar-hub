@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.87
+// @version      1.88
 // @description  Complementa o Autopilot: adquire alvos próximos sem esperar o primeiro golpe, retoma perseguições paradas e explora pelo motor do jogo, preservando as regras de teleporte.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -505,6 +505,54 @@
   const posicao = (e) => {
     try { const m = e.getMinimapInfoSnapshot(); return m ? { mapa: m.mapId, x: m.x, y: m.y } : null; } catch { return null; }
   };
+  // v1.88: ESPERA AO ENTRAR EM INSTANCIA (mapa com "@"). Andar logo na entrada
+  // fazia a instancia ter de ser refeita. Por 5 s ninguem anda: o autopilot do
+  // jogo fica desligado e as chamadas que religam, andam, fixam alvo ou usam asa
+  // sao bloqueadas na fonte (vale tambem para outros scripts que usam o motor).
+  const ESPERA_INSTANCIA_MS = 5000;
+  const ehInstancia = (m) => String(m || '').includes('@');
+  let mapaVisto = '', esperaInstanciaAte = 0, esperaInstanciaMapa = '', apDesligadoNaEspera = false, apReafirmadoEm = 0;
+  const emEsperaInstancia = () => Date.now() < esperaInstanciaAte;
+  const travarNaEspera = (alvo, nome, bloquear) => {
+    const atual = alvo?.[nome];
+    if (typeof atual !== 'function' || atual.__fznEsperaInstancia) return;
+    const g = function (...a) {
+      if (emEsperaInstancia() && bloquear(a)) return 0;
+      return atual.apply(this, a);
+    };
+    g.__fznEsperaInstancia = true;
+    try { alvo[nome] = g; } catch {}
+  };
+  setInterval(() => {
+    try {
+      const w = jogo(); const e = w?.__elragEngine;
+      if (!e) return;
+      travarNaEspera(e, 'setAutopilotRunning', (a) => a[0] === true);
+      travarNaEspera(e, 'setAutopilotPinnedTarget', (a) => Number(a[0]) > 0);
+      travarNaEspera(w, '__fznAndar', () => true);
+      const m = String(posicao(e)?.mapa || '');
+      if (!m) return;
+      if (m !== mapaVisto) {
+        mapaVisto = m;
+        if (cfg.ligado && ehInstancia(m)) {
+          esperaInstanciaAte = Date.now() + ESPERA_INSTANCIA_MS; esperaInstanciaMapa = m; apDesligadoNaEspera = false; apReafirmadoEm = 0;
+          log('instancia ' + m + ': esperando ' + ESPERA_INSTANCIA_MS / 1000 + ' s parado antes de cacar');
+        } else esperaInstanciaAte = 0;
+      }
+      if (emEsperaInstancia()) {
+        if (Date.now() - apReafirmadoEm >= 400) {
+          apReafirmadoEm = Date.now();
+          try { e.setAutopilotPinnedTarget(0); } catch {}
+          try { e.setAutopilotRunning(false); apDesligadoNaEspera = true; } catch {}
+        }
+      } else if (apDesligadoNaEspera) {
+        apDesligadoNaEspera = false;
+        if (cfg.ligado && mapaVisto === esperaInstanciaMapa && !pausadoPelaRifa()) {
+          try { e.setAutopilotRunning(true); log('instancia ' + esperaInstanciaMapa + ': espera concluida, cacada liberada'); } catch {}
+        }
+      }
+    } catch {}
+  }, 100);
   // 0 = Ignorar, 1 = Fugir, 2 = Preferir.
   const ignorados = (ap) => new Set((ap?.targetPolicy?.species || [])
     .filter((s) => Number(s.disposition) !== 2).map((s) => Number(s.mobId)));
@@ -651,6 +699,7 @@
   const FUGA_RE = /sem asa de mosca:?\s*n[aã]o consigo fugir/i;
   let fugaEm = 0;
   const fugirComAsa = (w) => {
+    if (emEsperaInstancia()) return;
     if (cfg.asa === 'off') return;
     const e = w.__elragEngine;
     if (sessaoCheffenia(w, e) && cfg.cheffeniaTeleporte !== true) return;
@@ -1302,6 +1351,7 @@
     try { w.__elragEngine.requestInventorySnapshot(); } catch {}
   };
   const usarAsa = (w, e, agora) => {
+    if (emEsperaInstancia()) return false;
     if (pausadoPelaRifa()) return false;
     if (cfg.asa === 'off' || (sessaoCheffenia(w, e) && cfg.cheffeniaTeleporte !== true)) return false;
     if (asaBloqueadaPorMvp(w, e)) return false;
@@ -1538,6 +1588,7 @@
     } catch (err) { log('erro ao fixar: ' + String(err).slice(0,80)); return false; }
   };
   const explorarNoMotor = async (w, e, agora) => {
+    if (emEsperaInstancia()) return false;
     if (ocupado || !cfg.ligado || pausadoPelaRifa() || temJanelaAberta(w) || agora - ultimoPasso < PASSO_EXPLORAR_MS) return false;
     const pos = posicao(e);
     if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y) || CIDADES_RE.test(pos.mapa)) return false;
@@ -1625,7 +1676,7 @@
     } catch {}
   };
   const ciclo = async () => {
-    if (pausadoPelaRifa()) return;
+    if (pausadoPelaRifa() || emEsperaInstancia()) return;
     if (!cfg.ligado || ocupado) return;
     const w = jogo();
     if (!w) return;
@@ -1844,7 +1895,7 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const versao = typeof GM_info === 'undefined' ? '1.87' : (GM_info.script?.version || '1.87');
+      const versao = typeof GM_info === 'undefined' ? '1.88' : (GM_info.script?.version || '1.88');
       const cartao = fznCartaoYgg('Auto-hunt', 'v' + versao, 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
