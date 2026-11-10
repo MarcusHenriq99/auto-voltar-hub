@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.30
+// @version      3.31
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.30'); } catch { return '3.30'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.31'); } catch { return '3.31'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -3074,39 +3074,44 @@
     return validarChegadaFarm(w);
   };
 
+  const textoChefenia = (el) => normalizar(textoDe(el));
   const nomeArautoChefenia = /^arauto da cheff?enia(?:#.*)?$/;
-  const entradaChefenia = (w) => {
+  const painelArautoChefenia = (w) => {
     const titulos = [...w.document.querySelectorAll('h1,h2,h3,div,span')]
-      .filter(el => el.children.length === 0 && visivel(el) && nomeArautoChefenia.test(normalizar(textoDe(el))));
+      .filter(el => el.children.length === 0 && visivel(el) && nomeArautoChefenia.test(textoChefenia(el)));
     for (const titulo of titulos) {
       for (let painel = titulo.parentElement, i = 0; painel && i < 7 && painel !== w.document.body; painel = painel.parentElement, i++) {
-        const texto = normalizar(textoDe(painel));
-        if (!/tempo de cheff?enia solo|escolha a cheff?enia de hoje|canais abertos/.test(texto)) continue;
-        const entradas = [...painel.querySelectorAll('button,[role="button"]')]
-          .filter(b => visivel(b) && !b.disabled && b.getAttribute?.('aria-disabled') !== 'true' && /^entrar$/i.test(textoDe(b)));
-        if (/escolha a cheff?enia de hoje/.test(texto)) {
-          const normais = entradas.filter(b => {
-            for (let card = b.parentElement; card && card !== painel; card = card.parentElement) {
-              const rotulo = normalizar(textoDe(card));
-              if (/^cheff?enia de season\b/.test(rotulo)) return false;
-              if (/^cheff?enia\s+premio:/.test(rotulo)) return true;
-            }
-            return false;
-          });
-          return normais.length === 1 ? normais[0] : null;
-        }
-        return entradas.length === 1 ? entradas[0] : null;
+        if (/tempo de cheff?enia solo|escolha a cheff?enia de hoje|canais abertos|hoje:\s*(?:normal|season)\b/.test(textoChefenia(painel))) return painel;
       }
     }
     return null;
+  };
+  const entradaChefenia = (painel) => {
+    if (!painel) return null;
+    const texto = textoChefenia(painel);
+    const entradas = [...painel.querySelectorAll('button,[role="button"]')]
+      .filter(b => visivel(b) && !b.disabled && b.getAttribute?.('aria-disabled') !== 'true' && textoChefenia(b) === 'entrar');
+    // A modalidade escolhida consome a entrada diária da conta.
+    if (/escolha a cheff?enia de hoje|\bcheff?enia de season\s+premio:/.test(texto)) {
+      const season = entradas.filter(b => {
+        for (let card = b.parentElement; card && card !== painel; card = card.parentElement) {
+          const rotulo = textoChefenia(card);
+          if (/^cheff?enia de season\b/.test(rotulo)) return true;
+          if (/^cheff?enia\s+premio:/.test(rotulo)) return false;
+        }
+        return false;
+      });
+      return season.length === 1 ? { botao: season[0], season: true } : null;
+    }
+    return entradas.length === 1 ? { botao: entradas[0], season: /\bhoje:\s*season\b/.test(texto) } : null;
   };
 
   const entrarCheffenia = async (w) => {
     etapa('8/8 Voltando ao mapa', 'Arauto da Chefenia');
     const emProntera = () => cfg.ligado && !cancelando() && posicao(w)?.mapa === 'prontera';
     if (!emProntera()) return false;
-    let entrar = entradaChefenia(w);
-    if (!entrar) {
+    let painel = painelArautoChefenia(w);
+    if (!painel) {
       const manager = await carregarEntidadesNpc(w);
       if (!manager) return segurarRetorno(w, 'Chefenia: entidades de Prontera indisponíveis');
       const [ax, ay] = [154, 196];
@@ -3124,7 +3129,7 @@
         return porNome || porCelula;
       };
       const falhos = new Set();
-      for (let i = 0; i < 10 && emProntera() && !entrar; i++) {
+      for (let i = 0; i < 10 && emProntera() && !painel; i++) {
         const p = posicao(w);
         if (!perto(p)) {
           const ponte = await carregarCaminhadaBio4(w);
@@ -3146,18 +3151,21 @@
         const npc = await esperarAte(localizar, 3500, 200);
         if (!npc || !emProntera()) break;
         try { npc.onMouseDown?.(); } catch (err) { log('Chefenia: interação com o Arauto falhou: ' + String(err).slice(0,80)); }
-        entrar = await esperarAte(() => entradaChefenia(w), 3000, 200);
-        if (!entrar) break;
+        painel = await esperarAte(() => painelArautoChefenia(w), 3000, 200);
+        if (!painel) break;
       }
     }
     if (!emProntera()) return false;
-    if (!entrar) return segurarRetorno(w, 'Chefenia: entrada pelo Arauto não disponível em Prontera');
-    entrar.click();
+    const entrada = entradaChefenia(painelArautoChefenia(w));
+    if (!entrada) return segurarRetorno(w, 'Chefenia: entrada pelo Arauto indisponível ou sem opção de Season liberada');
+    const modalidade = entrada.season ? 'Chefenia de Season' : 'Chefenia normal';
+    log('Arauto: selecionando ' + modalidade);
+    entrada.botao.click();
     const chegou = await esperarAte(() => mapaCheffenia(posicao(w)?.mapa), 20000, 250);
     if (!chegou) return segurarRetorno(w, 'entrada na Cheffenia sem confirmacao');
     if (!validarChegadaFarm(w)) return false;
     delete cfg.retornoPendente; salvarCfg();
-    log('Retorno confirmado: Cheffenia pelo Arauto');
+    log('Retorno confirmado pelo Arauto: ' + modalidade);
     await religarEconomia(w);
     return true;
   };

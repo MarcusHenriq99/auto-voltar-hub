@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.86
+// @version      1.87
 // @description  Complementa o Autopilot: adquire alvos próximos sem esperar o primeiro golpe, retoma perseguições paradas e explora pelo motor do jogo, preservando as regras de teleporte.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -1384,7 +1384,38 @@
     return hudCheffeniaAtivo;
   };
   const visivelCheff = (el) => { const r = el?.getBoundingClientRect?.(); return !!r && r.width > 0 && r.height > 0 && el.ownerDocument.defaultView.getComputedStyle(el).visibility !== 'hidden'; };
-  const botaoCheff = (w, re) => [...w.document.querySelectorAll('button,[role="button"]')].find((b) => visivelCheff(b) && !b.disabled && re.test((b.innerText || b.textContent || '').trim().replace(/\s+/g, ' ')) && !b.closest('.fzn-ygg,[data-fzn-auto-voltar]'));
+  const textoChefenia = (el) => (el.innerText || el.textContent || '').normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const nomeArautoChefenia = /^arauto da cheff?enia(?:#.*)?$/;
+  const painelArautoChefenia = (w) => {
+    const titulos = [...w.document.querySelectorAll('h1,h2,h3,div,span')]
+      .filter(el => el.children.length === 0 && visivelCheff(el) && nomeArautoChefenia.test(textoChefenia(el)));
+    for (const titulo of titulos) {
+      for (let painel = titulo.parentElement, i = 0; painel && i < 7 && painel !== w.document.body; painel = painel.parentElement, i++) {
+        if (/tempo de cheff?enia solo|escolha a cheff?enia de hoje|canais abertos|hoje:\s*(?:normal|season)\b/.test(textoChefenia(painel))) return painel;
+      }
+    }
+    return null;
+  };
+  const entradaChefenia = (painel) => {
+    if (!painel) return null;
+    const texto = textoChefenia(painel);
+    const entradas = [...painel.querySelectorAll('button,[role="button"]')]
+      .filter(b => visivelCheff(b) && !b.disabled && b.getAttribute?.('aria-disabled') !== 'true' && textoChefenia(b) === 'entrar');
+    // A modalidade escolhida consome a entrada diária da conta.
+    if (/escolha a cheff?enia de hoje|\bcheff?enia de season\s+premio:/.test(texto)) {
+      const season = entradas.filter(b => {
+        for (let card = b.parentElement; card && card !== painel; card = card.parentElement) {
+          const rotulo = textoChefenia(card);
+          if (/^cheff?enia de season\b/.test(rotulo)) return true;
+          if (/^cheff?enia\s+premio:/.test(rotulo)) return false;
+        }
+        return false;
+      });
+      return season.length === 1 ? { botao: season[0], season: true } : null;
+    }
+    return entradas.length === 1 ? { botao: entradas[0], season: /\bhoje:\s*season\b/.test(texto) } : null;
+  };
   const esperarCheff = async (fn, tempo = 12000) => { const fim = Date.now() + tempo; do { const v = fn(); if (v) return v; await esperar(250); } while (Date.now() < fim); return null; };
   let recuperacaoCheffPendente = false, recuperacaoCheffOcupada = false, ultimaTentativaCheff = 0, npcCheffPonte = null;
   const ponteNpcCheff = async (w) => {
@@ -1395,14 +1426,13 @@
     }
     return (await esperarCheff(() => w.__fznAutoHuntNpc?.manager, 4000)) || null;
   };
-  const dialogoArauto = (w) => /Arauto da Cheffenia/i.test(w.document.body?.innerText || '') && !!botaoCheff(w, /^Entrar$/i);
   const falarArauto = async (w) => {
-    if (dialogoArauto(w)) return true;
+    if (painelArautoChefenia(w)) return true;
     const manager = await ponteNpcCheff(w); if (!manager || typeof manager.forEach !== 'function') { log('Cheffenia: lista de NPCs indisponivel'); return false; }
     let npc = null; const p = posicao(w.__elragEngine);
     manager.forEach((e) => { const c = e?.constructor; const tipoNpc = c && ((Number.isFinite(c.TYPE_NPC) && e.objecttype === c.TYPE_NPC) || (Number.isFinite(c.TYPE_NPC2) && e.objecttype === c.TYPE_NPC2));
       if (!tipoNpc || !(e.GID > 0) || e.remove_tick || !e.position) return;
-      if (![e.display?.name,e.name,e._name,e.entityName,e._job].some((v) => /arauto da cheffenia/i.test(String(v || '')))) return;
+      if (![e.display?.name,e.name,e._name,e.entityName,e._job].some((v) => /arauto da cheff?enia/i.test(String(v || '')))) return;
       const d = p ? Math.hypot(e.position[0] - p.x, e.position[1] - p.y) : 0;
       if (!npc || d < npc.distancia) npc = { entidade:e, distancia:d };
     });
@@ -1412,9 +1442,9 @@
       try { const camera = w.__elragEngine.renderer?.camera || w.__elragEngine.camera; const xy = camera?.worldToScreen?.(npc.entidade.position[0], npc.entidade.position[1], 0);
         if (canvas && xy?.length >= 2) { const r = canvas.getBoundingClientRect(); await clicarNoCanvas(w, canvas, r.left + xy[0], r.top + xy[1]); }
       } catch {}
-      if (await esperarCheff(() => dialogoArauto(w), 1500)) return true;
+      if (await esperarCheff(() => painelArautoChefenia(w), 1500)) return true;
       try { npc.entidade.onMouseDown?.(); } catch {}
-      if (await esperarCheff(() => dialogoArauto(w), 2000)) return true;
+      if (await esperarCheff(() => painelArautoChefenia(w), 2000)) return true;
     }
     log('Cheffenia: conversa do Arauto nao abriu'); return false;
   };
@@ -1444,9 +1474,10 @@
       }
       if (posicao(e)?.mapa !== 'prontera') { log('Poder Infernal: ponto de salvamento nao e Prontera; retorno automatico interrompido'); recuperacaoCheffPendente = false; return; }
       if (!await falarArauto(w) || !cfg.ligado || pausadoPelaRifa()) return;
-      const entrar = botaoCheff(w, /^Entrar$/i);
-      if (!entrar) { log('Cheffenia: botao Entrar nao apareceu'); return; }
-      log('Cheffenia: entrando novamente pelo Arauto'); entrar.click();
+      const entrada = entradaChefenia(painelArautoChefenia(w));
+      if (!entrada) { log('Chefenia: entrada pelo Arauto indisponível ou sem opção de Season liberada'); return; }
+      log('Arauto: selecionando ' + (entrada.season ? 'Chefenia de Season' : 'Chefenia normal'));
+      entrada.botao.click();
       const chegou = await esperarCheff(() => mapaCheffenia(posicao(e)?.mapa) ? posicao(e) : null, 20000);
       if (!chegou) { log('Cheffenia: entrada nao confirmada; verificarei novamente'); return; }
       if (!cfg.ligado || pausadoPelaRifa()) return;
@@ -1813,7 +1844,7 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const versao = typeof GM_info === 'undefined' ? '1.86' : (GM_info.script?.version || '1.86');
+      const versao = typeof GM_info === 'undefined' ? '1.87' : (GM_info.script?.version || '1.87');
       const cartao = fznCartaoYgg('Auto-hunt', 'v' + versao, 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {

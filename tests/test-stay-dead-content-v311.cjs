@@ -136,10 +136,8 @@ function setup(mode = 'native', initialMap = 'lhz_dun04') {
     cfg: { ligado: true }, pausadoPelaRifa: () => false,
     recuperacaoCheffPendente: true, recuperacaoCheffOcupada: false, ultimaTentativaCheff: 0,
     Date: { now: () => 100000 }, window: { top: {} }, poderInfernalVistoEm: 0,
-    falarArauto: async () => true, botaoCheff: (_w, match) => {
-      if (match.test('Voltar ao ponto de salvamento')) throw Error('Hunt must never request save point');
-      return { click() { entries++; map = 'moro_vol'; } };
-    },
+    falarArauto: async () => true, painelArautoChefenia: () => ({}),
+    entradaChefenia: () => ({ botao: { click() { entries++; map = 'moro_vol'; } }, season: false }),
     esperarCheff: async fn => fn(), AUTOPILOT_PARADO: new Set([0, 1]), log() {},
   };
   vm.createContext(ctx);
