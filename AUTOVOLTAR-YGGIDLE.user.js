@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.35
+// @version      3.36
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.35'); } catch { return '3.35'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.36'); } catch { return '3.36'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -1093,13 +1093,28 @@
   // primeiro) e gatilho baixo (volta so com 20% do alvo). Ligados por padrao.
   cfg.usarBolsa = cfg.usarBolsa !== false;
   cfg.gatilhoBaixo = cfg.gatilhoBaixo !== false;
-  const lojaDeBolso = () => itensMochila().find(({ item }) => Number(item.itemId) === LOJA_BOLSO_ID || /loja de bolso/.test(normalizar(item.name)));
+  const ehLojaDeBolso = (item) => Number(item.itemId) === LOJA_BOLSO_ID || /loja de bolso/.test(normalizar(item.name));
+  const lojaDeBolso = () => itensMochila().find(({ item }) => ehLojaDeBolso(item));
+
+  const usarConsumivelDaMochila = (w, corresponde) => {
+    const e = w.__elragEngine;
+    if (typeof e.useInventoryItem !== 'function') return null;
+    instalarGanchos(w);
+    const antes = estadoLoja.mochilaSeq;
+    // Ler e usar na mesma chamada para não atingir um item que reutilizou o índice.
+    try { e.requestInventorySnapshot(); } catch { return null; }
+    if (estadoLoja.mochilaSeq === antes) return null;
+    const item = estadoLoja.mochila?.usable?.find(i => i?.canUse && Number(i.count) > 0 && Number.isInteger(i.index) && corresponde(i));
+    if (!item) return null;
+    e.useInventoryItem(item.index);
+    return item;
+  };
 
   const abrirLojaDeBolso = async (w) => {
-    const lb = lojaDeBolso();
-    if (!lb || !Number.isInteger(lb.item.index)) { log('Loja de Bolso: item nao esta na mochila'); return false; }
-    await esperar(500); 
-    try { w.__elragEngine.useInventoryItem(lb.item.index); } catch (e) { log('Loja de Bolso: falhou ao usar ' + String(e).slice(0, 60)); return false; }
+    await esperar(500);
+    try {
+      if (!usarConsumivelDaMochila(w, ehLojaDeBolso)) { log('Loja de Bolso: item nao confirmado na mochila'); return false; }
+    } catch (e) { log('Loja de Bolso: falhou ao usar ' + String(e).slice(0, 60)); return false; }
     const passo = await esperarAte(() => {
       if (lojaAberta(w)) return 'loja';
       const btn = botaoPorTexto(w.document, (t) => /^Comprar\s*$/i.test(t));
@@ -1125,9 +1140,9 @@
   };
 
   const abrirVendaDeBolso = async (w) => {
-    const lb = lojaDeBolso();
-    if (!lb || !Number.isInteger(lb.item.index)) { log('Loja de Bolso: item nao esta na mochila'); return false; }
-    try { w.__elragEngine.useInventoryItem(lb.item.index); } catch (e) { log('Loja de Bolso: falhou ao usar ' + String(e).slice(0, 60)); return false; }
+    try {
+      if (!usarConsumivelDaMochila(w, ehLojaDeBolso)) { log('Loja de Bolso: item nao confirmado na mochila'); return false; }
+    } catch (e) { log('Loja de Bolso: falhou ao usar ' + String(e).slice(0, 60)); return false; }
     const passo = await esperarAte(() => vendaAberta(w) ? 'venda' : botaoPorTexto(w.document, (t) => /^Vender\b/i.test(t) && !/^Vender tudo/i.test(t)), 5000, 150);
     if (!passo) { log('Loja de Bolso: opcao "Vender" nao apareceu'); await fecharLoja(w); return false; }
     if (passo !== 'venda') passo.click();
@@ -1425,10 +1440,9 @@
   const abrirArmazem = async (w, naCidade) => {
     if (armazemAberto(w)) return true;
     if (cfg.armazem.usarCartao || cfg.armazem.tudoNoMapa) {
-      const cartao = itensMochila().find(({ item }) => cartaoKafra(item) && item.canUse && Number(item.count) > 0 && Number.isInteger(item.index));
-      if (cartao && typeof w.__elragEngine.useInventoryItem === 'function') {
-        log(`Armazem: usando ${cartao.item.name}${naCidade ? ' em Prontera' : ''}`);
-        w.__elragEngine.useInventoryItem(cartao.item.index);
+      const cartao = usarConsumivelDaMochila(w, cartaoKafra);
+      if (cartao) {
+        log(`Armazem: usando ${cartao.name}${naCidade ? ' em Prontera' : ''}`);
         if (await esperarAte(() => armazemAberto(w), 8000, 250)) return true;
         log('Armazem: cartao nao abriu a janela');
       }
