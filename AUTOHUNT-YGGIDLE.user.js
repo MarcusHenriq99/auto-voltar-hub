@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.91
+// @version      1.92
 // @description  Complementa o Autopilot: adquire alvos próximos sem esperar o primeiro golpe, retoma perseguições paradas e explora pelo motor do jogo, preservando as regras de teleporte.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -636,31 +636,28 @@
   };
   const ORDEM_ASA = { auto: ['gigante', 'infinita', 'comum'], gigante: ['gigante'], infinita: ['infinita'], comum: ['comum'] };
   let asasVistas = '';
-  let ultimoSnapMochila = null;
+  let ultimasAsas = null;
+  let mochilaSeq = 0;
   const lerAsa = (snap) => {
-    ultimoSnapMochila = snap;
+    const consumiveis = Array.isArray(snap?.usable) ? snap.usable : [];
+    ultimasAsas = consumiveis
+      .filter(it => it?.canUse && Number(it.count) > 0 && Number.isInteger(it.index))
+      .map(item => ({ item, tipo: tipoAsa(item) }))
+      .filter(({ tipo }) => tipo);
     const ordem = ORDEM_ASA[cfg.asa] || ORDEM_ASA.auto;
     let achou = null, tipoAchou = null;
-    const vistas = [];
-    for (const lista of Object.values(snap || {})) {
-      if (!Array.isArray(lista)) continue;
-      for (const it of lista) {
-        if (!it || Number(it.count) <= 0) continue;
-        const tipo = tipoAsa(it);
-        if (!tipo) continue;
-        vistas.push(tipo + ':' + it.itemId);
-        const pos = ordem.indexOf(tipo);
-        if (pos >= 0 && (!achou || pos < ordem.indexOf(tipoAchou))) { achou = it; tipoAchou = tipo; }
-      }
+    for (const { item, tipo } of ultimasAsas) {
+      const pos = ordem.indexOf(tipo);
+      if (pos >= 0 && (!achou || pos < ordem.indexOf(tipoAchou))) { achou = item; tipoAchou = tipo; }
     }
-    if (!achou) { asa.lidaEm = Date.now(); return; }
-    const v = vistas.join(', ');
-    if (v !== asasVistas) { asasVistas = v; log('asas na mochila: ' + v + ' | usando: ' + tipoAchou); }
-    asa.index = achou ? achou.index : null;
-    asa.count = achou ? Number(achou.count) || 0 : 0;
+    asa.index = achou?.index ?? null;
+    asa.count = Number(achou?.count) || 0;
     asa.infinita = tipoAchou === 'gigante' || tipoAchou === 'infinita';
     asa.gigante = tipoAchou === 'gigante';
     asa.lidaEm = Date.now();
+    mochilaSeq++;
+    const v = ultimasAsas.map(({ item, tipo }) => tipo + ':' + item.itemId).join(', ');
+    if (v !== asasVistas) { asasVistas = v; log('asas na mochila: ' + (v || 'nenhuma') + ' | usando: ' + (tipoAchou || 'nenhuma')); }
   };
   const ganchoMochila = (w) => {
     const ui = w.__elragUI;
@@ -670,6 +667,14 @@
     g.__fznAutohunt = donoGanchoAsa;
     for (const k of Object.keys(original)) { try { g[k] = original[k]; } catch {} }
     ui.updateInventorySnapshot = g;
+  };
+  const relerMochilaParaUsarAsa = (w, e) => {
+    ganchoMochila(w);
+    const antes = mochilaSeq;
+    // O motor publica a mochila atual na mesma chamada. O índice pode mudar na troca de mapa.
+    asa.pedidaEm = Date.now();
+    try { e.requestInventorySnapshot(); } catch { return false; }
+    return mochilaSeq > antes;
   };
   // v1.85: na Chefenia, NUNCA usar asa com MVP configurado no radar (vale para toda asa,
   // inclusive fugas e MVP ja atacado por outro). O radar pisca: lembra o MVP por 1,5 s.
@@ -694,19 +699,12 @@
     if (sessaoCheffenia(w, e) && cfg.cheffeniaTeleporte !== true) return;
     if (asaBloqueadaPorMvp(w, e)) return;
     if (mvpEmCombate(snapshotAp(e))) return;
-    if (Date.now() - fugaEm < 1500) return;
-    let melhor = null, tipoMelhor = null;
-    for (const lista of Object.values(ultimoSnapMochila || {})) {
-      if (!Array.isArray(lista)) continue;
-      for (const it of lista) {
-        if (!it || Number(it.count) <= 0) continue;
-        const t = tipoAsa(it);
-        if (t === 'gigante' || (t === 'infinita' && tipoMelhor !== 'gigante')) { melhor = it; tipoMelhor = t; }
-      }
-    }
-    if (!melhor) { log('fuga: sem Asa Gigante/Infinita na mochila'); try { e.requestInventorySnapshot(); } catch {} return; }
-    if (!asaLiberada()) return;
-    try { e.useInventoryItem(melhor.index); fugaEm = ultimaAsaEm = Date.now(); log('fuga: piloto sem asa comum -> Asa ' + (tipoMelhor === 'gigante' ? 'Gigante' : 'Infinita')); } catch (err) { log('fuga falhou: ' + String(err).slice(0, 60)); }
+    if (Date.now() - fugaEm < 1500 || !asaLiberada()) return;
+    fugaEm = Date.now();
+    if (!relerMochilaParaUsarAsa(w, e)) return;
+    const melhor = ultimasAsas.find(({ tipo }) => tipo === 'gigante') || ultimasAsas.find(({ tipo }) => tipo === 'infinita');
+    if (!melhor) { log('fuga: sem Asa Gigante/Infinita na mochila'); return; }
+    try { e.useInventoryItem(melhor.item.index); fugaEm = ultimaAsaEm = Date.now(); log('fuga: piloto sem asa comum -> Asa ' + (melhor.tipo === 'gigante' ? 'Gigante' : 'Infinita')); } catch (err) { log('fuga falhou: ' + String(err).slice(0, 60)); }
   };
   const BIO4_IDS = new Set([1638, 1639, 1650, 1651]);
   const BIO4_NOME = /cecil|shecil|kathryn|katrinn/i;
@@ -1334,7 +1332,7 @@
   let pinoGid = 0;
   let movChave = '', ultimoMovEm = 0, ociosoDesde = 0, golpesAvisado = false, inicioFarm = 0;
   const FUGA_DIST = 7;
-  const temAsaComum = () => Object.values(ultimoSnapMochila || {}).some((l) => Array.isArray(l) && l.some((it) => it && Number(it.count) > 0 && tipoAsa(it) === 'comum'));
+  const temAsaComum = () => ultimasAsas?.some(({ tipo }) => tipo === 'comum');
   setInterval(() => {
     try {
       if (!cfg.ligado) return;
@@ -1346,7 +1344,7 @@
       const ap = e.getAutopilotSnapshot();
       if (!ap || AUTOPILOT_PARADO.has(ap.runtimeState)) return;
       const fugir = fugirDe(ap);
-      if (!fugir.size || !ultimoSnapMochila || temAsaComum()) return;
+      if (!fugir.size || !ultimasAsas || temAsaComum()) return;
       const radar = e.getAutopilotRadarSnapshot()?.mobs || [];
       const ameaca = radar.find((m) => fugir.has(m.mobId) && (m.gid === ap.targetGid || Number(m.distance) <= FUGA_DIST));
       if (ameaca) { if (Date.now() - fugaEm >= 1500) log('fuga preventiva: ' + ameaca.name + ' a ' + ameaca.distance); fugirComAsa(w); }
@@ -1372,15 +1370,11 @@
     if (cfg.asa === 'off' || (sessaoCheffenia(w, e) && cfg.cheffeniaTeleporte !== true)) return false;
     if (asaBloqueadaPorMvp(w, e)) return false;
     if (modoMvpAtivo(w,e) && mvpEmCombate(snapshotAp(e), agora)) return false;
-    ganchoMochila(w);
-    if ((asa.index == null || agora - asa.lidaEm > 120000) && agora - asa.pedidaEm > 20000) {
-      asa.pedidaEm = agora;
-      try { e.requestInventorySnapshot(); } catch {}
-    }
-    if (asa.index == null || asa.count <= 0) return false;
+    if ((asa.index == null || asa.count <= 0) && agora - asa.pedidaEm <= 20000) return false;
     if (asa.aguardando) return true;
     if (!asaLiberada()) return true;
     asa.posAntes = posicao(e);
+    if (!relerMochilaParaUsarAsa(w, e) || asa.index == null || asa.count <= 0) return false;
     try { e.useInventoryItem(asa.index); } catch { return false; }
     ultimaAsaEm = Date.now();
     setTimeout(() => gravarTrilha((lerJson(CHAVE_LOG, []).slice(-1)[0] || '').slice(0, 300)), 50);
@@ -1918,7 +1912,7 @@
   function atualizarPainel() {
     if (!document.body) return;
     if (!painel) {
-      const versao = typeof GM_info === 'undefined' ? '1.90' : (GM_info.script?.version || '1.90');
+      const versao = typeof GM_info === 'undefined' ? '1.92' : (GM_info.script?.version || '1.92');
       const cartao = fznCartaoYgg('Auto-hunt', 'v' + versao, 'fzn-autohunt-ygg-posicao-v3', { right: '12px', bottom: '12px' }, 'fzn-encolhido-autohunt-ygg-v3');
       painel = document.createElement('button');
       painel.addEventListener('click', () => {
