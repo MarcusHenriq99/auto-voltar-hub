@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — autohunt: nao ficar parado sem alvo
 // @namespace    https://jogo.yggidle.com.br/
-// @version      1.90
+// @version      1.91
 // @description  Complementa o Autopilot: adquire alvos próximos sem esperar o primeiro golpe, retoma perseguições paradas e explora pelo motor do jogo, preservando as regras de teleporte.
 // @match        https://jogo.yggidle.com.br/*
 // @run-at       document-idle
@@ -946,7 +946,7 @@
     s.type = 'module';
     s.textContent = `Promise.all([import('Network/NetworkManager.js'),import('Network/PacketStructure.js'),import('Engine/SessionStorage.js'),import('Engine/MapEngine/Entity.js')]).then(([n,p,ss,ee])=>{
       const N=n.default,P=p.default,S=ss.default,EE=ee.default; window.__fznEu=()=>S.Entity;
-      import('Renderer/EntityManager.js').then((em)=>{ window.__fznPosDe=(gid)=>{try{const x=em.default.get(gid);return x&&x.position&&!(x.isDead&&x.isDead())?[Math.round(x.position[0]),Math.round(x.position[1])]:null}catch(e){return null}}; window.__fznCenso=()=>{const out=[];const eu=S.Entity;const px=eu&&eu.position;try{em.default.forEach((x)=>{if(!x||x.objecttype!==(x.constructor&&x.constructor.TYPE_MOB))return;let an='';if(x.ACTION)for(const k in x.ACTION)if(x.ACTION[k]===x.action){an=k;break;}const d=px&&x.position?Math.ceil(Math.hypot(x.position[0]-px[0],x.position[1]-px[1])):-1;out.push({n:(x.display&&x.display.name)||x._job,d,morto:x.isDead&&x.isDead(),vis:x.isVisible&&x.isVisible(),a:an});});}catch(e){out.push({erro:String(e)})}return out.sort((a,b)=>a.d-b.d);}; window.__fznItens=(raio)=>{let n=0;const px=S.Entity&&S.Entity.position;if(!px)return -1;try{em.default.forEach((x)=>{const C=x&&x.constructor;if(!C||(x.objecttype!==C.TYPE_ITEM&&x.objecttype!==C.TYPE_ITEM2)||!x.position)return;if(Math.hypot(x.position[0]-px[0],x.position[1]-px[1])<=raio)n++;});}catch(e){return -2}return n;}; }).catch((e)=>{ window.__fznCenso=()=>[{erro:'import '+String(e)}]; });
+      import('Renderer/EntityManager.js').then((em)=>{ window.__fznPosDe=(gid)=>{try{const x=em.default.get(gid);return x&&x.position&&!(x.isDead&&x.isDead())?[Math.round(x.position[0]),Math.round(x.position[1])]:null}catch(e){return null}}; window.__fznCenso=()=>{const out=[];const eu=S.Entity;const px=eu&&eu.position;try{em.default.forEach((x)=>{if(!x||x.objecttype!==(x.constructor&&x.constructor.TYPE_MOB))return;let an='';if(x.ACTION)for(const k in x.ACTION)if(x.ACTION[k]===x.action){an=k;break;}const d=px&&x.position?Math.ceil(Math.hypot(x.position[0]-px[0],x.position[1]-px[1])):-1;out.push({n:(x.display&&x.display.name)||x._job,gid:x.GID,mobId:x._job,d,morto:x.isDead&&x.isDead(),vis:x.isVisible&&x.isVisible(),a:an});});}catch(e){out.push({erro:String(e)})}return out.sort((a,b)=>a.d-b.d);}; window.__fznItens=(raio)=>{let n=0;const px=S.Entity&&S.Entity.position;if(!px)return -1;try{em.default.forEach((x)=>{const C=x&&x.constructor;if(!C||(x.objecttype!==C.TYPE_ITEM&&x.objecttype!==C.TYPE_ITEM2)||!x.position)return;if(Math.hypot(x.position[0]-px[0],x.position[1]-px[1])<=raio)n++;});}catch(e){return -2}return n;}; }).catch((e)=>{ window.__fznCenso=()=>[{erro:'import '+String(e)}]; });
       if(N.__fznSkill) return;
       const fase=new Map([[P.ZC.USESKILL_ACK,'conjurando'],[P.ZC.USESKILL_ACK2,'conjurando'],[P.ZC.USESKILL_ACK3,'conjurando'],[P.ZC.NOTIFY_SKILL,'golpe'],[P.ZC.NOTIFY_SKILL2,'golpe']].filter(([k])=>k));
       const atos=new Set([P.ZC.NOTIFY_ACT,P.ZC.NOTIFY_ACT2,P.ZC.NOTIFY_ACT3].filter(Boolean));
@@ -1303,6 +1303,33 @@
       const mobs = (w.__fznCenso?.() || []).slice(0, 6).map((m) => m.erro ? 'erro ' + m.erro.slice(0, 40) : m.n + ' a ' + m.d + (m.morto ? ' MORTO' : '') + (m.vis === false ? ' INVISIVEL' : '') + ' ' + m.a).join(', ');
       return ' || eu: ' + (eu ? an + (castRest != null ? ' cast ' + castRest + ' ms' : '') : 'sem acesso') + ' | mobs no cliente: ' + (mobs || 'nenhum');
     } catch (err) { return ' || retrato falhou: ' + String(err).slice(0, 40); }
+  };
+  // v1.91: o radar do autopilot as vezes chega vazio com mob vivo do lado (bio4: asa com mob
+  // colado). Antes de uma asa DE ROTINA (radar vazio / pacote), confere o cliente: mob vivo,
+  // visivel, nao ignorado pelas regras, a ate SEGURA_ASA_RAIO -> nao usa asa e fixa nele.
+  // Teto de SEGURA_ASA_MAX_MS por episodio para nao ficar preso num mob que nao da para bater.
+  // Fugas (perigo, preso, pneuma, distancia, MVP) NAO passam por aqui.
+  const SEGURA_ASA_RAIO = 9, SEGURA_ASA_MAX_MS = 8000;
+  let seguraAsaDesde = 0, seguraAsaLogEm = 0;
+  const segurarAsaDeRotina = (w, e, ign, agora, motivo) => {
+    let mob = null;
+    try {
+      mob = (w.__fznCenso?.() || []).find((m) => !m.erro && !m.morto && m.vis !== false && m.d >= 0 && m.d <= SEGURA_ASA_RAIO &&
+        !(m.mobId != null && ign.has(Number(m.mobId))) && !evitar.has(Number(m.gid)));
+    } catch {}
+    if (!mob) { seguraAsaDesde = 0; return false; }
+    if (!seguraAsaDesde) seguraAsaDesde = agora;
+    if (agora - seguraAsaDesde > SEGURA_ASA_MAX_MS) {
+      if (mob.gid) evitar.set(Number(mob.gid), agora + 15000);
+      seguraAsaDesde = 0;
+      log(motivo + ': ' + mob.n + ' a ' + mob.d + ' ha ' + (SEGURA_ASA_MAX_MS / 1000) + ' s sem luta -> libera a asa');
+      return false;
+    }
+    if (mob.gid && pinoGid !== Number(mob.gid)) {
+      try { e.setAutopilotPinnedTarget(Number(mob.gid)); pinoGid = Number(mob.gid); fixado = { gid: pinoGid, nome: mob.n, em: agora }; } catch {}
+    }
+    if (agora - seguraAsaLogEm > 3000) { seguraAsaLogEm = agora; log(motivo + ', mas ' + mob.n + ' vivo a ' + mob.d + ' no cliente -> segurei a asa e fixei nele'); }
+    return true;
   };
   let pinoGid = 0;
   let movChave = '', ultimoMovEm = 0, ociosoDesde = 0, golpesAvisado = false, inicioFarm = 0;
@@ -1804,7 +1831,7 @@
         conjurando = primeiroCastSemProgresso === cast.tick;
       }
     } catch {}
-    if (pinoGid && !radar.some((m) => Number(m.gid) === pinoGid)) { pinoGid = 0; try { e.setAutopilotPinnedTarget(0); } catch {} }
+    if (pinoGid && !seguraAsaDesde && !radar.some((m) => Number(m.gid) === pinoGid)) { pinoGid = 0; try { e.setAutopilotPinnedTarget(0); } catch {} }
     if (fixado && fixado.gid !== pinoGid) fixado = null;
     if (fixado && Number(meuAlvoGid) === fixado.gid && lutando) fixado = null;
     // v1.68: pacote minimo (so com monstros no radar; radar vazio segue a regra antiga).
@@ -1814,7 +1841,7 @@
       const pertos = vivos.filter((m) => Number(m.distance) >= 0 && Number(m.distance) <= PACOTE_RAIO).length;
       if (pertos < cfg.pacote) {
         if (!pacoteFracoDesde) pacoteFracoDesde = agora;
-        if (agora - pacoteFracoDesde >= PACOTE_MS && usarAsa(w, e, agora) && ultimaAsaEm >= agora) {
+        if (agora - pacoteFracoDesde >= PACOTE_MS && !segurarAsaDeRotina(w, e, ign, agora, 'pacote fraco') && usarAsa(w, e, agora) && ultimaAsaEm >= agora) {
           log('pacote: ' + pertos + ' monstro(s) a ate ' + PACOTE_RAIO + ' (minimo ' + cfg.pacote + ') -> asa' + retrato(w));
           pacoteFracoDesde = 0; ociosoDesde = 0; radarVazioDesde = 0;
           return;
@@ -1827,6 +1854,7 @@
       if (!radarVazioDesde) radarVazioDesde = agora;
       const vazioMs = agora - radarVazioDesde;
       if (lutando || conjurando) return;
+      if (vazioMs >= ASA_SEM_MOB_MS && segurarAsaDeRotina(w, e, ign, agora, 'radar vazio')) return;
       if (vazioMs >= ASA_SEM_MOB_MS && usarAsa(w, e, agora)) {
         if (ultimaAsaEm >= agora) {
           const ignorRadar = radar.filter((m) => ign.has(Number(m.mobId))).slice(0, 4).map((m) => m.name + ' a ' + m.distance).join(', ');
