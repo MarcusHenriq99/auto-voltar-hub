@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Yggidle — voltar ao mapa apos morrer (com cura na Kafra)
 // @namespace    https://jogo.yggidle.com.br/
-// @version      3.36
+// @version      3.37
 // @description  Rotina de peso/espacos por conta; protege e avisa sobre lucky drops.
 // @match        https://jogo.yggidle.com.br/*
 // @noframes
@@ -211,7 +211,7 @@
 
   // Versao do painel: do gerenciador (GM_info) ou, sem ele, a constante abaixo
   // -- mantida igual ao @version a cada versao.
-  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.36'); } catch { return '3.36'; } })();
+  const VERSAO_SCRIPT = (() => { try { return String(GM_info.script.version || '3.37'); } catch { return '3.37'; } })();
   const CHAVE_CFG = 'fzn-autovoltar-ygg-v1';
   const CHAVE_LOG = 'fzn-autovoltar-ygg-log-v1';
   const CHAVE_PROBLEMAS = 'fzn-autovoltar-ygg-problemas-v1';
@@ -3810,6 +3810,13 @@
       if (voltou && retomar && cfg.ligado) await retomarCacada(w);
       return voltou;
     }
+    const confirmarProntera = () => {
+      const mapa = posicao(w)?.mapa;
+      if (mapa === 'prontera') return true;
+      etapa('Aguardando', 'Rotina de Prontera encerrada: ' + (mapa ? 'personagem em ' + mapa : 'mapa indisponível'));
+      return false;
+    };
+    if (!confirmarProntera()) return false;
     if (!await pausarCacada(w)) return segurarRetorno(w, 'nao consegui pausar a cacada na cidade');
     let ultimaCelula = '', amostras = 0;
     if (!await esperarAte(() => {
@@ -3824,16 +3831,19 @@
     const pesoAltoNaChegada = await pesoAlto();
     etapa('4/8 Kafra na cidade', 'Cura e deposito dos itens protegidos');
     if (!await fecharArmazem(w)) return segurarRetorno(w, 'armazem nao fechou antes de falar com a Kafra');
+    if (!confirmarProntera()) return false;
     if (cfg.curarNaKafra) await curarNaKafra(w);
     else log('Kafra: cura pulada porque está desativada nos ajustes');
+    if (!confirmarProntera()) return false;
     if (cfg.ferreiro) {
       etapa('5/8 Ferreiro', 'Desmantelando equipamentos da mochila');
       let desmantelamentoOk = false;
       try { desmantelamentoOk = await desmantelarNoFerreiro(w); }
       catch (e) { log('Ferreiro: falha — ' + String(e?.message || e).slice(0, 100)); }
       await fecharFerreiro(w);
+      if (!confirmarProntera()) return false;
       if (!desmantelamentoOk) {
-        vigia = { cidade: posicao(w)?.mapa || 'prontera', ultimaEm: Date.now(), refazerCidade: true, retomarAutopilot: retomar };
+        vigia = { cidade: 'prontera', ultimaEm: Date.now(), refazerCidade: true, retomarAutopilot: retomar };
         etapa('Vigia', 'Ferreiro nao concluiu; venda suspensa. Tento novamente na cidade em 2 min');
         log('Ferreiro nao concluiu: nao vendo antes de desmantelar nem pago nova entrada no mapa');
         return false;
@@ -3846,16 +3856,19 @@
     const venderNestaVisita = (deposito.cheio && itensVendaveis()) ||
       (!guardarTudo() && cfg.venda.ligado &&
       (forcada || pesoAltoNaChegada || ((!cfg.armazem.tudoNoMapa) && viagemPorPeso) || await pesoAlto()));
+    if (!confirmarProntera()) return false;
     if (venderNestaVisita) {
       etapa('5/8 Vendendo', 'Vendendo somente os itens permitidos na configuracao');
       let vendaConcluida = await venderItens(w);
       if (vendaConcluida && await pesoAlto() && itensVendaveis()) {
+        if (!confirmarProntera()) return false;
         log('Peso ainda alto e ha itens vendaveis; mais uma rodada de venda');
         vendaConcluida = await venderItens(w);
       }
+      if (!confirmarProntera()) return false;
       if (!vendaConcluida) {
         vendaForcada.add(w);
-        vigia = { cidade: posicao(w)?.mapa || 'prontera', ultimaEm: Date.now(), refazerCidade: true, retomarAutopilot: retomar };
+        vigia = { cidade: 'prontera', ultimaEm: Date.now(), refazerCidade: true, retomarAutopilot: retomar };
         etapa('Vigia', 'Venda nao confirmada; tento novamente na cidade em 2 min');
         log('Venda nao concluiu: mantenho o personagem na cidade para repetir sem pagar outra entrada');
         return false;
@@ -3875,6 +3888,7 @@
     } else {
       log('Compras puladas: ' + (guardarTudo() ? 'modo Guardar tudo ativo' : 'reposição desligada nos ajustes'));
     }
+    if (!confirmarProntera()) return false;
     const voltou = await voltarComInsistencia(w);
     if (voltou && retomar && cfg.ligado) {
       await retomarCacada(w);
@@ -5275,6 +5289,14 @@
     if (mapaCovil(posicao(w))) {
       etapa('Covil', 'Ainda na instância; não volto ao farm antes de sair dela');
       return;
+    }
+    if (vigia) {
+      const mapa = posicao(w)?.mapa;
+      const cidade = vigia.refazerCidade ? 'prontera' : vigia.cidade;
+      if (mapa && mapa !== cidade) {
+        vigia = null;
+        etapa('Aguardando', 'Vigia encerrado: personagem em ' + mapa);
+      }
     }
     sincronizarMapaAtual(w);
     if (!posicaoInicialVista) {
